@@ -36,7 +36,7 @@ export function Sidebar() {
         <div className="flex h-7 w-7 items-center justify-center rounded-md bg-gradient-to-br from-accent-start to-accent-end shadow-glow">
           <Mic className="h-3.5 w-3.5 text-white" strokeWidth={2.5} />
         </div>
-        <span className="text-sm font-semibold tracking-tight">SuperWisper</span>
+        <span className="text-sm font-semibold tracking-tight">Verbatim AI</span>
       </div>
 
       {/* Nav */}

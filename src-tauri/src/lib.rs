@@ -42,6 +42,17 @@ pub fn run() {
             tray::install(&app.handle())?;
             // Close-to-hide for the main window (plan §5 lifecycle).
             if let Some(window) = app.get_webview_window("main") {
+                // Fit the window to the available monitor so all UI is visible.
+                if let Ok(Some(monitor)) = window.current_monitor() {
+                    let size = monitor.size();
+                    let scale = monitor.scale_factor();
+                    let avail_w = (size.width as f64) / scale;
+                    let avail_h = (size.height as f64) / scale;
+                    let target_w = avail_w.min(1280.0).max(880.0);
+                    let target_h = (avail_h - 60.0).min(820.0).max(620.0);
+                    let _ = window.set_size(tauri::LogicalSize::new(target_w, target_h));
+                    let _ = window.center();
+                }
                 let w = window.clone();
                 window.on_window_event(move |event| {
                     if let tauri::WindowEvent::CloseRequested { api, .. } = event {

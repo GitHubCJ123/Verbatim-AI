@@ -54,7 +54,7 @@ export default function Apps() {
     <PageContainer>
       <PageHeader
         title="Apps"
-        description="Map specific apps to Modes. Without a rule, SuperWisper uses your default Mode."
+        description="Map specific apps to Modes. Without a rule, Verbatim AI uses your default Mode."
         actions={
           <Button variant="primary" size="sm" onClick={() => setPickerOpen(true)}>
             <Plus className="h-4 w-4" />
@@ -80,7 +80,7 @@ export default function Apps() {
             </div>
             <div className="text-sm font-medium">No app rules yet</div>
             <div className="max-w-sm text-xs text-text-muted">
-              Pick an app you use often and assign it a Mode. SuperWisper will switch
+              Pick an app you use often and assign it a Mode. Verbatim AI will switch
               tone automatically based on which window is focused.
             </div>
             <Button variant="secondary" size="sm" onClick={() => setPickerOpen(true)}>

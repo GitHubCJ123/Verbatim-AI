@@ -27,7 +27,7 @@ void listen("tray:record", async () => {
   if (!trayRecording) {
     const { mode } = await resolveModeAtPress();
     if (!mode) {
-      console.warn("[SuperWisper] tray record: no modes available");
+      console.warn("[Verbatim AI] tray record: no modes available");
       return;
     }
     await bridgeStart(mode.name, mode.id);
@@ -71,7 +71,7 @@ async function persist(result: PendingResult, action: OutputAction, finalCleaned
       languageDetected: result.language,
     });
   } catch (e) {
-    console.warn("[SuperWisper] failed to persist transcript:", e);
+    console.warn("[Verbatim AI] failed to persist transcript:", e);
   }
 }
 
@@ -102,7 +102,7 @@ void listen<{ action: OutputAction; cleaned: string; modeId: string | null }>(
 );
 
 void listen<{ message: string; stack?: string }>("recording:error", (e) => {
-  console.error("[SuperWisper] recording error:", e.payload.message, e.payload.stack);
+  console.error("[Verbatim AI] recording error:", e.payload.message, e.payload.stack);
   toast.error("Transcription failed", {
     description: e.payload.message,
     duration: 10000,

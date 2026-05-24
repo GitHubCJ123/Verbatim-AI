@@ -68,7 +68,7 @@ export function displayName(): string {
   if (p?.display_name) return p.display_name;
   const u = useAuth.getState().user;
   if (u?.email) return u.email.split("@")[0];
-  return "SuperWisper";
+  return "Verbatim AI";
 }
 
 /** Initials for avatar fallback. */

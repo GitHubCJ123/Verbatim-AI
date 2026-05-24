@@ -148,8 +148,8 @@ export default function Overlay() {
         if (cleaned !== cleanedRaw) setStreamingCleaned(cleaned);
       }
 
-      console.info("[SuperWisper] raw:", transcript.text);
-      console.info("[SuperWisper] cleaned:", cleaned);
+      console.info("[Verbatim AI] raw:", transcript.text);
+      console.info("[Verbatim AI] cleaned:", cleaned);
 
       await emit("recording:result", {
         raw: transcript.text,
@@ -166,7 +166,7 @@ export default function Overlay() {
         const pasted = await pasteCleanedText(cleaned);
         if (!pasted) {
           // No captured target — fall back to clipboard.
-          console.info("[SuperWisper] no paste target; copied to clipboard");
+          console.info("[Verbatim AI] no paste target; copied to clipboard");
         }
         setState("success");
         setTimeout(() => void reset(), 900);
@@ -176,7 +176,7 @@ export default function Overlay() {
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      console.error("[SuperWisper] pipeline error:", e);
+      console.error("[Verbatim AI] pipeline error:", e);
       void emit("recording:error", { message: msg, stack: e instanceof Error ? e.stack : undefined });
       setError(msg);
       setState("error");

@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "SuperWisper",
+  "productName": "Verbatim AI",
   "version": "0.1.0",
-  "identifier": "com.superwisper.app",
+  "identifier": "com.verbatimai.app",
   "build": {
     "beforeDevCommand": "pnpm dev",
     "devUrl": "http://localhost:1420",
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "SuperWisper",
+        "title": "Verbatim AI",
         "width": 1100,
         "height": 720,
         "minWidth": 880,
@@ -25,7 +25,7 @@
       {
         "label": "overlay",
         "url": "overlay.html",
-        "title": "SuperWisper Overlay",
+        "title": "Verbatim AI Overlay",
         "width": 420,
         "height": 96,
         "resizable": false,

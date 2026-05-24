@@ -1,5 +1,5 @@
 -- Adds an optional `replacement` column to vocabulary terms.
--- When set, SuperWisper will replace occurrences of `term` (case-insensitive,
+-- When set, Verbatim AI will replace occurrences of `term` (case-insensitive,
 -- whole-word) with `replacement` in cleaned output.
 
 alter table public.vocabulary

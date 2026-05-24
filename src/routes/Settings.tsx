@@ -122,7 +122,7 @@ export default function Settings() {
 
   return (
     <PageContainer>
-      <PageHeader title="Settings" description="Configure SuperWisper to fit your workflow." />
+      <PageHeader title="Settings" description="Configure Verbatim AI to fit your workflow." />
       <Tabs defaultValue="general">
         <TabsList>
           <TabsTrigger value="general">General</TabsTrigger>
@@ -135,7 +135,7 @@ export default function Settings() {
         <TabsContent value="general">
           <Card>
             <CardContent className="p-5 pt-5">
-              <SettingRow title="Launch at startup" description="Open SuperWisper when Windows starts.">
+              <SettingRow title="Launch at startup" description="Open Verbatim AI when Windows starts.">
                 <Switch
                   checked={autostart}
                   onCheckedChange={async (v) => {
@@ -198,7 +198,7 @@ export default function Settings() {
               </SettingRow>
               <SettingRow
                 title="Restore clipboard after paste"
-                description="When on, SuperWisper remembers whatever you had on the clipboard before dictating, pastes the cleaned text, then puts your original content back ~1 second later. Off by default — Windows already keeps clipboard history (press Win+V to view it), so the cleaned text just stays on the clipboard."
+                description="When on, Verbatim AI remembers whatever you had on the clipboard before dictating, pastes the cleaned text, then puts your original content back ~1 second later. Off by default — Windows already keeps clipboard history (press Win+V to view it), so the cleaned text just stays on the clipboard."
               >
                 <ClipboardRestoreSwitch />
               </SettingRow>
@@ -209,7 +209,7 @@ export default function Settings() {
         <TabsContent value="privacy">
           <Card>
             <CardContent className="p-5 pt-5">
-              <SettingRow title="Anonymous telemetry" description="Help improve SuperWisper. Never your transcript content.">
+              <SettingRow title="Anonymous telemetry" description="Help improve Verbatim AI. Never your transcript content.">
                 <Switch />
               </SettingRow>
               <SettingRow title="History retention" description="Auto-delete old transcripts.">

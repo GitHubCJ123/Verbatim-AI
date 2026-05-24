@@ -1,4 +1,4 @@
-# SuperWisper Edge Functions
+# Verbatim AI Edge Functions
 
 Two functions proxy Azure AI Foundry from the client so the API key never leaves the server.
 

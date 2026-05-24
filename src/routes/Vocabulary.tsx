@@ -60,7 +60,7 @@ export default function Vocabulary() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = "superwisper-vocabulary.csv";
+    a.download = "verbatim-ai-vocabulary.csv";
     a.click();
     URL.revokeObjectURL(url);
   };

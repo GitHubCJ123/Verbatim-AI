@@ -68,12 +68,12 @@ export async function installHotkeyListeners(): Promise<UnlistenFn> {
     const cfg = loadHotkeyConfig();
     const { mode, activeWindow } = await resolveModeAtPress();
     if (!mode) {
-      console.warn("[SuperWisper] no modes available — sign in / hydrate first.");
+      console.warn("[Verbatim AI] no modes available — sign in / hydrate first.");
       return;
     }
     if (activeWindow?.exe) {
       console.debug(
-        `[SuperWisper] ${activeWindow.exe} → ${mode.name}${
+        `[Verbatim AI] ${activeWindow.exe} → ${mode.name}${
           activeWindow.title ? ` (window: "${activeWindow.title}")` : ""
         }`,
       );

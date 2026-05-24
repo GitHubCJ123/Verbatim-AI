@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    superwisper_lib::run()
+    verbatim_ai_lib::run()
 }

@@ -29,7 +29,7 @@ function FatalConfig() {
           <span className="text-sm font-semibold">Configuration missing</span>
         </div>
         <p className="mt-3 text-sm text-text-secondary">
-          SuperWisper needs <code className="font-mono text-xs">VITE_SUPABASE_URL</code> and{" "}
+          Verbatim AI needs <code className="font-mono text-xs">VITE_SUPABASE_URL</code> and{" "}
           <code className="font-mono text-xs">VITE_SUPABASE_ANON_KEY</code> in{" "}
           <code className="font-mono text-xs">.env.local</code>. Set them and restart.
         </p>
@@ -142,7 +142,7 @@ export default function App() {
   if (phase === "boot") return <BootSpinner />;
   // Note: hydrationError is shown via toasts inside the running app; we
   // still render so the user can sign out or retry from Account.
-  if (hydrationError) console.warn("[SuperWisper] hydration error:", hydrationError);
+  if (hydrationError) console.warn("[Verbatim AI] hydration error:", hydrationError);
   return (
     <>
       <Toaster />

@@ -1,5 +1,5 @@
 /**
- * Domain types for SuperWisper. These mirror the SQL columns from
+ * Domain types for Verbatim AI. These mirror the SQL columns from
  * plan §7 so the same shape works for localStorage, SQLite (Phase 10),
  * and Supabase (Phase 9).
  */

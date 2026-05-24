@@ -1,12 +1,12 @@
 [package]
-name = "superwisper"
+name = "verbatim-ai"
 version = "0.1.0"
-description = "SuperWisper \u2014 voice transcription for Windows"
-authors = ["SuperWisper contributors"]
+description = "Verbatim AI — voice transcription for Windows"
+authors = ["Verbatim AI contributors"]
 edition = "2021"
 
 [lib]
-name = "superwisper_lib"
+name = "verbatim_ai_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

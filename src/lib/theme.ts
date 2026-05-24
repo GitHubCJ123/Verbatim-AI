@@ -33,7 +33,7 @@ interface ThemeState {
 function loadInitial(): Theme {
   const raw = localStorage.getItem(LS_KEY);
   if (raw === "dark" || raw === "light" || raw === "system") return raw;
-  return "dark";
+  return "system";
 }
 
 export const useTheme = create<ThemeState>((set) => ({

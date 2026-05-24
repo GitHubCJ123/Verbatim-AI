@@ -20,7 +20,7 @@ export function buildCleanupPrompt(input: CleanupInput): PromptBundle {
     : "";
 
   const system = [
-    `You are SuperWisper's polishing layer for the "${input.modeName}" mode.`,
+    `You are Verbatim AI's polishing layer for the "${input.modeName}" mode.`,
     "",
     input.modeDescription ? `Goal: ${input.modeDescription}` : "",
     "",

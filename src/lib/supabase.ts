@@ -1,6 +1,6 @@
 /**
  * Supabase client — built once at module load from VITE_* env vars.
- * SuperWisper is online-only; if either var is missing the app shows
+ * Verbatim AI is online-only; if either var is missing the app shows
  * a fatal error screen instead of trying to start.
  */
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";

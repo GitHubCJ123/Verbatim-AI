@@ -8,7 +8,7 @@ use tauri::tray::{MouseButton, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager, Runtime};
 
 pub fn install<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
-    let open = MenuItem::with_id(app, "open", "Open SuperWisper", true, None::<&str>)?;
+    let open = MenuItem::with_id(app, "open", "Open Verbatim AI", true, None::<&str>)?;
     let separator = PredefinedMenuItem::separator(app)?;
     let settings = MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?;
     let separator2 = PredefinedMenuItem::separator(app)?;
@@ -20,7 +20,7 @@ pub fn install<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     )?;
 
     let _tray = TrayIconBuilder::with_id("main")
-        .tooltip("SuperWisper")
+        .tooltip("Verbatim AI")
         .icon(app.default_window_icon().cloned().unwrap_or_else(|| {
             // Fallback: should never hit because tauri builds always include
             // the default window icon, but keep this code path explicit.

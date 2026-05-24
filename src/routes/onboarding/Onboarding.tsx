@@ -38,24 +38,26 @@ import { toast } from "../../components/ui/Toast";
 const TOTAL_STEPS = 8;
 
 const HUE_PER_STEP = [
-  ["#1a0f2e", "#0a0a0f"],
-  ["#0f1f2e", "#0a0a0f"],
-  ["#0f2e2a", "#0a0a0f"],
-  ["#2e1f0f", "#0a0a0f"],
-  ["#2e0f24", "#0a0a0f"],
-  ["#1f0f2e", "#0a0a0f"],
-  ["#0f1a2e", "#0a0a0f"],
-  ["#0f2e1f", "#0a0a0f"],
+  "168, 85, 247",   // violet
+  "34, 211, 238",   // cyan
+  "52, 211, 153",   // emerald
+  "251, 191, 36",   // amber
+  "244, 114, 182",  // pink
+  "139, 92, 246",   // indigo
+  "59, 130, 246",   // blue
+  "16, 185, 129",   // green
 ];
 
 export default function Onboarding() {
   const step = useOnboarding((s) => s.step);
-  const [from, to] = HUE_PER_STEP[step] ?? HUE_PER_STEP[0];
+  const tint = HUE_PER_STEP[step] ?? HUE_PER_STEP[0];
 
   return (
     <div
-      className="relative flex h-screen w-screen flex-col items-center justify-center overflow-hidden text-text-primary transition-colors duration-700"
-      style={{ background: `radial-gradient(80% 60% at 50% 0%, ${from}, ${to})` }}
+      className="relative flex h-screen w-screen flex-col items-center justify-center overflow-hidden bg-bg-base text-text-primary transition-colors duration-700"
+      style={{
+        backgroundImage: `radial-gradient(80% 60% at 50% 0%, rgba(${tint}, 0.18), transparent 70%)`,
+      }}
     >
       <ProgressDots />
       <div className="relative flex w-full flex-1 items-center justify-center">
@@ -170,7 +172,7 @@ function Welcome() {
         <Mic className="h-9 w-9 text-white" strokeWidth={2} />
       </motion.div>
       <h1 className="bg-gradient-to-r from-accent-start to-accent-end bg-clip-text text-4xl font-semibold tracking-tight text-transparent">
-        SuperWisper
+        Verbatim AI
       </h1>
       <p className="mt-3 text-base text-text-secondary">
         Talk anywhere. We type it for you, in your voice, in the right tone, in any app.
@@ -221,7 +223,7 @@ function Permissions() {
     <div>
       <StepHeading
         title="Microphone access"
-        subtitle="SuperWisper sends your audio to our cloud just long enough to transcribe and polish it. Recordings themselves are never stored."
+        subtitle="Verbatim AI sends your audio to our cloud just long enough to transcribe and polish it. Recordings themselves are never stored."
       />
       <Card className="mt-8">
         <CardContent className="flex items-center justify-between gap-4 p-6 pt-6">
@@ -372,7 +374,7 @@ function AppsPick() {
   return (
     <div>
       <StepHeading
-        title="Where will you use SuperWisper?"
+        title="Where will you use Verbatim AI?"
         subtitle="Pick the apps you use often. We'll tune the tone for each."
       />
       <div className="mt-8 grid max-h-[420px] grid-cols-2 gap-2 overflow-y-auto pr-1">
@@ -509,7 +511,7 @@ function Generate() {
             const { modesCreated, mappingsCreated } = await applyOnboarding();
             setCreated({ modes: modesCreated, mappings: mappingsCreated });
           } catch (e) {
-            console.warn("[SuperWisper] onboarding apply failed", e);
+            console.warn("[Verbatim AI] onboarding apply failed", e);
           }
           setStage(3);
         },
@@ -587,7 +589,7 @@ function TestRecording() {
       </p>
       <NavRow
         onBack={back}
-        primaryLabel="Open SuperWisper"
+        primaryLabel="Open Verbatim AI"
         onPrimary={() => {
           finish();
           navigate("/", { replace: true });

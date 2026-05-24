@@ -35,7 +35,7 @@ export async function pasteCleanedText(text: string): Promise<boolean> {
     }
     return ok;
   } catch (e) {
-    console.warn("[SuperWisper] paste_to_target failed:", e);
+    console.warn("[Verbatim AI] paste_to_target failed:", e);
     return false;
   }
 }

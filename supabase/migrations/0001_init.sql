@@ -1,4 +1,4 @@
--- SuperWisper — initial schema.
+-- Verbatim AI — initial schema.
 -- Per plan §7. RLS is enabled on every table; policies live in 0002.
 
 -- Profiles mirror auth.users 1:1 so we can add display name etc.

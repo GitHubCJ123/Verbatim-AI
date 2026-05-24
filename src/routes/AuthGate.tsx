@@ -15,8 +15,8 @@ import { toast } from "../components/ui/Toast";
 export default function AuthGate() {
   return (
     <div
-      className="relative flex h-screen w-screen items-center justify-center overflow-hidden text-text-primary"
-      style={{ background: "radial-gradient(80% 60% at 50% 0%, #1a0f2e, #0a0a0f)" }}
+      className="relative flex h-screen w-screen items-center justify-center overflow-hidden bg-bg-base text-text-primary"
+      style={{ backgroundImage: "radial-gradient(80% 60% at 50% 0%, rgba(168, 85, 247, 0.18), transparent 70%)" }}
     >
       <div className="w-full max-w-md px-6">
         <div className="mb-8 text-center">
@@ -24,7 +24,7 @@ export default function AuthGate() {
             <Mic className="h-6 w-6 text-white" strokeWidth={2.25} />
           </div>
           <h1 className="bg-gradient-to-r from-accent-start to-accent-end bg-clip-text text-3xl font-semibold tracking-tight text-transparent">
-            SuperWisper
+            Verbatim AI
           </h1>
           <p className="mt-2 text-sm text-text-secondary">Sign in to start dictating.</p>
         </div>

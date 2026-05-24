@@ -126,7 +126,7 @@ function buildPrompt(input: CleanupRequest): { system: string; user: string } {
     : "";
 
   const system = [
-    `You are SuperWisper's polishing layer for the "${input.modeName}" mode.`,
+    `You are Verbatim AI's polishing layer for the "${input.modeName}" mode.`,
     "",
     input.modeDescription ? `Goal: ${input.modeDescription}` : "",
     "",

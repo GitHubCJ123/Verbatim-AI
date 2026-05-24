@@ -78,7 +78,7 @@ async function loggedFetch(url: string, init: RequestInit, label: string): Promi
 }
 
 export class SupabaseAIProvider implements AIProvider {
-  readonly name = "SuperWisper Cloud";
+  readonly name = "Verbatim AI Cloud";
 
   async transcribe(input: TranscribeInput): Promise<TranscribeResult> {
     const headers = await getAuthHeaders();

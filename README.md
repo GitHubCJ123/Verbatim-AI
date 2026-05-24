@@ -1,4 +1,4 @@
-# SuperWisper
+# Verbatim AI
 
 A Windows desktop voice-transcription app with a modern, animated UI.
 

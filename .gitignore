@@ -23,7 +23,7 @@ dist-ssr
 *.sln
 *.sw?
 
-# SuperWisper
+# Verbatim AI
 .env
 .env.local
 .env.*.local

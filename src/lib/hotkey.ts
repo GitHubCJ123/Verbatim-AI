@@ -65,6 +65,10 @@ export async function installHotkeyListeners(): Promise<UnlistenFn> {
   const offDown = await listen("hotkey:down", async () => {
     const cfg = loadHotkeyConfig();
     const { mode, activeWindow } = await resolveModeAtPress();
+    if (!mode) {
+      console.warn("[SuperWisper] no modes available — sign in / hydrate first.");
+      return;
+    }
     if (activeWindow?.exe) {
       console.debug(
         `[SuperWisper] ${activeWindow.exe} → ${mode.name}${

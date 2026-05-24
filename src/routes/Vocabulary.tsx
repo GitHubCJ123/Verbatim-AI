@@ -38,7 +38,7 @@ export default function Vocabulary() {
       pronunciation: cells[1] || null,
       notes: cells[2] || null,
     }));
-    const n = importMany(items);
+    const n = await importMany(items);
     toast.success(`Imported ${n} term${n === 1 ? "" : "s"}`);
   };
 

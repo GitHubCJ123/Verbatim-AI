@@ -10,7 +10,6 @@ interface AuthState {
   init: () => Promise<void>;
   signInWithPassword: (email: string, password: string) => Promise<void>;
   signUpWithPassword: (email: string, password: string) => Promise<void>;
-  signInWithMagicLink: (email: string) => Promise<void>;
   resetPassword: (email: string) => Promise<void>;
   signOut: () => Promise<void>;
 }
@@ -60,17 +59,6 @@ export const useAuth = create<AuthState>((set) => ({
     try {
       const client = requireClient();
       const { error } = await client.auth.signUp({ email, password });
-      if (error) throw error;
-    } finally {
-      set({ loading: false });
-    }
-  },
-
-  signInWithMagicLink: async (email) => {
-    set({ loading: true });
-    try {
-      const client = requireClient();
-      const { error } = await client.auth.signInWithOtp({ email });
       if (error) throw error;
     } finally {
       set({ loading: false });

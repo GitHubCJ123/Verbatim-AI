@@ -6,6 +6,20 @@ A Windows desktop voice-transcription app with a modern, animated UI. Inspired b
 
 ---
 
+## 4.1 Architecture pivot to online-only (2026-05-24)
+
+After Phase 12 the architecture changed: SuperWisper is now **online-only** with a Supabase backend that proxies Azure. Key shifts:
+
+- **Account required.** No more local mode. Sign-in gates the entire app.
+- **Supabase URL + anon key are baked into the build** via `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` — no user-configurable Sync tab. Missing env vars produce a fatal config screen.
+- **Azure AI Foundry calls now go through two Supabase Edge Functions** (`transcribe`, `cleanup`) so the Azure key lives in `supabase secrets` and never touches the client. The user does not configure Azure — there is no Settings → AI tab anymore.
+- **All user data lives in Supabase**: modes, vocabulary, app_mappings, transcriptions, user_settings. `localStorage` becomes a write-through cache so the overlay window can still read synchronously on the hotkey hot path. Hydration runs on sign-in.
+- **Built-in modes seed server-side** via a trigger on `auth.users` insert. New users get the six built-ins automatically. They're editable like any other Mode.
+
+This supersedes the localStorage/SQLite + BYOK-Azure architecture from Phases 4 + 9 + 10. Those phases stay in the history below for context; the **Phase 15 — Cloud pivot** entry describes what actually shipped.
+
+---
+
 ## Table of Contents
 
 1. Product Vision & Principles
@@ -1232,16 +1246,65 @@ User opted out for v1. Drag-and-drop / file picker for transcribing pre-recorded
 - Rewrite: `src/routes/History.tsx`
 - Update: `src/main.tsx` (listen + persist)
 
-### Phase 11 — Onboarding flow
+### Phase 11 — Onboarding flow ✅ **COMPLETE** (2026-05-24)
 - All 8 steps implemented.
 - Auto-generation logic for Modes + app_mappings from tone selections.
 - Re-run from Settings.
 
-### Phase 12 — System tray, autostart, notifications
+**Phase 11 notes (what actually happened):**
+- [src/lib/store/useOnboarding.ts](src/lib/store/useOnboarding.ts) — Zustand store for the flow state (`step`, `completed`, `micPermission`, `hotkey`, `pushToTalk`, `picks`, `tones`, `customTone`). Progress is mirrored to `localStorage` under `sw.onboarding` so it survives a close. `isOnboardingComplete()` is the boot-time check.
+- `applyOnboarding()` materializes the user's selections at Step 7:
+  - One **Mode per unique tone** in use (`Formal`, `Casual`, `Very Casual`, or a `Custom` mode using the user's free-text). Each gets a tailored `systemPrompt`.
+  - One **app_mapping** per picked app pointing at its tone's Mode.
+  - Calls `state.finish()` so re-launches go straight to Home.
+- [src/routes/onboarding/Onboarding.tsx](src/routes/onboarding/Onboarding.tsx) — single file, 8 step components, animated:
+  - 8-segment progress dots at the top; active segment grows wider with the violet→cyan gradient.
+  - Per-step **radial gradient backdrop** shifts hue from step to step (700 ms transition).
+  - `AnimatePresence` swaps step content with a soft y-fade.
+  - Steps: **Welcome** (breathing logo) → **Permissions** (real `getUserMedia` request, status icons) → **Sign in** (skippable, links Account/Sync states) → **Hotkey** (live `HotkeyRecorder` + PTT toggle, commits via `applyHotkey` + persist) → **Pick apps** (15 common apps from `COMMON_APPS` with smart defaults) → **Tone per app** (4 chips per row + a free-text input that only appears when any app is set to Custom) → **Generate** (animated spinner: "Creating Modes…” → "Mapping apps…” → `applyOnboarding()` → success check) → **Test recording** (instructions + close).
+- First-launch routing: [src/App.tsx](src/App.tsx) seeds the memory router with `initialEntries: [isOnboardingComplete() ? "/" : "/onboarding"]`. The route lives **outside** `AppShell` so it gets the full-bleed gradient.
+- Re-run from Settings → Advanced → "Restart" — calls `useOnboarding.reset()` then `window.location.reload()` so the boot check kicks in again.
+
+**Known deferred work:**
+- App icons inside the picker (lucide placeholders today).
+- Onboarding step deep-linking (each step has no URL of its own — progress is internal). Acceptable for a one-pass flow.
+- Step 8 doesn't currently launch a live test recording; it just hands off to Home with instructions. Building a sandboxed test inside the onboarding window is a nice-to-have polish.
+
+**Files added in Phase 11:**
+- `src/lib/store/useOnboarding.ts`
+- `src/routes/onboarding/Onboarding.tsx`
+- Updates: `src/App.tsx` (route + boot redirect), `src/routes/Settings.tsx` (Restart button)
+
+### Phase 12 — System tray, autostart, notifications ✅ **COMPLETE** (2026-05-24)
 - Tray icon with state colors.
 - Tray menu with all entries.
 - Autostart toggle wired to `tauri-plugin-autostart`.
 - Notifications for transcription success/failure (optional, off by default).
+
+**Phase 12 notes (what actually happened):**
+- Rust:
+  - `tauri = { features = ["tray-icon"] }` (built-in tray API in v2).
+  - Added `tauri-plugin-autostart`, `tauri-plugin-notification`.
+  - New module [src-tauri/src/tray.rs](src-tauri/src/tray.rs):
+    - Builds the tray via `TrayIconBuilder` with the default window icon.
+    - Menu: status row (disabled) → Open SuperWisper → Start recording → Settings… → Quit. Tray click opens the main window.
+    - `tray:record` event toggles recording from JS; `tray:settings` brings up the main window (JS-side could navigate later).
+  - [src-tauri/src/lib.rs](src-tauri/src/lib.rs) `setup()` installs the tray AND wires the main window's `CloseRequested` event to **hide-instead-of-quit** (plan §5 lifecycle: "Closing the main window only hides it. Quit only via tray menu.").
+- Capabilities ([src-tauri/capabilities/default.json](src-tauri/capabilities/default.json)) updated: `autostart:default`, `notification:default`, plus `core:window:allow-set-focus` and `allow-unminimize` for the tray-open path.
+- JS:
+  - [src/lib/preferences.ts](src/lib/preferences.ts) — thin facade: `isAutostartEnabled`/`setAutostart`, `loadPreferences`/`setNotifyOnSuccess`, and `notify(title, body)` which requests notification permission on first use then `sendNotification`.
+  - [src/main.tsx](src/main.tsx) listens for `tray:record` (toggles bridge start/stop using the resolved Mode from app-mappings) and fires `notify(...)` after `recording:result` if the user enabled it.
+  - [src/routes/Settings.tsx](src/routes/Settings.tsx) **General** tab now has working Autostart and "Notify on transcribe" switches (both bound to real plugin state on mount).
+
+**Known deferred work:**
+- Per-state tray icon tinting (gray idle / violet recording / cyan processing / red error) — needs 4 baked PNGs; Phase 13 polish.
+- "Pause hotkey" toggle, dynamic "Stop recording" menu label, and a "Quick switch mode" submenu — plan §8.10 wishlist; Phase 13.
+- Tray icon click on left button shows menu vs. opens main: today left-click opens main, right-click shows menu. Tunable later.
+
+**Files added in Phase 12:**
+- Rust: `src-tauri/src/tray.rs` + autostart/notification plugin registration in `lib.rs`.
+- TS: `src/lib/preferences.ts`
+- Updates: `src/main.tsx` (tray + notify listeners), `src/routes/Settings.tsx` (General toggles), `src-tauri/capabilities/default.json`.
 
 ### Phase 13 — Polish, errors, telemetry
 - Toasts for all error paths.
@@ -1254,6 +1317,47 @@ User opted out for v1. Drag-and-drop / file picker for transcribing pre-recorded
 - App icon + branding.
 - README with screenshots, install instructions, dev setup.
 - Tag `v0.1.0`, publish first GitHub Release with installer.
+
+### Phase 15 — Cloud pivot (online-only) ✅ **COMPLETE** (2026-05-24)
+Architecture shift from local-first / BYOK-Azure to online-only with Supabase Edge Functions proxying Azure. See §4.1 for the rationale.
+
+**What was built:**
+- **Migration [supabase/migrations/0005_seed_builtin_modes.sql](supabase/migrations/0005_seed_builtin_modes.sql)** — `seed_builtin_modes_for_user(uid)` function inserts the 6 built-in Modes (editable, not read-only) + a `user_settings` row. The `handle_new_user()` trigger from 0004 is overridden to call it whenever a new `auth.users` row appears.
+- **Edge Functions** under `supabase/functions/`:
+  - [`transcribe/index.ts`](supabase/functions/transcribe/index.ts) — multipart audio proxy to Azure Whisper. 3× retry with exponential backoff. CORS-enabled. Reads `AZURE_ENDPOINT`, `AZURE_API_KEY`, `AZURE_TRANSCRIBE_DEPLOYMENT` from env.
+  - [`cleanup/index.ts`](supabase/functions/cleanup/index.ts) — JSON-in, SSE-out. Pipes the upstream Azure stream straight back via `new Response(azureRes.body)` so the client streams token-by-token. Server-side prompt template matches plan §11.
+  - [README.md](supabase/functions/README.md) lists `supabase secrets set ...` + `supabase functions deploy ...` for the maintainer.
+- **Client `src/lib/supabase.ts`** rebuilt to read `VITE_SUPABASE_URL` + `VITE_SUPABASE_ANON_KEY` at module load. No more user-configurable URL/key. Missing env vars trigger a fatal config screen.
+- **`src/lib/ai/index.ts` is now `SupabaseAIProvider`** — calls `${SUPABASE_URL}/functions/v1/{transcribe,cleanup}` with the session JWT. Same `AIProvider` interface, same SSE parser as the old AzureFoundryProvider. The Azure provider file was deleted.
+- **Stores rewritten as Supabase-backed with localStorage cache**:
+  - `useModes` / `useVocabulary` / `useAppMappings` hydrate from Supabase on sign-in and on auth-change, mirror rows into `localStorage` (the overlay's hot path), and route every CRUD through Supabase before updating the cache.
+  - `hydrateAll()` + `clearAllCaches()` helpers on sign-in / sign-out.
+  - `getDefaultMode()` / `getModeById()` / `loadModes()` / `loadVocabulary()` / `loadAppMappings()` keep their synchronous shape so the overlay needs no changes.
+  - `useModes.setDefault(id)` is local-only for now (the cloud `user_settings.default_mode_id` is not yet wired).
+- **`src/lib/history.ts`** simplified to Supabase-only (the localStorage branch removed). Search uses `ilike` over `cleaned_text` + `raw_text`.
+- **Auth gate** ([src/routes/AuthGate.tsx](src/routes/AuthGate.tsx)) — full-window sign-in with gradient backdrop, Magic Link / Password tabs (sign-up toggle, forgot password). No "skip" — the app is unusable without signing in.
+- **`src/App.tsx`** boot flow:
+  1. If env vars missing → `<FatalConfig>`.
+  2. Wipe legacy keys (`sw.azure.config`, `sw.supabase.config`, `sw.history`) once via `sw.online.migrated` flag.
+  3. `useAuth.init()`. Subscribe to `onAuthStateChange`: on sign-in → hydrate stores + route to `/onboarding` or `/`; on sign-out → clear caches + route to `/auth`.
+  4. While booting, show a small spinner.
+- **`src/routes/Account.tsx`** simplified — only shows the signed-in card + Sign Out.
+- **`src/routes/Settings.tsx`** stripped: removed AI tab + Sync tab. Tabs are now General, Recording, Overlay, Privacy, Advanced.
+- **All onboarding logic** (`applyOnboarding`) now async-aware; the Generate step awaits Mode + mapping creation against Supabase before advancing.
+- **Offline behavior:** boot-time hydration fails → an error is logged + toasted but the app still renders so the user can navigate / sign out. Hotkey-press recording will fail at the network call with a clear error.
+
+**Known deferred work:**
+- **Modes table client-side sort/search**, **Realtime** (push updates when changes happen on another device) — out of scope.
+- **`user_settings` sync** (theme, hotkey, default_mode_id) — those still live in localStorage. Migrating is straightforward when needed.
+- **"Delete my account and all data"** UI — schema is ready (`on delete cascade`); just needs an `Account` button + an Edge Function that calls `supabase.auth.admin.deleteUser`.
+- **Streaming token output for auto-paste** — still collected, then pasted as one Ctrl+V.
+- **Edge Function cold-start latency** — first call after a quiet period can be 200-800ms slower than warm. We'll see if this is acceptable in practice before adding any prewarming.
+
+**Files added / changed in Phase 15:**
+- `supabase/migrations/0005_seed_builtin_modes.sql`
+- `supabase/functions/{transcribe,cleanup}/index.ts`, `supabase/functions/README.md`
+- Rewrites: `src/lib/supabase.ts`, `src/lib/ai/index.ts`, `src/lib/store/{useModes,useAppMappings}.ts`, `src/lib/history.ts`, `src/routes/{Account,AuthGate,Settings}.tsx`, `src/App.tsx`
+- Removed: `src/lib/ai/AzureFoundryProvider.ts`, `src/lib/store/builtinModes.ts`
 
 ---
 

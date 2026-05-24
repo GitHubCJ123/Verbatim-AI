@@ -110,6 +110,12 @@ export default function Overlay() {
       return;
     }
     const activeMode = modeRef.current ?? getDefaultMode();
+    if (!activeMode) {
+      setError("No Modes available. Sign in or wait for sync.");
+      setState("error");
+      void hideAfter(3500);
+      return;
+    }
     const vocabularyTerms = loadVocabulary().map((t) => t.term);
 
     try {
@@ -215,6 +221,7 @@ export default function Overlay() {
 
   const handleReviewRegenerate = async () => {
     const activeMode = modeRef.current ?? getDefaultMode();
+    if (!activeMode) return;
     const vocab = loadVocabulary().map((t) => t.term);
     setState("polishing");
     try {

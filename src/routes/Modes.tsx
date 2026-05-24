@@ -80,8 +80,8 @@ export default function Modes() {
     reorder(arrayMove(ids, oldIndex, newIndex));
   };
 
-  const handleCreate = () => {
-    const m = create({
+  const handleCreate = async () => {
+    const m = await create({
       name: "New Mode",
       icon: "Sparkles",
       description: "Describe what this mode does.",
@@ -112,12 +112,12 @@ export default function Modes() {
                 mode={mode}
                 isDefault={mode.id === defaultModeId}
                 onEdit={() => navigate(`/modes/editor?id=${mode.id}`)}
-                onDuplicate={() => {
-                  const dup = duplicate(mode.id);
+                onDuplicate={async () => {
+                  const dup = await duplicate(mode.id);
                   if (dup) navigate(`/modes/editor?id=${dup.id}`);
                 }}
                 onDelete={() => {
-                  if (confirm(`Delete "${mode.name}"?`)) remove(mode.id);
+                  if (confirm(`Delete "${mode.name}"?`)) void remove(mode.id);
                 }}
                 onSetDefault={() => {
                   setDefault(mode.id);

@@ -1,8 +1,9 @@
 import { useLocation, Link } from "react-router-dom";
 import { Mic, ChevronRight } from "lucide-react";
 import { Button } from "../ui/Button";
-import { Avatar, AvatarFallback } from "../ui/Avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "../ui/Avatar";
 import { Kbd } from "../ui/Kbd";
+import { useProfile, initials } from "../../lib/store/useProfile";
 
 const routeLabels: Record<string, string> = {
   "": "Home",
@@ -17,6 +18,8 @@ const routeLabels: Record<string, string> = {
 
 export function TopBar() {
   const { pathname } = useLocation();
+  const profile = useProfile((s) => s.profile);
+  const initialsText = profile ? initials() : "SW";
   const segments = pathname.split("/").filter(Boolean);
   const crumbs = segments.length === 0 ? ["Home"] : segments.map((s) => routeLabels[s] ?? s);
 
@@ -49,7 +52,8 @@ export function TopBar() {
           <Kbd className="ml-1">Ctrl Space</Kbd>
         </Button>
         <Avatar className="h-8 w-8">
-          <AvatarFallback>SW</AvatarFallback>
+          {profile?.avatar_url && <AvatarImage src={profile.avatar_url} alt={initialsText} />}
+          <AvatarFallback>{initialsText}</AvatarFallback>
         </Avatar>
       </div>
     </header>

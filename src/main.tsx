@@ -7,14 +7,32 @@ import { installHotkeyListeners } from "./lib/hotkey";
 import { toast } from "./components/ui/Toast";
 import { addTranscription, type OutputAction } from "./lib/history";
 import { useAuth } from "./lib/store/useAuth";
+import { startRecording as bridgeStart, stopRecording as bridgeStop } from "./lib/recording-bridge";
+import { resolveModeAtPress } from "./lib/modeResolver";
+import { loadPreferences, notify } from "./lib/preferences";
 
-// Install global hotkey event listeners as soon as the app boots. The
-// actual shortcut is registered Rust-side at startup (default
-// CommandOrControl+Space) and can be changed from Settings.
+// Install global hotkey event listeners as soon as the app boots.
 void installHotkeyListeners();
 
 // Initialize Supabase auth (no-op if URL/anon key not configured yet).
 void useAuth.getState().init();
+
+// Tray menu actions.
+let trayRecording = false;
+void listen("tray:record", async () => {
+  if (!trayRecording) {
+    const { mode } = await resolveModeAtPress();
+    if (!mode) {
+      console.warn("[SuperWisper] tray record: no modes available");
+      return;
+    }
+    await bridgeStart(mode.name, mode.id);
+    trayRecording = true;
+  } else {
+    await bridgeStop();
+    trayRecording = false;
+  }
+});
 
 // Track the most recent transcription so review-mode resolution
 // (`recording:reviewed`) can attach the final output_action.
@@ -53,6 +71,9 @@ void listen<PendingResult>("recording:result", async (e) => {
     description: e.payload.cleaned.slice(0, 240),
     duration: 6000,
   });
+  if (loadPreferences().notifyOnSuccess) {
+    void notify("Transcribed", e.payload.cleaned.slice(0, 240));
+  }
   // For auto-paste, persist immediately with action 'pasted' (review
   // mode waits for the user to commit).
   if (e.payload.outputStyle === "paste") {

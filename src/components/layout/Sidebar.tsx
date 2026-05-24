@@ -13,6 +13,8 @@ import {
 import { Input } from "../ui/Input";
 import { Kbd } from "../ui/Kbd";
 import { cn } from "../../lib/utils";
+import { useAuth } from "../../lib/store/useAuth";
+import { useProfile } from "../../lib/store/useProfile";
 
 const navItems = [
   { to: "/", label: "Home", icon: Home, end: true },
@@ -25,6 +27,10 @@ const navItems = [
 ];
 
 export function Sidebar() {
+  const user = useAuth((s) => s.user);
+  const profile = useProfile((s) => s.profile);
+  const name = profile?.display_name || user?.email?.split("@")[0] || "Signed in";
+  const sub = user?.email ?? "—";
   return (
     <aside className="flex h-full w-60 shrink-0 flex-col gap-4 border-r border-border-subtle bg-bg-base/60 px-3 py-4 backdrop-blur-xl">
       {/* Logo */}
@@ -72,9 +78,9 @@ export function Sidebar() {
           <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-50" />
           <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-success" />
         </span>
-        <div className="flex flex-col leading-tight">
-          <span className="text-text-primary">Local mode</span>
-          <span className="text-[10px] text-text-muted">Not signed in</span>
+        <div className="flex min-w-0 flex-col leading-tight">
+          <span className="truncate text-text-primary">{name}</span>
+          <span className="truncate text-[10px] text-text-muted">{sub}</span>
         </div>
       </div>
     </aside>

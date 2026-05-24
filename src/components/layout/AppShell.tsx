@@ -3,7 +3,6 @@ import { Outlet, useLocation } from "react-router-dom";
 import { Sidebar } from "./Sidebar";
 import { TopBar } from "./TopBar";
 import { TooltipProvider } from "../ui/Tooltip";
-import { Toaster } from "../ui/Toast";
 
 export function AppShell() {
   const { pathname } = useLocation();
@@ -27,7 +26,6 @@ export function AppShell() {
           </main>
         </div>
       </div>
-      <Toaster />
     </TooltipProvider>
   );
 }

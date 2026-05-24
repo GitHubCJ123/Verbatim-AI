@@ -1,15 +1,7 @@
 /**
- * Transcription history.
- *
- * - When signed in and Supabase is configured → reads/writes against
- *   `public.transcriptions`.
- * - Otherwise → localStorage under `sw.history`.
- *
- * This is the *only* table we route through Supabase in v1; modes,
- * vocabulary, and app-mappings remain local. Full bi-directional sync
- * for those is deferred.
+ * Transcription history — Supabase only (online-only architecture).
  */
-import { getSupabase } from "./supabase";
+import { supabase } from "./supabase";
 import { useAuth } from "./store/useAuth";
 import { newId, nowIso } from "../types/mode";
 
@@ -43,38 +35,23 @@ export interface CreateTranscriptionInput {
   languageDetected?: string | null;
 }
 
-const LS_KEY = "sw.history";
-const LS_LIMIT = 500; // safety cap for local store
-
 function countWords(s: string): number {
   return s.trim().split(/\s+/).filter(Boolean).length;
 }
 
-function loadLocal(): Transcription[] {
-  try {
-    const raw = localStorage.getItem(LS_KEY);
-    return raw ? (JSON.parse(raw) as Transcription[]) : [];
-  } catch {
-    return [];
-  }
-}
-
-function saveLocal(rows: Transcription[]) {
-  const trimmed = rows.slice(0, LS_LIMIT);
-  localStorage.setItem(LS_KEY, JSON.stringify(trimmed));
-}
-
-function isRemoteAvailable(): boolean {
-  const client = getSupabase();
-  const user = useAuth.getState().user;
-  return Boolean(client && user);
+function requireUserId(): string {
+  const id = useAuth.getState().user?.id;
+  if (!id) throw new Error("Not signed in.");
+  return id;
 }
 
 export async function addTranscription(
   input: CreateTranscriptionInput,
 ): Promise<Transcription> {
+  const userId = requireUserId();
   const row: Transcription = {
     id: newId(),
+    user_id: userId,
     mode_id: input.modeId,
     mode_name_snap: input.modeNameSnap ?? null,
     raw_text: input.rawText,
@@ -87,88 +64,38 @@ export async function addTranscription(
     language_detected: input.languageDetected ?? null,
     created_at: nowIso(),
   };
-
-  if (isRemoteAvailable()) {
-    const client = getSupabase()!;
-    const userId = useAuth.getState().user!.id;
-    const { data, error } = await client
-      .from("transcriptions")
-      .insert({
-        // FK to modes is set null since modes stay local-only for now.
-        mode_id: null,
-        mode_name_snap: row.mode_name_snap,
-        raw_text: row.raw_text,
-        cleaned_text: row.cleaned_text,
-        audio_duration_ms: row.audio_duration_ms,
-        word_count: row.word_count,
-        app_executable: row.app_executable,
-        app_window_title: row.app_window_title,
-        output_action: row.output_action,
-        language_detected: row.language_detected,
-        user_id: userId,
-      })
-      .select()
-      .single();
-    if (error) throw new Error(error.message);
-    return data as Transcription;
-  }
-
-  const all = loadLocal();
-  all.unshift(row);
-  saveLocal(all);
-  return row;
+  const { data, error } = await supabase
+    .from("transcriptions")
+    .insert(row)
+    .select()
+    .single();
+  if (error) throw new Error(error.message);
+  return data as Transcription;
 }
 
-export async function listTranscriptions(opts: { limit?: number; query?: string } = {}): Promise<
-  Transcription[]
-> {
+export async function listTranscriptions(
+  opts: { limit?: number; query?: string } = {},
+): Promise<Transcription[]> {
   const limit = opts.limit ?? 200;
   const q = opts.query?.trim() ?? "";
-
-  if (isRemoteAvailable()) {
-    const client = getSupabase()!;
-    let query = client
-      .from("transcriptions")
-      .select("*")
-      .order("created_at", { ascending: false })
-      .limit(limit);
-    if (q) {
-      // Postgres trigram-friendly: ilike on both columns.
-      query = query.or(`cleaned_text.ilike.%${q}%,raw_text.ilike.%${q}%`);
-    }
-    const { data, error } = await query;
-    if (error) throw new Error(error.message);
-    return (data ?? []) as Transcription[];
-  }
-
-  const all = loadLocal();
-  const filtered = q
-    ? all.filter((t) => {
-        const blob = `${t.cleaned_text ?? ""} ${t.raw_text ?? ""}`.toLowerCase();
-        return blob.includes(q.toLowerCase());
-      })
-    : all;
-  return filtered.slice(0, limit);
+  let query = supabase
+    .from("transcriptions")
+    .select("*")
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (q) query = query.or(`cleaned_text.ilike.%${q}%,raw_text.ilike.%${q}%`);
+  const { data, error } = await query;
+  if (error) throw new Error(error.message);
+  return (data ?? []) as Transcription[];
 }
 
 export async function deleteTranscription(id: string): Promise<void> {
-  if (isRemoteAvailable()) {
-    const client = getSupabase()!;
-    const { error } = await client.from("transcriptions").delete().eq("id", id);
-    if (error) throw new Error(error.message);
-    return;
-  }
-  const next = loadLocal().filter((t) => t.id !== id);
-  saveLocal(next);
+  const { error } = await supabase.from("transcriptions").delete().eq("id", id);
+  if (error) throw new Error(error.message);
 }
 
 export async function clearAllTranscriptions(): Promise<void> {
-  if (isRemoteAvailable()) {
-    const client = getSupabase()!;
-    const userId = useAuth.getState().user!.id;
-    const { error } = await client.from("transcriptions").delete().eq("user_id", userId);
-    if (error) throw new Error(error.message);
-    return;
-  }
-  saveLocal([]);
+  const userId = requireUserId();
+  const { error } = await supabase.from("transcriptions").delete().eq("user_id", userId);
+  if (error) throw new Error(error.message);
 }

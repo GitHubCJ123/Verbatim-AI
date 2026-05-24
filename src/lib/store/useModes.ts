@@ -1,38 +1,33 @@
 /**
- * Modes store — Zustand with localStorage persistence.
+ * Modes + Vocabulary stores — Supabase is the source of truth.
  *
- * Both Tauri windows share the same origin so `localStorage` is
- * shared. Reads from the *overlay* go through the helper functions
- * (`loadModes`, `getModeById`) so they always see the latest data
- * even though the overlay process keeps its in-memory store alive
- * across recordings.
+ * localStorage acts as a write-through cache so the overlay window
+ * (separate JS context, hotkey-press hot path) can read synchronously
+ * without going to the network. Whenever the main window mutates
+ * data, we update Supabase, then refresh the cache via `hydrateAll`.
  */
 import { create } from "zustand";
 import type { Mode, VocabularyTerm } from "../../types/mode";
 import { newId, nowIso } from "../../types/mode";
-import { makeBuiltinModes } from "./builtinModes";
+import { supabase } from "../supabase";
+import { useAuth } from "./useAuth";
 
 const LS_MODES = "sw.modes";
 const LS_VOCAB = "sw.vocab";
 const LS_DEFAULT_MODE = "sw.modes.default_id";
 
-// ─── Storage helpers (work even when the store isn't mounted) ───────────
+// ─── Storage helpers (sync reads for the overlay) ─────────────────────
 
 export function loadModes(): Mode[] {
   try {
     const raw = localStorage.getItem(LS_MODES);
-    if (!raw) {
-      const seeded = makeBuiltinModes();
-      localStorage.setItem(LS_MODES, JSON.stringify(seeded));
-      return seeded;
-    }
-    return JSON.parse(raw) as Mode[];
+    return raw ? (JSON.parse(raw) as Mode[]) : [];
   } catch {
-    return makeBuiltinModes();
+    return [];
   }
 }
 
-function saveModes(modes: Mode[]) {
+function saveModesCache(modes: Mode[]) {
   localStorage.setItem(LS_MODES, JSON.stringify(modes));
 }
 
@@ -41,14 +36,11 @@ export function getModeById(id: string | null | undefined): Mode | null {
   return loadModes().find((m) => m.id === id) ?? null;
 }
 
-export function getDefaultMode(): Mode {
+export function getDefaultMode(): Mode | null {
   const all = loadModes();
+  if (all.length === 0) return null;
   const id = localStorage.getItem(LS_DEFAULT_MODE);
   return all.find((m) => m.id === id) ?? all[0];
-}
-
-export function setDefaultModeId(id: string) {
-  localStorage.setItem(LS_DEFAULT_MODE, id);
 }
 
 export function loadVocabulary(): VocabularyTerm[] {
@@ -60,183 +52,356 @@ export function loadVocabulary(): VocabularyTerm[] {
   }
 }
 
-function saveVocab(terms: VocabularyTerm[]) {
+function saveVocabCache(terms: VocabularyTerm[]) {
   localStorage.setItem(LS_VOCAB, JSON.stringify(terms));
 }
 
-// ─── Modes Zustand store ────────────────────────────────────────────────
+// ─── Supabase row → domain mapping ────────────────────────────────────
+
+interface RemoteMode {
+  id: string;
+  user_id: string;
+  name: string;
+  icon: string | null;
+  description: string | null;
+  system_prompt: string;
+  language: string;
+  target_language: string | null;
+  output_style: "paste" | "review";
+  hotkey: string | null;
+  push_to_talk: boolean;
+  save_history: boolean;
+  is_builtin: boolean;
+  position: number;
+  created_at: string;
+  updated_at: string;
+}
+
+function rowToMode(r: RemoteMode): Mode {
+  return {
+    id: r.id,
+    name: r.name,
+    icon: r.icon ?? "Sparkles",
+    description: r.description ?? "",
+    systemPrompt: r.system_prompt,
+    language: r.language ?? "auto",
+    targetLanguage: r.target_language,
+    outputStyle: r.output_style,
+    hotkey: r.hotkey,
+    pushToTalk: r.push_to_talk,
+    saveHistory: r.save_history,
+    isBuiltin: r.is_builtin,
+    position: r.position,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+  };
+}
+
+function modeToRow(m: Mode, userId: string): RemoteMode {
+  return {
+    id: m.id,
+    user_id: userId,
+    name: m.name,
+    icon: m.icon,
+    description: m.description,
+    system_prompt: m.systemPrompt,
+    language: m.language,
+    target_language: m.targetLanguage,
+    output_style: m.outputStyle,
+    hotkey: m.hotkey,
+    push_to_talk: m.pushToTalk,
+    save_history: m.saveHistory,
+    is_builtin: m.isBuiltin,
+    position: m.position,
+    created_at: m.createdAt,
+    updated_at: m.updatedAt,
+  };
+}
+
+interface RemoteVocab {
+  id: string;
+  user_id: string;
+  term: string;
+  pronunciation: string | null;
+  notes: string | null;
+  created_at: string;
+}
+
+function rowToVocab(r: RemoteVocab): VocabularyTerm {
+  return {
+    id: r.id,
+    term: r.term,
+    pronunciation: r.pronunciation,
+    notes: r.notes,
+    createdAt: r.created_at,
+  };
+}
+
+// ─── Zustand stores ───────────────────────────────────────────────────
 
 interface ModesState {
   modes: Mode[];
   defaultModeId: string | null;
-  create: (input: Partial<Mode> & Pick<Mode, "name">) => Mode;
-  update: (id: string, patch: Partial<Mode>) => void;
-  remove: (id: string) => void;
-  duplicate: (id: string) => Mode | null;
-  reorder: (orderedIds: string[]) => void;
+  loading: boolean;
+  hydrate: () => Promise<void>;
+  clear: () => void;
+  create: (input: Partial<Mode> & Pick<Mode, "name">) => Promise<Mode>;
+  update: (id: string, patch: Partial<Mode>) => Promise<void>;
+  remove: (id: string) => Promise<void>;
+  duplicate: (id: string) => Promise<Mode | null>;
+  reorder: (orderedIds: string[]) => Promise<void>;
   setDefault: (id: string) => void;
-  resetToBuiltins: () => void;
 }
 
-export const useModes = create<ModesState>((set, get) => {
-  const initialModes = loadModes();
-  const initialDefault =
-    localStorage.getItem(LS_DEFAULT_MODE) ?? initialModes[0]?.id ?? null;
+function requireUserId(): string {
+  const id = useAuth.getState().user?.id;
+  if (!id) throw new Error("Not signed in.");
+  return id;
+}
 
-  return {
-    modes: initialModes,
-    defaultModeId: initialDefault,
+export const useModes = create<ModesState>((set, get) => ({
+  modes: loadModes(),
+  defaultModeId: localStorage.getItem(LS_DEFAULT_MODE),
+  loading: false,
 
-    create: (input) => {
-      const now = nowIso();
-      const mode: Mode = {
-        id: newId(),
-        name: input.name,
-        icon: input.icon ?? "Sparkles",
-        description: input.description ?? "",
-        systemPrompt: input.systemPrompt ?? "Clean up the transcript.",
-        language: input.language ?? "auto",
-        targetLanguage: input.targetLanguage ?? null,
-        outputStyle: input.outputStyle ?? "paste",
-        hotkey: input.hotkey ?? null,
-        pushToTalk: input.pushToTalk ?? true,
-        saveHistory: input.saveHistory ?? true,
-        isBuiltin: false,
-        position: get().modes.length,
-        createdAt: now,
-        updatedAt: now,
-      };
-      const next = [...get().modes, mode];
-      saveModes(next);
-      set({ modes: next });
-      return mode;
-    },
+  hydrate: async () => {
+    set({ loading: true });
+    try {
+      const { data, error } = await supabase
+        .from("modes")
+        .select("*")
+        .order("position", { ascending: true });
+      if (error) throw new Error(error.message);
+      const modes = (data as RemoteMode[]).map(rowToMode);
+      saveModesCache(modes);
+      const stored = localStorage.getItem(LS_DEFAULT_MODE);
+      const defId = modes.some((m) => m.id === stored)
+        ? stored
+        : (modes[0]?.id ?? null);
+      if (defId) localStorage.setItem(LS_DEFAULT_MODE, defId);
+      set({ modes, defaultModeId: defId, loading: false });
+    } catch (e) {
+      set({ loading: false });
+      throw e;
+    }
+  },
 
-    update: (id, patch) => {
-      const next = get().modes.map((m) =>
-        m.id === id ? { ...m, ...patch, updatedAt: nowIso() } : m,
-      );
-      saveModes(next);
-      set({ modes: next });
-    },
+  clear: () => {
+    localStorage.removeItem(LS_MODES);
+    localStorage.removeItem(LS_DEFAULT_MODE);
+    set({ modes: [], defaultModeId: null });
+  },
 
-    remove: (id) => {
-      const next = get().modes.filter((m) => m.id !== id);
-      saveModes(next);
-      set({ modes: next });
-      if (get().defaultModeId === id) {
-        const fallback = next[0]?.id ?? null;
-        if (fallback) localStorage.setItem(LS_DEFAULT_MODE, fallback);
-        else localStorage.removeItem(LS_DEFAULT_MODE);
-        set({ defaultModeId: fallback });
-      }
-    },
+  create: async (input) => {
+    const userId = requireUserId();
+    const now = nowIso();
+    const mode: Mode = {
+      id: newId(),
+      name: input.name,
+      icon: input.icon ?? "Sparkles",
+      description: input.description ?? "",
+      systemPrompt: input.systemPrompt ?? "Clean up the transcript.",
+      language: input.language ?? "auto",
+      targetLanguage: input.targetLanguage ?? null,
+      outputStyle: input.outputStyle ?? "paste",
+      hotkey: input.hotkey ?? null,
+      pushToTalk: input.pushToTalk ?? true,
+      saveHistory: input.saveHistory ?? true,
+      isBuiltin: false,
+      position: get().modes.length,
+      createdAt: now,
+      updatedAt: now,
+    };
+    const { error } = await supabase.from("modes").insert(modeToRow(mode, userId));
+    if (error) throw new Error(error.message);
+    const next = [...get().modes, mode];
+    saveModesCache(next);
+    set({ modes: next });
+    return mode;
+  },
 
-    duplicate: (id) => {
-      const src = get().modes.find((m) => m.id === id);
-      if (!src) return null;
-      const now = nowIso();
-      const copy: Mode = {
-        ...src,
-        id: newId(),
-        name: `${src.name} (copy)`,
-        isBuiltin: false,
-        position: get().modes.length,
-        createdAt: now,
-        updatedAt: now,
-      };
-      const next = [...get().modes, copy];
-      saveModes(next);
-      set({ modes: next });
-      return copy;
-    },
+  update: async (id, patch) => {
+    const updated = nowIso();
+    const cur = get().modes.find((m) => m.id === id);
+    if (!cur) return;
+    const merged = { ...cur, ...patch, updatedAt: updated };
+    const userId = requireUserId();
+    const { error } = await supabase
+      .from("modes")
+      .update(modeToRow(merged, userId))
+      .eq("id", id);
+    if (error) throw new Error(error.message);
+    const next = get().modes.map((m) => (m.id === id ? merged : m));
+    saveModesCache(next);
+    set({ modes: next });
+  },
 
-    reorder: (orderedIds) => {
-      const map = new Map(get().modes.map((m) => [m.id, m]));
-      const next = orderedIds
-        .map((id, position) => {
-          const m = map.get(id);
-          return m ? { ...m, position } : null;
-        })
-        .filter((m): m is Mode => m !== null);
-      saveModes(next);
-      set({ modes: next });
-    },
+  remove: async (id) => {
+    const { error } = await supabase.from("modes").delete().eq("id", id);
+    if (error) throw new Error(error.message);
+    const next = get().modes.filter((m) => m.id !== id);
+    saveModesCache(next);
+    set({ modes: next });
+    if (get().defaultModeId === id) {
+      const fallback = next[0]?.id ?? null;
+      if (fallback) localStorage.setItem(LS_DEFAULT_MODE, fallback);
+      else localStorage.removeItem(LS_DEFAULT_MODE);
+      set({ defaultModeId: fallback });
+    }
+  },
 
-    setDefault: (id) => {
-      localStorage.setItem(LS_DEFAULT_MODE, id);
-      set({ defaultModeId: id });
-    },
+  duplicate: async (id) => {
+    const src = get().modes.find((m) => m.id === id);
+    if (!src) return null;
+    return get().create({
+      ...src,
+      name: `${src.name} (copy)`,
+    });
+  },
 
-    resetToBuiltins: () => {
-      const fresh = makeBuiltinModes();
-      saveModes(fresh);
-      localStorage.setItem(LS_DEFAULT_MODE, fresh[0].id);
-      set({ modes: fresh, defaultModeId: fresh[0].id });
-    },
-  };
-});
+  reorder: async (orderedIds) => {
+    const map = new Map(get().modes.map((m) => [m.id, m]));
+    const next: Mode[] = orderedIds
+      .map((id, position) => {
+        const m = map.get(id);
+        return m ? { ...m, position, updatedAt: nowIso() } : null;
+      })
+      .filter((m): m is Mode => m !== null);
+    saveModesCache(next);
+    set({ modes: next });
+    const userId = requireUserId();
+    // Bulk position update — one round trip per mode is fine for small N.
+    await Promise.all(
+      next.map((m) =>
+        supabase
+          .from("modes")
+          .update({ position: m.position, updated_at: m.updatedAt })
+          .eq("id", m.id)
+          .eq("user_id", userId),
+      ),
+    );
+  },
 
-// ─── Vocabulary Zustand store ───────────────────────────────────────────
+  setDefault: (id) => {
+    localStorage.setItem(LS_DEFAULT_MODE, id);
+    set({ defaultModeId: id });
+  },
+}));
+
+// ─── Vocabulary ───────────────────────────────────────────────────────
 
 interface VocabularyState {
   terms: VocabularyTerm[];
-  add: (input: Pick<VocabularyTerm, "term"> & Partial<VocabularyTerm>) => VocabularyTerm;
-  update: (id: string, patch: Partial<VocabularyTerm>) => void;
-  remove: (id: string) => void;
-  importMany: (terms: Array<Pick<VocabularyTerm, "term"> & Partial<VocabularyTerm>>) => number;
+  loading: boolean;
+  hydrate: () => Promise<void>;
   clear: () => void;
+  add: (input: Pick<VocabularyTerm, "term"> & Partial<VocabularyTerm>) => Promise<VocabularyTerm>;
+  update: (id: string, patch: Partial<VocabularyTerm>) => Promise<void>;
+  remove: (id: string) => Promise<void>;
+  importMany: (inputs: Array<Pick<VocabularyTerm, "term"> & Partial<VocabularyTerm>>) => Promise<number>;
 }
 
 export const useVocabulary = create<VocabularyState>((set, get) => ({
   terms: loadVocabulary(),
+  loading: false,
 
-  add: (input) => {
-    const term: VocabularyTerm = {
+  hydrate: async () => {
+    set({ loading: true });
+    try {
+      const { data, error } = await supabase
+        .from("vocabulary")
+        .select("*")
+        .order("created_at", { ascending: true });
+      if (error) throw new Error(error.message);
+      const terms = (data as RemoteVocab[]).map(rowToVocab);
+      saveVocabCache(terms);
+      set({ terms, loading: false });
+    } catch (e) {
+      set({ loading: false });
+      throw e;
+    }
+  },
+
+  clear: () => {
+    localStorage.removeItem(LS_VOCAB);
+    set({ terms: [] });
+  },
+
+  add: async (input) => {
+    const userId = requireUserId();
+    const t: VocabularyTerm = {
       id: newId(),
       term: input.term,
       pronunciation: input.pronunciation ?? null,
       notes: input.notes ?? null,
       createdAt: nowIso(),
     };
-    const next = [...get().terms, term];
-    saveVocab(next);
+    const { error } = await supabase.from("vocabulary").insert({
+      id: t.id,
+      user_id: userId,
+      term: t.term,
+      pronunciation: t.pronunciation,
+      notes: t.notes,
+      created_at: t.createdAt,
+    });
+    if (error) throw new Error(error.message);
+    const next = [...get().terms, t];
+    saveVocabCache(next);
     set({ terms: next });
-    return term;
+    return t;
   },
 
-  update: (id, patch) => {
+  update: async (id, patch) => {
+    const { error } = await supabase
+      .from("vocabulary")
+      .update({
+        term: patch.term,
+        pronunciation: patch.pronunciation ?? null,
+        notes: patch.notes ?? null,
+      })
+      .eq("id", id);
+    if (error) throw new Error(error.message);
     const next = get().terms.map((t) => (t.id === id ? { ...t, ...patch } : t));
-    saveVocab(next);
+    saveVocabCache(next);
     set({ terms: next });
   },
 
-  remove: (id) => {
+  remove: async (id) => {
+    const { error } = await supabase.from("vocabulary").delete().eq("id", id);
+    if (error) throw new Error(error.message);
     const next = get().terms.filter((t) => t.id !== id);
-    saveVocab(next);
+    saveVocabCache(next);
     set({ terms: next });
   },
 
-  importMany: (inputs) => {
+  importMany: async (inputs) => {
+    const userId = requireUserId();
     const additions = inputs
       .filter((i) => i.term && i.term.trim().length > 0)
-      .map(
-        (i): VocabularyTerm => ({
-          id: newId(),
-          term: i.term.trim(),
-          pronunciation: i.pronunciation ?? null,
-          notes: i.notes ?? null,
-          createdAt: nowIso(),
-        }),
-      );
-    const next = [...get().terms, ...additions];
-    saveVocab(next);
-    set({ terms: next });
+      .map((i) => ({
+        id: newId(),
+        user_id: userId,
+        term: i.term.trim(),
+        pronunciation: i.pronunciation ?? null,
+        notes: i.notes ?? null,
+        created_at: nowIso(),
+      }));
+    if (additions.length === 0) return 0;
+    const { error } = await supabase.from("vocabulary").insert(additions);
+    if (error) throw new Error(error.message);
+    await get().hydrate();
     return additions.length;
   },
-
-  clear: () => {
-    saveVocab([]);
-    set({ terms: [] });
-  },
 }));
+
+// ─── Convenience hydrate-everything ──────────────────────────────────
+
+export async function hydrateAll(): Promise<void> {
+  if (!useAuth.getState().user) return;
+  await Promise.all([useModes.getState().hydrate(), useVocabulary.getState().hydrate()]);
+}
+
+export function clearAllCaches(): void {
+  useModes.getState().clear();
+  useVocabulary.getState().clear();
+}

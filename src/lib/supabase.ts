@@ -1,54 +1,29 @@
 /**
- * Supabase client (lazy — only constructed when the user has filled in
- * URL + anon key in Settings → Sync). URL/anon-key are public-by-design
- * so localStorage is fine for them (RLS protects the actual data).
+ * Supabase client — built once at module load from VITE_* env vars.
+ * SuperWisper is online-only; if either var is missing the app shows
+ * a fatal error screen instead of trying to start.
  */
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
-const LS_KEY = "sw.supabase.config";
+const URL = import.meta.env.VITE_SUPABASE_URL as string | undefined;
+const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
 
-export interface SupabaseConfig {
-  url: string;
-  anonKey: string;
-}
+export const isSupabaseConfigured = Boolean(URL && ANON_KEY);
 
-export function loadSupabaseConfig(): Partial<SupabaseConfig> {
-  try {
-    const raw = localStorage.getItem(LS_KEY);
-    if (!raw) return {};
-    return JSON.parse(raw) as Partial<SupabaseConfig>;
-  } catch {
-    return {};
-  }
-}
-
-export function saveSupabaseConfig(cfg: Partial<SupabaseConfig>): void {
-  localStorage.setItem(LS_KEY, JSON.stringify(cfg));
-}
-
-export function isConfigured(cfg: Partial<SupabaseConfig>): cfg is SupabaseConfig {
-  return Boolean(cfg.url && cfg.anonKey);
-}
-
-let cached: { url: string; anonKey: string; client: SupabaseClient } | null = null;
+export const supabase: SupabaseClient = isSupabaseConfigured
+  ? createClient(URL!, ANON_KEY!, {
+      auth: { persistSession: true, autoRefreshToken: true },
+    })
+  : (null as unknown as SupabaseClient);
 
 export function getSupabase(): SupabaseClient | null {
-  const cfg = loadSupabaseConfig();
-  if (!isConfigured(cfg)) {
-    cached = null;
-    return null;
-  }
-  if (cached && cached.url === cfg.url && cached.anonKey === cfg.anonKey) {
-    return cached.client;
-  }
-  const client = createClient(cfg.url, cfg.anonKey, {
-    auth: { persistSession: true, autoRefreshToken: true },
-  });
-  cached = { url: cfg.url, anonKey: cfg.anonKey, client };
-  return client;
+  return isSupabaseConfigured ? supabase : null;
 }
 
-/** Reset the memoized client; call after the user changes URL/anon key. */
-export function resetSupabase(): void {
-  cached = null;
+export function supabaseUrl(): string {
+  return URL ?? "";
+}
+
+export function supabaseAnonKey(): string {
+  return ANON_KEY ?? "";
 }

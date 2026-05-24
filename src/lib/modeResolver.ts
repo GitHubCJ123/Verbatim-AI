@@ -16,12 +16,13 @@ export function resolveModeFor(
   activeWindow: ActiveWindow | null,
   mappings: AppMapping[],
   modes: Mode[],
-): Mode {
-  if (!activeWindow || !activeWindow.exe) return getDefaultMode();
+): Mode | null {
+  const fallback = getDefaultMode();
+  if (!activeWindow || !activeWindow.exe) return fallback;
   const exe = activeWindow.exe.toLowerCase();
 
   const candidates = mappings.filter((m) => m.appExecutable === exe);
-  if (candidates.length === 0) return getDefaultMode();
+  if (candidates.length === 0) return fallback;
 
   // Prefer the one with a matching title regex, then a non-title-bound one.
   for (const c of candidates) {
@@ -36,12 +37,12 @@ export function resolveModeFor(
       // ignore bad regex
     }
   }
-  const fallback = candidates.find((c) => !c.matchWindowTitle);
-  if (fallback) {
-    const m = modes.find((x) => x.id === fallback.modeId);
+  const fallbackMapping = candidates.find((c) => !c.matchWindowTitle);
+  if (fallbackMapping) {
+    const m = modes.find((x) => x.id === fallbackMapping.modeId);
     if (m) return m;
   }
-  return getDefaultMode();
+  return fallback;
 }
 
 /**
@@ -49,7 +50,7 @@ export function resolveModeFor(
  * handler (no React subscriptions in that path).
  */
 export async function resolveModeAtPress(): Promise<{
-  mode: Mode;
+  mode: Mode | null;
   activeWindow: ActiveWindow | null;
 }> {
   let aw: ActiveWindow | null = null;

@@ -13,9 +13,13 @@
     "core:window:allow-set-size",
     "core:window:allow-outer-size",
     "core:window:allow-current-monitor",
+    "core:window:allow-set-focus",
+    "core:window:allow-unminimize",
     "opener:default",
     "global-shortcut:default",
     "clipboard-manager:allow-write-text",
-    "clipboard-manager:allow-read-text"
+    "clipboard-manager:allow-read-text",
+    "autostart:default",
+    "notification:default"
   ]
 }

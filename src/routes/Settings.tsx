@@ -1,31 +1,20 @@
 import { useEffect, useState } from "react";
-import { Loader2, LogOut } from "lucide-react";
 import { toast } from "../components/ui/Toast";
 import { PageContainer, PageHeader } from "../components/layout/PageHeader";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "../components/ui/Tabs";
 import { Card, CardContent } from "../components/ui/Card";
 import { Switch } from "../components/ui/Switch";
-import { Input } from "../components/ui/Input";
 import { Button } from "../components/ui/Button";
-import { Badge } from "../components/ui/Badge";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "../components/ui/Select";
 import { HotkeyRecorder } from "../components/settings/HotkeyRecorder";
 import { applyHotkey, loadHotkeyConfig, saveHotkeyConfig } from "../lib/hotkey";
 import {
-  AzureFoundryProvider,
-  isConfigured,
-  loadAzureConfig,
-  saveAzureConfig,
-  type AzureConfig,
-} from "../lib/ai";
-import {
-  isConfigured as supabaseIsConfigured,
-  loadSupabaseConfig,
-  saveSupabaseConfig,
-  resetSupabase,
-  type SupabaseConfig,
-} from "../lib/supabase";
-import { useAuth } from "../lib/store/useAuth";
+  isAutostartEnabled,
+  loadPreferences,
+  setAutostart,
+  setNotifyOnSuccess,
+} from "../lib/preferences";
+import { useOnboarding } from "../lib/store/useOnboarding";
 
 interface RowProps {
   title: string;
@@ -47,26 +36,16 @@ function SettingRow({ title, description, children }: RowProps) {
 
 export default function Settings() {
   const [hotkey, setHotkey] = useState(() => loadHotkeyConfig());
-  const [azure, setAzure] = useState<Partial<AzureConfig>>(() => loadAzureConfig());
-  const [supabase, setSupabase] = useState<Partial<SupabaseConfig>>(() => loadSupabaseConfig());
-  const [testing, setTesting] = useState(false);
-  const user = useAuth((s) => s.user);
-  const signOut = useAuth((s) => s.signOut);
-  const initAuth = useAuth((s) => s.init);
+  const [autostart, setAutostartState] = useState(false);
+  const [notifyOnSuccess, setNotifyState] = useState(() => loadPreferences().notifyOnSuccess);
 
   useEffect(() => {
     saveHotkeyConfig(hotkey);
   }, [hotkey]);
 
   useEffect(() => {
-    saveAzureConfig(azure);
-  }, [azure]);
-
-  useEffect(() => {
-    saveSupabaseConfig(supabase);
-    resetSupabase();
-    void initAuth();
-  }, [supabase, initAuth]);
+    void isAutostartEnabled().then(setAutostartState);
+  }, []);
 
   const handleHotkeyChange = async (spec: string) => {
     try {
@@ -80,31 +59,6 @@ export default function Settings() {
     }
   };
 
-  const testConnection = async () => {
-    if (!isConfigured(azure)) {
-      toast.error("Fill in all four fields first.");
-      return;
-    }
-    setTesting(true);
-    try {
-      const provider = new AzureFoundryProvider(azure);
-      const health = await provider.health();
-      if (health.ok) {
-        toast.success("Connected to Azure", {
-          description: health.latencyMs ? `${health.latencyMs} ms round trip` : undefined,
-        });
-      } else {
-        toast.error("Couldn't reach Azure", { description: health.message });
-      }
-    } catch (e) {
-      toast.error("Test failed", {
-        description: e instanceof Error ? e.message : String(e),
-      });
-    } finally {
-      setTesting(false);
-    }
-  };
-
   return (
     <PageContainer>
       <PageHeader title="Settings" description="Configure SuperWisper to fit your workflow." />
@@ -113,9 +67,7 @@ export default function Settings() {
           <TabsTrigger value="general">General</TabsTrigger>
           <TabsTrigger value="recording">Recording</TabsTrigger>
           <TabsTrigger value="overlay">Overlay</TabsTrigger>
-          <TabsTrigger value="ai">AI</TabsTrigger>
           <TabsTrigger value="privacy">Privacy</TabsTrigger>
-          <TabsTrigger value="sync">Sync</TabsTrigger>
           <TabsTrigger value="advanced">Advanced</TabsTrigger>
         </TabsList>
 
@@ -123,7 +75,31 @@ export default function Settings() {
           <Card>
             <CardContent className="p-5 pt-5">
               <SettingRow title="Launch at startup" description="Open SuperWisper when Windows starts.">
-                <Switch defaultChecked />
+                <Switch
+                  checked={autostart}
+                  onCheckedChange={async (v) => {
+                    try {
+                      await setAutostart(v);
+                      setAutostartState(v);
+                    } catch (e) {
+                      toast.error("Couldn't update autostart", {
+                        description: e instanceof Error ? e.message : String(e),
+                      });
+                    }
+                  }}
+                />
+              </SettingRow>
+              <SettingRow
+                title="Notify on transcribe"
+                description="Show a system notification after each successful transcription."
+              >
+                <Switch
+                  checked={notifyOnSuccess}
+                  onCheckedChange={(v) => {
+                    setNotifyOnSuccess(v);
+                    setNotifyState(v);
+                  }}
+                />
               </SettingRow>
               <SettingRow title="Theme" description="Currently only dark is available.">
                 <Select defaultValue="dark">
@@ -177,71 +153,6 @@ export default function Settings() {
           </Card>
         </TabsContent>
 
-        <TabsContent value="ai">
-          <Card>
-            <CardContent className="p-5 pt-5">
-              <SettingRow title="Azure endpoint" description="https://your-resource.openai.azure.com">
-                <Input
-                  placeholder="https://…"
-                  className="w-80"
-                  value={azure.endpoint ?? ""}
-                  onChange={(e) => setAzure((a) => ({ ...a, endpoint: e.target.value }))}
-                />
-              </SettingRow>
-              <SettingRow title="API key" description="Stored locally. Moves to OS keyring later.">
-                <Input
-                  type="password"
-                  placeholder="•••••••••••••"
-                  className="w-80"
-                  value={azure.apiKey ?? ""}
-                  onChange={(e) => setAzure((a) => ({ ...a, apiKey: e.target.value }))}
-                />
-              </SettingRow>
-              <SettingRow title="Transcription deployment" description="The Whisper-equivalent deployment name.">
-                <Input
-                  placeholder="whisper-1"
-                  className="w-80"
-                  value={azure.transcribeDeployment ?? ""}
-                  onChange={(e) =>
-                    setAzure((a) => ({ ...a, transcribeDeployment: e.target.value }))
-                  }
-                />
-              </SettingRow>
-              <SettingRow title="Cleanup deployment" description="The chat model used to polish transcripts.">
-                <Input
-                  placeholder="gpt-4o-mini"
-                  className="w-80"
-                  value={azure.cleanupDeployment ?? ""}
-                  onChange={(e) =>
-                    setAzure((a) => ({ ...a, cleanupDeployment: e.target.value }))
-                  }
-                />
-              </SettingRow>
-              <div className="flex items-center justify-between gap-6 pt-4">
-                <div className="flex items-center gap-2 text-xs">
-                  {isConfigured(azure) ? (
-                    <Badge variant="success">Configured</Badge>
-                  ) : (
-                    <Badge variant="warning">Missing fields</Badge>
-                  )}
-                  <span className="text-text-muted">
-                    Credentials are saved locally and never leave your machine except to call Azure.
-                  </span>
-                </div>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={testConnection}
-                  disabled={testing || !isConfigured(azure)}
-                >
-                  {testing && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                  Test connection
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
         <TabsContent value="privacy">
           <Card>
             <CardContent className="p-5 pt-5">
@@ -263,54 +174,6 @@ export default function Settings() {
           </Card>
         </TabsContent>
 
-        <TabsContent value="sync">
-          <Card>
-            <CardContent className="p-5 pt-5">
-              <SettingRow title="Supabase URL" description="https://your-project.supabase.co">
-                <Input
-                  placeholder="https://…"
-                  className="w-80"
-                  value={supabase.url ?? ""}
-                  onChange={(e) => setSupabase((s) => ({ ...s, url: e.target.value }))}
-                />
-              </SettingRow>
-              <SettingRow
-                title="Anon key"
-                description="Safe to store locally — Row-Level Security gates real access."
-              >
-                <Input
-                  type="password"
-                  placeholder="eyJhbGciOi…"
-                  className="w-80"
-                  value={supabase.anonKey ?? ""}
-                  onChange={(e) => setSupabase((s) => ({ ...s, anonKey: e.target.value }))}
-                />
-              </SettingRow>
-              <div className="flex items-center justify-between gap-6 pt-4">
-                <div className="flex items-center gap-2 text-xs">
-                  {!supabaseIsConfigured(supabase) ? (
-                    <Badge variant="warning">Not configured</Badge>
-                  ) : user ? (
-                    <Badge variant="success">Signed in as {user.email}</Badge>
-                  ) : (
-                    <Badge variant="default">Configured · not signed in</Badge>
-                  )}
-                </div>
-                {user && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => signOut().then(() => toast.success("Signed out"))}
-                  >
-                    <LogOut className="h-3.5 w-3.5" />
-                    Sign out
-                  </Button>
-                )}
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
         <TabsContent value="advanced">
           <Card>
             <CardContent className="p-5 pt-5">
@@ -324,6 +187,21 @@ export default function Settings() {
                     <SelectItem value="debug">Debug</SelectItem>
                   </SelectContent>
                 </Select>
+              </SettingRow>
+              <SettingRow
+                title="Re-run onboarding"
+                description="Walk through the welcome flow again to reconfigure tone presets."
+              >
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => {
+                    useOnboarding.getState().reset();
+                    window.location.reload();
+                  }}
+                >
+                  Restart
+                </Button>
               </SettingRow>
             </CardContent>
           </Card>

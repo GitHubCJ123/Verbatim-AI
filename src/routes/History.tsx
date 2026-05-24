@@ -30,7 +30,7 @@ import {
   type Transcription,
 } from "../lib/history";
 import { useAuth } from "../lib/store/useAuth";
-import { isConfigured, loadSupabaseConfig } from "../lib/supabase";
+import { isSupabaseConfigured } from "../lib/supabase";
 import { toast } from "../components/ui/Toast";
 import { copyCleanedText, pasteCleanedText } from "../lib/output";
 import { useModes } from "../lib/store/useModes";
@@ -45,7 +45,7 @@ export default function History() {
   const [query, setQuery] = useState("");
   const [modeFilter, setModeFilter] = useState<ModeFilter>("all");
   const user = useAuth((s) => s.user);
-  const supabaseReady = isConfigured(loadSupabaseConfig());
+  const supabaseReady = isSupabaseConfigured;
   const modes = useModes((s) => s.modes);
 
   const refresh = useCallback(async () => {

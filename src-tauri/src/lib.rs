@@ -1,4 +1,5 @@
 mod commands;
+mod tray;
 
 use commands::{
     active_window::get_active_window,
@@ -6,6 +7,7 @@ use commands::{
     paste::{capture_target_window, clear_target_window, paste_to_target, TargetWindowState},
     process_list::list_running_apps,
 };
+use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -14,6 +16,11 @@ pub fn run() {
         .manage(TargetWindowState::default())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, shortcut, event| {
@@ -32,6 +39,17 @@ pub fn run() {
         ])
         .setup(|app| {
             install_default(&app.handle());
+            tray::install(&app.handle())?;
+            // Close-to-hide for the main window (plan §5 lifecycle).
+            if let Some(window) = app.get_webview_window("main") {
+                let w = window.clone();
+                window.on_window_event(move |event| {
+                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                        api.prevent_close();
+                        let _ = w.hide();
+                    }
+                });
+            }
             Ok(())
         })
         .run(tauri::generate_context!())

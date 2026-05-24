@@ -13,6 +13,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { startRecording, stopRecording } from "./recording-bridge";
+import { getDefaultMode } from "./store/useModes";
 
 const LS_HOTKEY = "sw.hotkey.spec";
 const LS_PTT = "sw.hotkey.ptt";
@@ -72,15 +73,17 @@ export async function installHotkeyListeners(): Promise<UnlistenFn> {
     // For Phase 3 we just log; Phase 6 uses this to resolve a Mode.
     if (aw && aw.exe) console.debug("[SuperWisper] active window:", aw);
 
+    const mode = getDefaultMode();
+
     if (cfg.pushToTalk) {
-      await startRecording(aw?.exe || "Default");
+      await startRecording(mode.name, mode.id);
     } else {
       if (toggleRecording) {
         toggleRecording = false;
         await stopRecording();
       } else {
         toggleRecording = true;
-        await startRecording(aw?.exe || "Default");
+        await startRecording(mode.name, mode.id);
       }
     }
   });

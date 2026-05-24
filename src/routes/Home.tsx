@@ -7,13 +7,17 @@ import { Button } from "../components/ui/Button";
 import { PageContainer, PageHeader } from "../components/layout/PageHeader";
 import { startRecording, stopRecording } from "../lib/recording-bridge";
 import { toast } from "../components/ui/Toast";
+import { useModes } from "../lib/store/useModes";
 
 export default function Home() {
   const [active, setActive] = useState(false);
+  const modes = useModes((s) => s.modes);
+  const defaultModeId = useModes((s) => s.defaultModeId);
+  const defaultMode = modes.find((m) => m.id === defaultModeId) ?? modes[0];
 
   const handleStart = async () => {
     try {
-      await startRecording("Default");
+      await startRecording(defaultMode?.name ?? "Default", defaultMode?.id ?? null);
       setActive(true);
     } catch (e) {
       toast.error("Couldn't start recording", {

@@ -22,10 +22,9 @@ async function getOverlay(): Promise<Window | null> {
   }
 }
 
-export async function startRecording(modeName = "Default") {
+export async function startRecording(modeName = "Default", modeId: string | null = null) {
   const overlay = await getOverlay();
   if (!overlay) return;
-  // Position above bottom-center of the screen, then show.
   try {
     await positionOverlayBottomCenter(overlay);
   } catch {
@@ -33,7 +32,7 @@ export async function startRecording(modeName = "Default") {
   }
   await overlay.show();
   // Emit AFTER show so the listener already exists.
-  await emit("recording:start", { modeName });
+  await emit("recording:start", { modeName, modeId });
 }
 
 export async function stopRecording() {

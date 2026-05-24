@@ -1,13 +1,23 @@
 import { useEffect, useState } from "react";
+import { Loader2 } from "lucide-react";
 import { toast } from "../components/ui/Toast";
 import { PageContainer, PageHeader } from "../components/layout/PageHeader";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "../components/ui/Tabs";
 import { Card, CardContent } from "../components/ui/Card";
 import { Switch } from "../components/ui/Switch";
 import { Input } from "../components/ui/Input";
+import { Button } from "../components/ui/Button";
+import { Badge } from "../components/ui/Badge";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "../components/ui/Select";
 import { HotkeyRecorder } from "../components/settings/HotkeyRecorder";
 import { applyHotkey, loadHotkeyConfig, saveHotkeyConfig } from "../lib/hotkey";
+import {
+  AzureFoundryProvider,
+  isConfigured,
+  loadAzureConfig,
+  saveAzureConfig,
+  type AzureConfig,
+} from "../lib/ai";
 
 interface RowProps {
   title: string;
@@ -29,10 +39,16 @@ function SettingRow({ title, description, children }: RowProps) {
 
 export default function Settings() {
   const [hotkey, setHotkey] = useState(() => loadHotkeyConfig());
+  const [azure, setAzure] = useState<Partial<AzureConfig>>(() => loadAzureConfig());
+  const [testing, setTesting] = useState(false);
 
   useEffect(() => {
     saveHotkeyConfig(hotkey);
   }, [hotkey]);
+
+  useEffect(() => {
+    saveAzureConfig(azure);
+  }, [azure]);
 
   const handleHotkeyChange = async (spec: string) => {
     try {
@@ -43,6 +59,31 @@ export default function Settings() {
       toast.error("Couldn't register that shortcut", {
         description: e instanceof Error ? e.message : String(e),
       });
+    }
+  };
+
+  const testConnection = async () => {
+    if (!isConfigured(azure)) {
+      toast.error("Fill in all four fields first.");
+      return;
+    }
+    setTesting(true);
+    try {
+      const provider = new AzureFoundryProvider(azure);
+      const health = await provider.health();
+      if (health.ok) {
+        toast.success("Connected to Azure", {
+          description: health.latencyMs ? `${health.latencyMs} ms round trip` : undefined,
+        });
+      } else {
+        toast.error("Couldn't reach Azure", { description: health.message });
+      }
+    } catch (e) {
+      toast.error("Test failed", {
+        description: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setTesting(false);
     }
   };
 
@@ -121,14 +162,63 @@ export default function Settings() {
           <Card>
             <CardContent className="p-5 pt-5">
               <SettingRow title="Azure endpoint" description="https://your-resource.openai.azure.com">
-                <Input placeholder="https://…" className="w-72" />
+                <Input
+                  placeholder="https://…"
+                  className="w-80"
+                  value={azure.endpoint ?? ""}
+                  onChange={(e) => setAzure((a) => ({ ...a, endpoint: e.target.value }))}
+                />
+              </SettingRow>
+              <SettingRow title="API key" description="Stored locally. Moves to OS keyring later.">
+                <Input
+                  type="password"
+                  placeholder="•••••••••••••"
+                  className="w-80"
+                  value={azure.apiKey ?? ""}
+                  onChange={(e) => setAzure((a) => ({ ...a, apiKey: e.target.value }))}
+                />
               </SettingRow>
               <SettingRow title="Transcription deployment" description="The Whisper-equivalent deployment name.">
-                <Input placeholder="whisper-1" className="w-72" />
+                <Input
+                  placeholder="whisper-1"
+                  className="w-80"
+                  value={azure.transcribeDeployment ?? ""}
+                  onChange={(e) =>
+                    setAzure((a) => ({ ...a, transcribeDeployment: e.target.value }))
+                  }
+                />
               </SettingRow>
               <SettingRow title="Cleanup deployment" description="The chat model used to polish transcripts.">
-                <Input placeholder="gpt-4o-mini" className="w-72" />
+                <Input
+                  placeholder="gpt-4o-mini"
+                  className="w-80"
+                  value={azure.cleanupDeployment ?? ""}
+                  onChange={(e) =>
+                    setAzure((a) => ({ ...a, cleanupDeployment: e.target.value }))
+                  }
+                />
               </SettingRow>
+              <div className="flex items-center justify-between gap-6 pt-4">
+                <div className="flex items-center gap-2 text-xs">
+                  {isConfigured(azure) ? (
+                    <Badge variant="success">Configured</Badge>
+                  ) : (
+                    <Badge variant="warning">Missing fields</Badge>
+                  )}
+                  <span className="text-text-muted">
+                    Credentials are saved locally and never leave your machine except to call Azure.
+                  </span>
+                </div>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={testConnection}
+                  disabled={testing || !isConfigured(azure)}
+                >
+                  {testing && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                  Test connection
+                </Button>
+              </div>
             </CardContent>
           </Card>
         </TabsContent>

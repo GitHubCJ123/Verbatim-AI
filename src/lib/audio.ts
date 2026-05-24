@@ -13,10 +13,14 @@ export interface AudioControllerOptions {
   deviceId?: string;
   /** Called when the user clicks "Allow" and capture is live. */
   onStart?: () => void;
-  /** Called once with the final encoded blob (webm/opus or wav). */
-  onStop?: (blob: Blob, durationMs: number) => void;
   /** Called if anything blows up. */
   onError?: (err: Error) => void;
+}
+
+export interface RecordingResult {
+  blob: Blob;
+  mimeType: string;
+  durationMs: number;
 }
 
 export interface AudioController {
@@ -24,8 +28,8 @@ export interface AudioController {
   getLevel: () => number;
   /** Latest per-bar amplitude array, length = bars (default 32), values in [0,1]. */
   getBars: (bars?: number) => number[];
-  /** Stop recording. Resolves when the final blob is delivered. */
-  stop: () => Promise<void>;
+  /** Stop recording and return the final encoded blob. Null if cancelled. */
+  stop: () => Promise<RecordingResult | null>;
   /** Hard-abort: stop the recorder and discard any final blob. */
   cancel: () => void;
 }
@@ -123,22 +127,24 @@ export async function startRecording(opts: AudioControllerOptions = {}): Promise
   };
 
   const stop = () =>
-    new Promise<void>((resolve) => {
+    new Promise<RecordingResult | null>((resolve) => {
       if (recorder.state === "inactive") {
         cleanup();
-        resolve();
+        resolve(null);
         return;
       }
       recorder.addEventListener(
         "stop",
         () => {
           const durationMs = performance.now() - startedAt;
+          let result: RecordingResult | null = null;
           if (!cancelled) {
-            const blob = new Blob(chunks, { type: mimeType || "audio/webm" });
-            opts.onStop?.(blob, durationMs);
+            const finalType = mimeType || "audio/webm";
+            const blob = new Blob(chunks, { type: finalType });
+            result = { blob, mimeType: finalType, durationMs };
           }
           cleanup();
-          resolve();
+          resolve(result);
         },
         { once: true },
       );

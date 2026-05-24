@@ -1026,19 +1026,71 @@ Each phase is independently testable. Phases roughly map to PRs.
 - Rust: `src-tauri/src/commands/{mod.rs,hotkey.rs,active_window.rs}`
 - TS: `src/lib/hotkey.ts`, `src/components/settings/HotkeyRecorder.tsx`
 
-### Phase 4 — AI provider layer
+### Phase 4 — AI provider layer ✅ **COMPLETE** (2026-05-24)
 - Define `AIProvider` interface + types.
 - Implement `AzureFoundryProvider` (real HTTP calls).
 - Build `promptBuilder` with templating.
 - Wire end-to-end mock: hotkey → record → call `transcribe` → call `cleanup` → log result.
 - Settings UI for Azure config + "Test connection" button.
 
-### Phase 5 — Modes & Vocabulary
+**Phase 4 notes (what actually happened):**
+- [src/lib/ai/AIProvider.ts](src/lib/ai/AIProvider.ts) — provider interface from plan §11 verbatim plus a `ProviderHealth` type used by the test-connection button.
+- [src/lib/ai/promptBuilder.ts](src/lib/ai/promptBuilder.ts) — builds `{ system, user }` from a `CleanupInput`, matching the template in plan §11. Also exports `estimateTokens` (≈4 chars/token, used by the Mode editor token estimate later).
+- [src/lib/ai/AzureFoundryProvider.ts](src/lib/ai/AzureFoundryProvider.ts) — real HTTP impl against Azure AI Foundry / Azure OpenAI:
+  - Transcribe: `POST {endpoint}/openai/deployments/{deployment}/audio/transcriptions?api-version=2024-06-01` (multipart, `response_format: verbose_json`, `language` if not `auto`, vocab hints injected as `prompt`).
+  - Cleanup: streaming chat completions over SSE; `parseSSEStream` consumes `data:` lines and yields `choices[0].delta.content` chunks as an `AsyncIterable<string>`.
+  - Retries: 3 attempts on 5xx/429 for transcription, exponential backoff with jitter. Timeouts: 30 s transcribe / 20 s cleanup.
+  - `health()` posts a 1-token completion to the cleanup deployment and returns `{ ok, message, latencyMs }`.
+- [src/lib/ai/index.ts](src/lib/ai/index.ts) — config persistence (localStorage under `sw.azure.config`), `isConfigured` type guard, `getActiveProvider()` returns `AIProvider | null`. **API key in localStorage is a temporary measure** — plan §16 requires the OS keyring; deferred to a later polish phase.
+- Audio pipeline tightened: `audio.ts` `stop()` now resolves to `RecordingResult | null` instead of using an `onStop` callback, which removes the awkward side-channel in the Overlay.
+- [src/overlay/Overlay.tsx](src/overlay/Overlay.tsx) drives the real pipeline: `stop` → `provider.transcribe()` → `provider.cleanup()` (collect stream) → emit `recording:result { raw, cleaned, durationMs, language, modeName }` → success → fade.
+- Visibility shim: [src/main.tsx](src/main.tsx) listens for `recording:result` and pops a Sonner toast with the cleaned text (first 240 chars). Real paste lands in Phase 7.
+- Settings → AI now fully functional: endpoint, API key (`type=password`), transcribe deployment, cleanup deployment — all bound to the AzureConfig, persisted on change. **Test connection** button calls `health()` and toasts the result.
+- If Azure is not configured when the user stops recording, the pill switches to the error state with "Configure Azure in Settings → AI to enable transcription." instead of crashing.
+
+**Known deferred / acknowledged:**
+- API key in localStorage instead of keyring (plan §16) — will move when we install `tauri-plugin-keyring` in a later phase.
+- Cleanup output is collected synchronously then toasted; real token-by-token streaming UI happens in Phase 7 (review panel).
+- Cost / token tracking from plan §11 is not yet wired; the `cost_cents` column will get populated in Phase 10 (history) once we have a price table.
+
+**Files added in Phase 4:**
+- `src/lib/ai/{AIProvider.ts,promptBuilder.ts,AzureFoundryProvider.ts,index.ts}`
+
+### Phase 5 — Modes & Vocabulary ✅ **COMPLETE** (2026-05-24)
 - Zustand `useModes` store with CRUD.
 - Built-in Modes seeded on first run.
 - Modes screen with grid + drag-reorder.
 - Mode Editor with all fields + live test.
 - Vocabulary screen with CRUD + import.
+
+**Phase 5 notes (what actually happened):**
+- Domain types in [src/types/mode.ts](src/types/mode.ts) (`Mode`, `VocabularyTerm`, `OutputStyle`) mirror the SQL columns in plan §7 so the same shape works for localStorage → SQLite (Phase 10) → Supabase (Phase 9).
+- [src/lib/store/useModes.ts](src/lib/store/useModes.ts): Zustand stores for **both** modes and vocabulary, plus storage-level helpers `loadModes()`, `getModeById(id)`, `getDefaultMode()`, `loadVocabulary()`. The helpers read straight from `localStorage` so the **overlay window** (separate JS context) sees fresh data without subscribing to React state.
+- [src/lib/store/builtinModes.ts](src/lib/store/builtinModes.ts) — six built-in modes seeded on first run exactly per plan §7: Default, Formal Email, Slack Message, Code Comment, Notes (`outputStyle: "review"`), Translate → English (`targetLanguage: "English"`).
+- Modes screen ([src/routes/Modes.tsx](src/routes/Modes.tsx)) rewritten:
+  - Framer Motion `Reorder.Group` + `Reorder.Item` for drag-to-reorder (positions persisted)
+  - Hover actions: set-as-default ⭐, edit, duplicate, delete (delete hidden for built-ins; can still duplicate then edit)
+  - Default mode shows a check icon
+  - Icons picked dynamically from `lucide-react` by name string
+- Mode Editor ([src/routes/ModeEditor.tsx](src/routes/ModeEditor.tsx)) — loads by `?id=` query param. Full form: name, icon picker, description, system prompt (monospace textarea with **token estimate** in the help text), language, target language, output style, per-mode hotkey, push-to-talk, save-history. Save button greys out unless dirty.
+- **Live test** in the right column is real: Record button uses `startRecording()` from audio.ts directly, shows the same canvas waveform as the overlay, then on Stop calls `provider.transcribe()` + `provider.cleanup()` (streaming — `cleaned` text fills in token-by-token in the result card). Raw + Cleaned shown in two separate cards. Errors surface inline.
+- Vocabulary ([src/routes/Vocabulary.tsx](src/routes/Vocabulary.tsx)) — inline-add row at top (Enter to commit), table of editable rows below, **CSV import** (auto-detects `term,pronunciation,notes` header) and **export**. Inline editing updates the store immediately.
+- Recording pipeline now actually uses the resolved Mode:
+  - [src/lib/recording-bridge.ts](src/lib/recording-bridge.ts) `startRecording(modeName, modeId)` carries the mode ID across windows
+  - [src/lib/hotkey.ts](src/lib/hotkey.ts) resolves the user's default Mode via `getDefaultMode()` (replacing the prior `aw.exe || "Default"` placeholder — app-mapping resolution still lands in Phase 6)
+  - [src/overlay/Overlay.tsx](src/overlay/Overlay.tsx) refetches the Mode from storage at each `recording:start` (handles edits in the main window), passes `systemPrompt`, `modeDescription`, `vocabulary`, `targetLanguage` into `provider.cleanup()`, and forwards `outputStyle` + `saveHistory` to the `recording:result` event for Phase 7 / Phase 10 consumers.
+  - Home's "Try it now" button uses the user's default Mode.
+
+**Known deferred work:**
+- Per-mode hotkeys are saved but not yet registered as actual global shortcuts (the registration UI exists; Phase 13 polish wires up multi-shortcut routing).
+- "Sort by" + search on the Modes screen — drag-reorder works, the dropdown from plan §9.3 lands in Phase 13.
+- Mode templates / sharing — out of scope for v1.
+
+**Files added in Phase 5:**
+- `src/types/mode.ts`
+- `src/lib/store/{useModes.ts,builtinModes.ts}`
+- (Rewrites) `src/routes/{Modes,ModeEditor,Vocabulary}.tsx`
+- Updates to `src/lib/{hotkey.ts,recording-bridge.ts}`, `src/overlay/Overlay.tsx`, `src/routes/Home.tsx`
 
 ### Phase 6 — App mappings & auto-mode selection
 - Apps screen with mapping CRUD.

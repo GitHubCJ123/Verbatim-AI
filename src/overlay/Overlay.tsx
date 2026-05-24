@@ -1,39 +1,67 @@
 /**
  * Overlay window entry.
  *
- * Lives in a separate Tauri window (transparent, no-decorations,
- * always-on-top, no-activate). It receives a small set of events
- * from the main window to drive its state machine:
+ * Two presentation modes:
+ *  - "pill"   — small 420×96 floating pill (recording / processing / etc.)
+ *  - "review" — 520×360 panel with editable text + Paste / Copy / Discard / Regenerate
  *
- *   recording:start { modeName }
- *   recording:stop
- *   recording:state { state, error? }
- *
- * For Phase 2 we wire the audio capture *inside* the overlay window
- * because the WebAudio APIs are most reliable in the same DOM that
- * needs to render the waveform.
+ * The main window picks which via the active Mode's `outputStyle`.
  */
 import { useEffect, useRef, useState } from "react";
 import { emit, listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { RecordingPill } from "../components/recording/RecordingPill";
+import { ReviewPanel } from "../components/recording/ReviewPanel";
 import { startRecording, type AudioController } from "../lib/audio";
 import type { RecordingState } from "../lib/store/useRecording";
 import { getActiveProvider } from "../lib/ai";
 import { getModeById, getDefaultMode, loadVocabulary } from "../lib/store/useModes";
+import {
+  resizeOverlayToPill,
+  resizeOverlayToReview,
+} from "../lib/recording-bridge";
+import { pasteCleanedText, copyCleanedText, clearCapturedTarget } from "../lib/output";
 import type { Mode } from "../types/mode";
+
+type View = "pill" | "review";
 
 export default function Overlay() {
   const [state, setState] = useState<RecordingState>("idle");
+  const [view, setView] = useState<View>("pill");
   const [modeName, setModeName] = useState("Default");
   const [error, setError] = useState<string | null>(null);
+  const [streamingCleaned, setStreamingCleaned] = useState("");
+  const [rawText, setRawText] = useState("");
+
   const controllerRef = useRef<AudioController | null>(null);
   const modeRef = useRef<Mode | null>(null);
 
+  const hideAfter = async (ms: number) => {
+    if (ms > 0) await new Promise((r) => setTimeout(r, ms));
+    try {
+      await getCurrentWindow().hide();
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const reset = async () => {
+    setState("idle");
+    setView("pill");
+    setStreamingCleaned("");
+    setRawText("");
+    setError(null);
+    await resizeOverlayToPill();
+    await clearCapturedTarget();
+    await hideAfter(0);
+  };
+
   const start = async (mode: string, modeId: string | null) => {
     setError(null);
+    setStreamingCleaned("");
+    setRawText("");
+    setView("pill");
     setModeName(mode);
-    // Resolve fresh from storage so edits in the main window are picked up.
     modeRef.current = getModeById(modeId) ?? getDefaultMode();
     try {
       const w = getCurrentWindow();
@@ -53,6 +81,26 @@ export default function Overlay() {
     }
   };
 
+  const runCleanup = async (raw: string, activeMode: Mode, vocab: string[]): Promise<string> => {
+    const provider = getActiveProvider();
+    if (!provider) throw new Error("Provider not configured");
+
+    setStreamingCleaned("");
+    let acc = "";
+    for await (const chunk of provider.cleanup({
+      rawText: raw,
+      systemPrompt: activeMode.systemPrompt,
+      modeName: activeMode.name,
+      modeDescription: activeMode.description,
+      vocabulary: vocab,
+      targetLanguage: activeMode.targetLanguage ?? undefined,
+    })) {
+      acc += chunk;
+      setStreamingCleaned(acc);
+    }
+    return acc;
+  };
+
   const runPipeline = async (audio: Blob, durationMs: number, mode: string) => {
     const provider = getActiveProvider();
     if (!provider) {
@@ -63,6 +111,7 @@ export default function Overlay() {
     }
     const activeMode = modeRef.current ?? getDefaultMode();
     const vocabularyTerms = loadVocabulary().map((t) => t.term);
+
     try {
       setState("processing");
       const transcript = await provider.transcribe({
@@ -70,22 +119,21 @@ export default function Overlay() {
         language: activeMode.language || "auto",
         vocabularyHints: vocabularyTerms,
       });
+      setRawText(transcript.text);
+
+      // Branch on output style BEFORE polishing so review users see
+      // tokens stream into the editor in real time.
+      if (activeMode.outputStyle === "review") {
+        await resizeOverlayToReview();
+        setView("review");
+      }
 
       setState("polishing");
-      let cleaned = "";
-      for await (const chunk of provider.cleanup({
-        rawText: transcript.text,
-        systemPrompt: activeMode.systemPrompt,
-        modeName: activeMode.name,
-        modeDescription: activeMode.description,
-        vocabulary: vocabularyTerms,
-        targetLanguage: activeMode.targetLanguage ?? undefined,
-      })) {
-        cleaned += chunk;
-      }
+      const cleaned = await runCleanup(transcript.text, activeMode, vocabularyTerms);
 
       console.info("[SuperWisper] raw:", transcript.text);
       console.info("[SuperWisper] cleaned:", cleaned);
+
       await emit("recording:result", {
         raw: transcript.text,
         cleaned,
@@ -97,19 +145,25 @@ export default function Overlay() {
         saveHistory: activeMode.saveHistory,
       });
 
-      setState("success");
+      if (activeMode.outputStyle === "paste") {
+        const pasted = await pasteCleanedText(cleaned);
+        if (!pasted) {
+          // No captured target — fall back to clipboard.
+          console.info("[SuperWisper] no paste target; copied to clipboard");
+        }
+        setState("success");
+        setTimeout(() => void reset(), 900);
+      } else {
+        // Review panel stays open until user acts.
+        setState("idle");
+      }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error("[SuperWisper] pipeline error:", e);
       setError(msg);
       setState("error");
       void hideAfter(3500);
-      return;
     }
-    setTimeout(() => {
-      setState("idle");
-      void hideAfter(0);
-    }, 1200);
   };
 
   const stop = async () => {
@@ -122,19 +176,53 @@ export default function Overlay() {
     setState("processing");
     const result = await c.stop();
     if (!result) {
-      setState("idle");
-      void hideAfter(0);
+      void reset();
       return;
     }
     await runPipeline(result.blob, result.durationMs, modeName);
   };
 
-  const hideAfter = async (ms: number) => {
-    if (ms > 0) await new Promise((r) => setTimeout(r, ms));
+  // Review panel actions
+
+  const handleReviewPaste = async (text: string) => {
+    const ok = await pasteCleanedText(text);
+    await emit("recording:reviewed", {
+      action: ok ? "pasted" : "copied",
+      cleaned: text,
+      modeId: modeRef.current?.id ?? null,
+    });
+    void reset();
+  };
+
+  const handleReviewCopy = async (text: string) => {
+    await copyCleanedText(text);
+    await emit("recording:reviewed", {
+      action: "copied",
+      cleaned: text,
+      modeId: modeRef.current?.id ?? null,
+    });
+    void reset();
+  };
+
+  const handleReviewDiscard = async () => {
+    await emit("recording:reviewed", {
+      action: "discarded",
+      cleaned: streamingCleaned,
+      modeId: modeRef.current?.id ?? null,
+    });
+    void reset();
+  };
+
+  const handleReviewRegenerate = async () => {
+    const activeMode = modeRef.current ?? getDefaultMode();
+    const vocab = loadVocabulary().map((t) => t.term);
+    setState("polishing");
     try {
-      await getCurrentWindow().hide();
-    } catch {
-      /* ignore */
+      await runCleanup(rawText, activeMode, vocab);
+      setState("idle");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      setState("error");
     }
   };
 
@@ -151,38 +239,53 @@ export default function Overlay() {
     const offCancel = listen("recording:cancel", () => {
       controllerRef.current?.cancel();
       controllerRef.current = null;
-      setState("idle");
-      void hideAfter(0);
+      void reset();
     });
     return () => {
       void offStart.then((u) => u());
       void offStop.then((u) => u());
       void offCancel.then((u) => u());
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Press Esc inside the overlay to cancel.
+  // Press Esc inside the overlay to cancel (recording mode only —
+  // review panel handles Esc itself to discard).
   useEffect(() => {
+    if (view === "review") return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         controllerRef.current?.cancel();
         controllerRef.current = null;
-        setState("idle");
-        void hideAfter(0);
+        void reset();
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view]);
 
   return (
     <div className="flex h-screen w-screen items-center justify-center bg-transparent p-3">
-      <RecordingPill
-        state={state}
-        modeName={modeName}
-        controller={controllerRef.current}
-        error={error}
-      />
+      {view === "review" ? (
+        <ReviewPanel
+          modeName={modeName}
+          initialText={streamingCleaned}
+          streamingText={streamingCleaned}
+          isPolishing={state === "polishing"}
+          onPaste={handleReviewPaste}
+          onCopy={handleReviewCopy}
+          onDiscard={handleReviewDiscard}
+          onRegenerate={handleReviewRegenerate}
+        />
+      ) : (
+        <RecordingPill
+          state={state}
+          modeName={modeName}
+          controller={controllerRef.current}
+          error={error}
+        />
+      )}
     </div>
   );
 }

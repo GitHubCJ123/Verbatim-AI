@@ -70,7 +70,9 @@ export async function startRecording(opts: AudioControllerOptions = {}): Promise
   const source = audioCtx.createMediaStreamSource(stream);
   const analyser = audioCtx.createAnalyser();
   analyser.fftSize = 256;
-  analyser.smoothingTimeConstant = 0.7;
+  analyser.smoothingTimeConstant = 0.55;
+  analyser.minDecibels = -85;
+  analyser.maxDecibels = -15;
   source.connect(analyser);
 
   const freqBuffer = new Uint8Array(analyser.frequencyBinCount);
@@ -97,15 +99,19 @@ export async function startRecording(opts: AudioControllerOptions = {}): Promise
   const getBars = (bars = 32) => {
     analyser.getByteFrequencyData(freqBuffer);
     const out = new Array<number>(bars);
-    const bucket = Math.max(1, Math.floor(freqBuffer.length / bars));
+    // Focus on speech band (~80 Hz–4 kHz). At sampleRate 16 kHz and
+    // fftSize 256, bin width is ~62.5 Hz. Use the first ~64 bins so we
+    // skip very high frequencies that don't move with voice.
+    const usable = Math.min(64, freqBuffer.length);
+    const bucket = Math.max(1, Math.floor(usable / bars));
     for (let b = 0; b < bars; b++) {
       let sum = 0;
       const start = b * bucket;
-      const end = Math.min(freqBuffer.length, start + bucket);
+      const end = Math.min(usable, start + bucket);
       for (let i = start; i < end; i++) sum += freqBuffer[i];
       const avg = sum / (end - start);
-      // Normalize 0..255 -> 0..1, with a soft curve.
-      out[b] = Math.min(1, (avg / 255) ** 0.8);
+      // 0..255 → 0..1 with a soft curve.
+      out[b] = Math.min(1, (avg / 255) ** 0.7);
     }
     return out;
   };

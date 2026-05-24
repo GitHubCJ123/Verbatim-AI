@@ -10,9 +10,12 @@
     "core:window:allow-show",
     "core:window:allow-hide",
     "core:window:allow-set-position",
+    "core:window:allow-set-size",
     "core:window:allow-outer-size",
     "core:window:allow-current-monitor",
     "opener:default",
-    "global-shortcut:default"
+    "global-shortcut:default",
+    "clipboard-manager:allow-write-text",
+    "clipboard-manager:allow-read-text"
   ]
 }

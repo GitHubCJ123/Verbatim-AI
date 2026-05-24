@@ -1092,16 +1092,72 @@ Each phase is independently testable. Phases roughly map to PRs.
 - (Rewrites) `src/routes/{Modes,ModeEditor,Vocabulary}.tsx`
 - Updates to `src/lib/{hotkey.ts,recording-bridge.ts}`, `src/overlay/Overlay.tsx`, `src/routes/Home.tsx`
 
-### Phase 6 — App mappings & auto-mode selection
+### Phase 6 — App mappings & auto-mode selection ✅ **COMPLETE** (2026-05-24)
 - Apps screen with mapping CRUD.
 - "Add app" picker that enumerates running processes (Rust side).
 - Mode resolution function: given `(exe, title)` return the right Mode.
 
-### Phase 7 — Output routing (paste & review)
+**Phase 6 notes (what actually happened):**
+- Rust [src-tauri/src/commands/process_list.rs](src-tauri/src/commands/process_list.rs) — `list_running_apps` command enumerates top-level windows via `EnumWindows`, filters by visibility + non-tool + no-owner + non-empty title, resolves owning process exe with `OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION)` + `QueryFullProcessImageNameW`, then **dedupes by exe** so the picker shows one entry per app rather than one per window. Sorted alphabetically.
+- [src/types/appMapping.ts](src/types/appMapping.ts) — `AppMapping` mirrors plan §7. Executable always stored lowercase for case-insensitive matching.
+- [src/lib/store/useAppMappings.ts](src/lib/store/useAppMappings.ts) — Zustand store + `loadAppMappings()` storage helper for the hotkey path.
+- [src/lib/modeResolver.ts](src/lib/modeResolver.ts):
+  - `resolveModeFor(activeWindow, mappings, modes)` — pure function (testable later via Vitest).
+  - Match priority: mapping with matching title regex → mapping with no title regex → user's default Mode.
+  - `resolveModeAtPress()` — composes a fresh active-window lookup with the resolver; this is what the hotkey listener calls.
+- Apps page ([src/routes/Apps.tsx](src/routes/Apps.tsx)) — full CRUD table:
+  - Inline-editable display name, executable, mode (Select), and optional title regex.
+  - "Add app" opens a Dialog that calls `list_running_apps` and renders a searchable list with a per-row "Added" badge for exes already mapped.
+  - Empty state offers a one-click way into the picker.
+- Hotkey path ([src/lib/hotkey.ts](src/lib/hotkey.ts)) now calls `resolveModeAtPress()` — the user's default Mode is used only as fallback. A debug log shows `slack.exe → Slack Message (window: "general | Acme")` per press.
+
+**Known deferred work:**
+- App icons (plan §10 Iconography: "extracted via Win32 `SHGetFileInfo` (Rust), cached as PNG"): generic Lucide icon today, real per-app icon extraction is Phase 13 polish.
+- Manual "browse to .exe" picker (for apps not currently running): not implemented; user can type the exe name into the inline editor. Adding a file-picker affordance is a Phase 13 nice-to-have.
+
+**Files added in Phase 6:**
+- Rust: `src-tauri/src/commands/process_list.rs` + registered in `lib.rs`/`mod.rs`
+- TS: `src/types/appMapping.ts`, `src/lib/store/useAppMappings.ts`, `src/lib/modeResolver.ts`
+- Rewrite: `src/routes/Apps.tsx`
+- Update: `src/lib/hotkey.ts` (uses resolver instead of `getDefaultMode()`)
+
+### Phase 7 — Output routing (paste & review) ✅ **COMPLETE** (2026-05-24)
 - Rust `paste` command via `enigo` (with focus-restore).
 - Clipboard write via plugin.
 - Frontend: overlay grows into review panel with editable text + buttons.
 - Mode toggle for output style takes effect.
+
+**Phase 7 notes (what actually happened):**
+- Rust deps: `enigo = "0.5"`, `tauri-plugin-clipboard-manager = "2"`, plus Win32 `KeyboardAndMouse` feature on the `windows` crate.
+- [src-tauri/src/commands/paste.rs](src-tauri/src/commands/paste.rs):
+  - `TargetWindowState` (Mutex<Option<isize>>) tracks the HWND captured *before* the overlay shows. Stored as `isize` for safe state, serialized as a string when returned.
+  - `capture_target_window()` — `GetForegroundWindow` → save HWND → return `{ hwnd: "..." }`. Called from the recording bridge in JS just before `overlay.show()`.
+  - `clear_target_window()` — wipes the slot on cancel / discard / success so a stale paste can't land in the wrong window later.
+  - `paste_to_target()` — `SetForegroundWindow(saved)` → 60 ms wait so focus actually propagates → `enigo` press Ctrl, click V, release Ctrl. Returns `Ok(false)` if no target was captured so the caller can fall back to "Copied to clipboard" UX. Best-effort: Windows can refuse `SetForegroundWindow` from a non-foreground process; in that case we still send the keystroke (and the value remains on the clipboard either way).
+- Capabilities ([src-tauri/capabilities/default.json](src-tauri/capabilities/default.json)) updated: `clipboard-manager:allow-write-text`, `clipboard-manager:allow-read-text`, `core:window:allow-set-size` (for the pill → review grow).
+- JS clipboard via `@tauri-apps/plugin-clipboard-manager` — [src/lib/output.ts](src/lib/output.ts) is the small `pasteCleanedText` / `copyCleanedText` / `clearCapturedTarget` API the overlay uses.
+- [src/lib/recording-bridge.ts](src/lib/recording-bridge.ts):
+  - Two window-size presets: `OVERLAY_PILL_SIZE` (420×96) and `OVERLAY_REVIEW_SIZE` (520×360).
+  - `startRecording` now calls `capture_target_window` invoke *before* `overlay.show()`, then resets the size to the pill and positions bottom-center.
+  - New helpers `resizeOverlayToReview()` and `resizeOverlayToPill()` so the overlay process can grow/shrink itself in-place.
+- [src/components/recording/ReviewPanel.tsx](src/components/recording/ReviewPanel.tsx) — editable textarea (Tab/arrows work normally), header with the Mode chip + "Polishing…" indicator while tokens stream, footer with Discard / Regenerate (left cluster) and Copy / Paste (right cluster). Tokens stream into the textarea live until the user starts editing, at which point streaming stops overwriting their text. **Ctrl+Enter pastes, Esc discards.**
+- [src/overlay/Overlay.tsx](src/overlay/Overlay.tsx) — refactored into a small state machine with two views (`pill` | `review`). Decision happens right after transcription so review users see streaming tokens directly in the editable panel:
+  - `outputStyle === "paste"`: clipboard write → `paste_to_target` → brief success state → reset
+  - `outputStyle === "review"`: window grows to 520×360, panel renders, stays open until user acts. After the user picks Paste/Copy/Discard an `recording:reviewed` event is emitted with `{ action: 'pasted'|'copied'|'discarded', cleaned, modeId }` for Phase 10 history to consume.
+- `Regenerate` re-runs `provider.cleanup(rawText, ...)` against the same Mode without re-transcribing.
+- "No paste target" fallback: if `paste_to_target` returns false the cleaned text is still on the clipboard (Ctrl+V manually).
+
+**Known deferred work:**
+- WS_EX_NOACTIVATE: still not applied on the overlay window. With `focus: false` + `skipTaskbar: true` in `tauri.conf.json` it doesn't *typically* steal focus on `show()`, but if the user moves their mouse over the overlay during recording on some Windows builds it may grab focus and break the paste target. A small Rust `SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex | WS_EX_NOACTIVATE)` in a setup hook will close that hole — moving to Phase 13 polish.
+- Restore previous clipboard contents after 1 s (plan §14): deferred to Phase 13. Today we leave the cleaned text on the clipboard.
+- Streaming token output for the *auto-paste* mode (so the user sees the text grow before the keystroke fires) is not implemented — we collect first, then paste once.
+
+**Files added in Phase 7:**
+- Rust: `src-tauri/src/commands/paste.rs` + plugin/state registration in `lib.rs`/`mod.rs`
+- TS: `src/lib/output.ts`, `src/components/recording/ReviewPanel.tsx`
+- Rewrite: `src/overlay/Overlay.tsx`
+- Update: `src/lib/recording-bridge.ts` (capture target + resize helpers)
+- Update: `src-tauri/capabilities/default.json` (clipboard + set-size perms)
 
 ### Phase 8 — File transcription
 - Drop zone on Home.

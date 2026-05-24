@@ -7,15 +7,18 @@
  * phases may move it to Rust if we need lower-level control.
  */
 import { emit } from "@tauri-apps/api/event";
+import { invoke } from "@tauri-apps/api/core";
 import { Window, currentMonitor } from "@tauri-apps/api/window";
-import { PhysicalPosition } from "@tauri-apps/api/dpi";
+import { PhysicalPosition, PhysicalSize } from "@tauri-apps/api/dpi";
 
 const OVERLAY_LABEL = "overlay";
+
+const OVERLAY_PILL_SIZE = { width: 420, height: 96 };
+const OVERLAY_REVIEW_SIZE = { width: 520, height: 360 };
 
 async function getOverlay(): Promise<Window | null> {
   try {
     const w = Window.getByLabel(OVERLAY_LABEL);
-    // Tauri v2: returns Window | null synchronously; Promise tolerated for safety.
     return (await Promise.resolve(w)) ?? null;
   } catch {
     return null;
@@ -25,13 +28,24 @@ async function getOverlay(): Promise<Window | null> {
 export async function startRecording(modeName = "Default", modeId: string | null = null) {
   const overlay = await getOverlay();
   if (!overlay) return;
+
+  // Capture the foreground window *before* showing the overlay, so we
+  // can paste back into it. The overlay has `focus: false` so showing
+  // it shouldn't steal focus — but Windows isn't always cooperative,
+  // and capturing first is the safest pattern (plan §14).
   try {
+    await invoke("capture_target_window");
+  } catch {
+    /* ignore */
+  }
+
+  try {
+    await overlay.setSize(new PhysicalSize(OVERLAY_PILL_SIZE.width, OVERLAY_PILL_SIZE.height));
     await positionOverlayBottomCenter(overlay);
   } catch {
     /* best-effort */
   }
   await overlay.show();
-  // Emit AFTER show so the listener already exists.
   await emit("recording:start", { modeName, modeId });
 }
 
@@ -43,12 +57,24 @@ export async function cancelRecording() {
   await emit("recording:cancel", {});
 }
 
-/**
- * Place the overlay 80 px above the taskbar of the monitor the main
- * window currently sits on. Uses the current window's monitor as a
- * proxy because Tauri 2's window API on Windows doesn't expose the
- * cursor's monitor directly.
- */
+export async function resizeOverlayToReview() {
+  const overlay = await getOverlay();
+  if (!overlay) return;
+  await overlay.setSize(
+    new PhysicalSize(OVERLAY_REVIEW_SIZE.width, OVERLAY_REVIEW_SIZE.height),
+  );
+  await positionOverlayBottomCenter(overlay);
+}
+
+export async function resizeOverlayToPill() {
+  const overlay = await getOverlay();
+  if (!overlay) return;
+  await overlay.setSize(
+    new PhysicalSize(OVERLAY_PILL_SIZE.width, OVERLAY_PILL_SIZE.height),
+  );
+  await positionOverlayBottomCenter(overlay);
+}
+
 async function positionOverlayBottomCenter(overlay: Window) {
   const monitor = await currentMonitor();
   if (!monitor) return;

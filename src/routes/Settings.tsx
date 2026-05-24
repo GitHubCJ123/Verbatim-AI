@@ -23,6 +23,8 @@ import {
   type OverlayPosition,
   isClipboardRestoreEnabled,
   setClipboardRestore,
+  isHistoryDisabled,
+  setHistoryDisabled,
 } from "../lib/preferences";
 
 interface RowProps {
@@ -90,6 +92,19 @@ function ClipboardRestoreSwitch() {
       onCheckedChange={(v) => {
         setClipboardRestore(v);
         setOn(v);
+      }}
+    />
+  );
+}
+
+function HistoryDisabledSwitch() {
+  const [off, setOff] = useState(isHistoryDisabled());
+  return (
+    <Switch
+      checked={!off}
+      onCheckedChange={(v) => {
+        setHistoryDisabled(!v);
+        setOff(!v);
       }}
     />
   );
@@ -209,19 +224,14 @@ export default function Settings() {
         <TabsContent value="privacy">
           <Card>
             <CardContent className="p-5 pt-5">
+              <SettingRow
+                title="Save transcription history"
+                description="When off, transcripts are not saved anywhere — your dictation still works and pastes/reviews as normal, but nothing is written to the History page. Overrides the per-mode setting."
+              >
+                <HistoryDisabledSwitch />
+              </SettingRow>
               <SettingRow title="Anonymous telemetry" description="Help improve Verbatim AI. Never your transcript content.">
                 <Switch />
-              </SettingRow>
-              <SettingRow title="History retention" description="Auto-delete old transcripts.">
-                <Select defaultValue="forever">
-                  <SelectTrigger className="w-32"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="forever">Forever</SelectItem>
-                    <SelectItem value="30">30 days</SelectItem>
-                    <SelectItem value="7">7 days</SelectItem>
-                    <SelectItem value="off">Off</SelectItem>
-                  </SelectContent>
-                </Select>
               </SettingRow>
             </CardContent>
           </Card>

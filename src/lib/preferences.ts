@@ -15,6 +15,7 @@ const LS_HOTKEY_PAUSED = "sw.hotkey.paused";
 const LS_CLIPBOARD_RESTORE = "sw.clipboard.restore";
 const LS_TELEMETRY = "sw.telemetry.enabled";
 const LS_AI_DISABLED = "sw.ai.disabled";
+const LS_HISTORY_DISABLED = "sw.history.disabled";
 
 export type OverlayPosition =
   | "bottom-center"
@@ -73,6 +74,14 @@ export function isAiImproveDisabled(): boolean {
 
 export function setAiImproveDisabled(v: boolean): void {
   localStorage.setItem(LS_AI_DISABLED, v ? "1" : "0");
+}
+
+export function isHistoryDisabled(): boolean {
+  return localStorage.getItem(LS_HISTORY_DISABLED) === "1";
+}
+
+export function setHistoryDisabled(v: boolean): void {
+  localStorage.setItem(LS_HISTORY_DISABLED, v ? "1" : "0");
 }
 
 export function isClipboardRestoreEnabled(): boolean {

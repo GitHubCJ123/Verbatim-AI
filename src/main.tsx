@@ -12,7 +12,7 @@ import { addTranscription, type OutputAction } from "./lib/history";
 import { useAuth } from "./lib/store/useAuth";
 import { startRecording as bridgeStart, stopRecording as bridgeStop } from "./lib/recording-bridge";
 import { resolveModeAtPress } from "./lib/modeResolver";
-import { loadPreferences, notify, isHotkeyPaused, setHotkeyPaused } from "./lib/preferences";
+import { loadPreferences, notify, isHotkeyPaused, setHotkeyPaused, isHistoryDisabled } from "./lib/preferences";
 
 // Install global hotkey event listeners as soon as the app boots.
 void installHotkeyListeners();
@@ -71,6 +71,10 @@ async function persist(result: PendingResult, action: OutputAction, finalCleaned
   });
   if (!result.saveHistory) {
     console.warn("[Verbatim AI] persist skipped: saveHistory=false on mode", result.modeName);
+    return;
+  }
+  if (isHistoryDisabled()) {
+    console.warn("[Verbatim AI] persist skipped: global history disabled");
     return;
   }
   try {

@@ -25,7 +25,6 @@ export default function Home() {
   const [items, setItems] = useState<Transcription[]>([]);
 
   useEffect(() => {
-    if (!user) return;
     const refresh = () => {
       void listTranscriptions({ limit: 200 })
         .then(setItems)

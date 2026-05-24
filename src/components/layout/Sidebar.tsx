@@ -7,14 +7,12 @@ import {
   History,
   Settings,
   CircleUser,
-  Search,
   Mic,
 } from "lucide-react";
-import { Input } from "../ui/Input";
-import { Kbd } from "../ui/Kbd";
 import { cn } from "../../lib/utils";
 import { useAuth } from "../../lib/store/useAuth";
 import { useProfile } from "../../lib/store/useProfile";
+import { FeedbackDialog } from "../feedback/FeedbackDialog";
 
 const navItems = [
   { to: "/", label: "Home", icon: Home, end: true },
@@ -41,15 +39,6 @@ export function Sidebar() {
         <span className="text-sm font-semibold tracking-tight">SuperWisper</span>
       </div>
 
-      {/* Search */}
-      <div className="relative px-1">
-        <Search className="pointer-events-none absolute left-3.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-text-muted" />
-        <Input placeholder="Search…" className="h-8 pl-8 pr-12 text-xs" />
-        <div className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2">
-          <Kbd>⌘K</Kbd>
-        </div>
-      </div>
-
       {/* Nav */}
       <nav className="flex flex-1 flex-col gap-0.5">
         {navItems.map((item) => (
@@ -71,6 +60,9 @@ export function Sidebar() {
           </NavLink>
         ))}
       </nav>
+
+      {/* Send feedback */}
+      <FeedbackDialog />
 
       {/* Status pill */}
       <div className="flex items-center gap-2 rounded-md border border-border-subtle bg-bg-elevated px-3 py-2 text-xs">

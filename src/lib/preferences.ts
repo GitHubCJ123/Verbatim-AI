@@ -11,6 +11,9 @@ import { sendNotification, isPermissionGranted, requestPermission } from "@tauri
 
 const LS_NOTIFY = "sw.notify.success";
 const LS_OVERLAY_POSITION = "sw.overlay.position";
+const LS_HOTKEY_PAUSED = "sw.hotkey.paused";
+const LS_CLIPBOARD_RESTORE = "sw.clipboard.restore";
+const LS_TELEMETRY = "sw.telemetry.enabled";
 
 export type OverlayPosition =
   | "bottom-center"
@@ -53,6 +56,31 @@ export function loadOverlayPosition(): OverlayPosition {
 
 export function setOverlayPosition(v: OverlayPosition): void {
   localStorage.setItem(LS_OVERLAY_POSITION, v);
+}
+
+export function isHotkeyPaused(): boolean {
+  return localStorage.getItem(LS_HOTKEY_PAUSED) === "1";
+}
+
+export function setHotkeyPaused(v: boolean): void {
+  localStorage.setItem(LS_HOTKEY_PAUSED, v ? "1" : "0");
+}
+
+export function isClipboardRestoreEnabled(): boolean {
+  // Off by default — Windows already keeps clipboard history (Win+V).
+  return localStorage.getItem(LS_CLIPBOARD_RESTORE) === "1";
+}
+
+export function setClipboardRestore(v: boolean): void {
+  localStorage.setItem(LS_CLIPBOARD_RESTORE, v ? "1" : "0");
+}
+
+export function isTelemetryEnabled(): boolean {
+  return localStorage.getItem(LS_TELEMETRY) === "1";
+}
+
+export function setTelemetryEnabled(v: boolean): void {
+  localStorage.setItem(LS_TELEMETRY, v ? "1" : "0");
 }
 
 export async function isAutostartEnabled(): Promise<boolean> {

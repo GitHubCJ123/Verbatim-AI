@@ -8,17 +8,15 @@ use tauri::tray::{MouseButton, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager, Runtime};
 
 pub fn install<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
-    let status = MenuItem::with_id(app, "status", "● SuperWisper · Idle", false, None::<&str>)?;
     let open = MenuItem::with_id(app, "open", "Open SuperWisper", true, None::<&str>)?;
     let separator = PredefinedMenuItem::separator(app)?;
-    let record = MenuItem::with_id(app, "record", "Start recording", true, None::<&str>)?;
     let settings = MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?;
     let separator2 = PredefinedMenuItem::separator(app)?;
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
 
     let menu = Menu::with_items(
         app,
-        &[&status, &open, &separator, &record, &settings, &separator2, &quit],
+        &[&open, &separator, &settings, &separator2, &quit],
     )?;
 
     let _tray = TrayIconBuilder::with_id("main")
@@ -32,9 +30,6 @@ pub fn install<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id.as_ref() {
             "open" => show_main_window(app),
-            "record" => {
-                let _ = app.emit("tray:record", ());
-            }
             "settings" => {
                 show_main_window(app);
                 let _ = app.emit("tray:settings", ());

@@ -14,6 +14,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { startRecording, stopRecording } from "./recording-bridge";
 import { resolveModeAtPress } from "./modeResolver";
+import { isHotkeyPaused } from "./preferences";
 
 const LS_HOTKEY = "sw.hotkey.spec";
 const LS_PTT = "sw.hotkey.ptt";
@@ -63,6 +64,7 @@ export async function installHotkeyListeners(): Promise<UnlistenFn> {
   let toggleRecording = false;
 
   const offDown = await listen("hotkey:down", async () => {
+    if (isHotkeyPaused()) return;
     const cfg = loadHotkeyConfig();
     const { mode, activeWindow } = await resolveModeAtPress();
     if (!mode) {
@@ -91,6 +93,7 @@ export async function installHotkeyListeners(): Promise<UnlistenFn> {
   });
 
   const offUp = await listen("hotkey:up", async () => {
+    if (isHotkeyPaused()) return;
     const cfg = loadHotkeyConfig();
     if (cfg.pushToTalk) {
       await stopRecording();

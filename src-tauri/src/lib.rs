@@ -50,6 +50,20 @@ pub fn run() {
                     }
                 });
             }
+            // Mark overlay as no-activate so it never steals focus when shown.
+            #[cfg(windows)]
+            if let Some(overlay) = app.get_webview_window("overlay") {
+                if let Ok(hwnd) = overlay.hwnd() {
+                    use windows::Win32::UI::WindowsAndMessaging::{
+                        GetWindowLongPtrW, SetWindowLongPtrW, GWL_EXSTYLE, WS_EX_NOACTIVATE,
+                    };
+                    unsafe {
+                        let h = windows::Win32::Foundation::HWND(hwnd.0 as *mut _);
+                        let ex = GetWindowLongPtrW(h, GWL_EXSTYLE);
+                        SetWindowLongPtrW(h, GWL_EXSTYLE, ex | WS_EX_NOACTIVATE.0 as isize);
+                    }
+                }
+            }
             Ok(())
         })
         .run(tauri::generate_context!())

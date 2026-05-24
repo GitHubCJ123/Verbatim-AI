@@ -63,6 +63,15 @@ export default function Apps() {
         }
       />
 
+      <div className="rounded-md border border-border-subtle bg-bg-elevated/40 px-4 py-3 text-xs text-text-secondary">
+        <span className="font-medium text-text-primary">Heads up:</span> the
+        common-app names below are guesses. If a rule doesn't trigger, the real
+        executable on your PC is probably different. Open the app you want to map,
+        then press <span className="font-medium text-text-primary">Add app</span>
+        {" "}to pick it from your running processes — that always uses the correct
+        executable name.
+      </div>
+
       {mappings.length === 0 ? (
         <Card>
           <CardContent className="flex flex-col items-center justify-center gap-3 p-16 pt-16 text-center">

@@ -12,7 +12,7 @@ import { addTranscription, type OutputAction } from "./lib/history";
 import { useAuth } from "./lib/store/useAuth";
 import { startRecording as bridgeStart, stopRecording as bridgeStop } from "./lib/recording-bridge";
 import { resolveModeAtPress } from "./lib/modeResolver";
-import { loadPreferences, notify } from "./lib/preferences";
+import { loadPreferences, notify, isHotkeyPaused, setHotkeyPaused } from "./lib/preferences";
 
 // Install global hotkey event listeners as soon as the app boots.
 void installHotkeyListeners();
@@ -23,6 +23,7 @@ void useAuth.getState().init();
 // Tray menu actions.
 let trayRecording = false;
 void listen("tray:record", async () => {
+  if (isHotkeyPaused()) return;
   if (!trayRecording) {
     const { mode } = await resolveModeAtPress();
     if (!mode) {
@@ -35,6 +36,12 @@ void listen("tray:record", async () => {
     await bridgeStop();
     trayRecording = false;
   }
+});
+
+void listen("tray:pause-hotkey", () => {
+  const next = !isHotkeyPaused();
+  setHotkeyPaused(next);
+  toast[next ? "info" : "success"](next ? "Hotkey paused" : "Hotkey resumed");
 });
 
 // Track the most recent transcription so review-mode resolution

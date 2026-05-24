@@ -21,6 +21,8 @@ import {
   loadOverlayPosition,
   setOverlayPosition,
   type OverlayPosition,
+  isClipboardRestoreEnabled,
+  setClipboardRestore,
 } from "../lib/preferences";
 
 interface RowProps {
@@ -77,6 +79,19 @@ function OverlayPositionSelect() {
         <SelectItem value="top-left">Top left</SelectItem>
       </SelectContent>
     </Select>
+  );
+}
+
+function ClipboardRestoreSwitch() {
+  const [on, setOn] = useState(isClipboardRestoreEnabled());
+  return (
+    <Switch
+      checked={on}
+      onCheckedChange={(v) => {
+        setClipboardRestore(v);
+        setOn(v);
+      }}
+    />
   );
 }
 
@@ -180,6 +195,12 @@ export default function Settings() {
             <CardContent className="p-5 pt-5">
               <SettingRow title="Position" description="Where the recording pill appears.">
                 <OverlayPositionSelect />
+              </SettingRow>
+              <SettingRow
+                title="Restore clipboard after paste"
+                description="When on, SuperWisper remembers whatever you had on the clipboard before dictating, pastes the cleaned text, then puts your original content back ~1 second later. Off by default — Windows already keeps clipboard history (press Win+V to view it), so the cleaned text just stays on the clipboard."
+              >
+                <ClipboardRestoreSwitch />
               </SettingRow>
             </CardContent>
           </Card>

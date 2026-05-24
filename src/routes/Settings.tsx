@@ -16,6 +16,12 @@ import {
 } from "../lib/preferences";
 import { useOnboarding } from "../lib/store/useOnboarding";
 import { getActiveProvider } from "../lib/ai";
+import { useTheme, type Theme } from "../lib/theme";
+import {
+  loadOverlayPosition,
+  setOverlayPosition,
+  type OverlayPosition,
+} from "../lib/preferences";
 
 interface RowProps {
   title: string;
@@ -32,6 +38,45 @@ function SettingRow({ title, description, children }: RowProps) {
       </div>
       <div className="shrink-0">{children}</div>
     </div>
+  );
+}
+
+function ThemeSelect() {
+  const theme = useTheme((s) => s.theme);
+  const setTheme = useTheme((s) => s.set);
+  return (
+    <Select value={theme} onValueChange={(v) => setTheme(v as Theme)}>
+      <SelectTrigger className="w-32"><SelectValue /></SelectTrigger>
+      <SelectContent>
+        <SelectItem value="dark">Dark</SelectItem>
+        <SelectItem value="light">Light</SelectItem>
+        <SelectItem value="system">Match system</SelectItem>
+      </SelectContent>
+    </Select>
+  );
+}
+
+function OverlayPositionSelect() {
+  const [v, setV] = useState<OverlayPosition>(loadOverlayPosition());
+  return (
+    <Select
+      value={v}
+      onValueChange={(next) => {
+        const np = next as OverlayPosition;
+        setOverlayPosition(np);
+        setV(np);
+      }}
+    >
+      <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
+      <SelectContent>
+        <SelectItem value="bottom-center">Bottom center</SelectItem>
+        <SelectItem value="top-center">Top center</SelectItem>
+        <SelectItem value="bottom-right">Bottom right</SelectItem>
+        <SelectItem value="top-right">Top right</SelectItem>
+        <SelectItem value="bottom-left">Bottom left</SelectItem>
+        <SelectItem value="top-left">Top left</SelectItem>
+      </SelectContent>
+    </Select>
   );
 }
 
@@ -102,14 +147,8 @@ export default function Settings() {
                   }}
                 />
               </SettingRow>
-              <SettingRow title="Theme" description="Currently only dark is available.">
-                <Select defaultValue="dark">
-                  <SelectTrigger className="w-32"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="dark">Dark</SelectItem>
-                    <SelectItem value="light" disabled>Light (soon)</SelectItem>
-                  </SelectContent>
-                </Select>
+              <SettingRow title="Theme" description="Match Windows or pick light/dark.">
+                <ThemeSelect />
               </SettingRow>
             </CardContent>
           </Card>
@@ -140,15 +179,7 @@ export default function Settings() {
           <Card>
             <CardContent className="p-5 pt-5">
               <SettingRow title="Position" description="Where the recording pill appears.">
-                <Select defaultValue="bottom-center">
-                  <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="bottom-center">Bottom center</SelectItem>
-                    <SelectItem value="top-center">Top center</SelectItem>
-                    <SelectItem value="bottom-right">Bottom right</SelectItem>
-                    <SelectItem value="top-right">Top right</SelectItem>
-                  </SelectContent>
-                </Select>
+                <OverlayPositionSelect />
               </SettingRow>
             </CardContent>
           </Card>

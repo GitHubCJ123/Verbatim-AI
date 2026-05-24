@@ -10,6 +10,7 @@ import { emit } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { Window, currentMonitor } from "@tauri-apps/api/window";
 import { PhysicalPosition, PhysicalSize } from "@tauri-apps/api/dpi";
+import { loadOverlayPosition } from "./preferences";
 
 const OVERLAY_LABEL = "overlay";
 
@@ -41,7 +42,7 @@ export async function startRecording(modeName = "Default", modeId: string | null
 
   try {
     await overlay.setSize(new PhysicalSize(OVERLAY_PILL_SIZE.width, OVERLAY_PILL_SIZE.height));
-    await positionOverlayBottomCenter(overlay);
+    await positionOverlay(overlay);
   } catch {
     /* best-effort */
   }
@@ -63,7 +64,7 @@ export async function resizeOverlayToReview() {
   await overlay.setSize(
     new PhysicalSize(OVERLAY_REVIEW_SIZE.width, OVERLAY_REVIEW_SIZE.height),
   );
-  await positionOverlayBottomCenter(overlay);
+  await positionOverlay(overlay);
 }
 
 export async function resizeOverlayToPill() {
@@ -72,14 +73,35 @@ export async function resizeOverlayToPill() {
   await overlay.setSize(
     new PhysicalSize(OVERLAY_PILL_SIZE.width, OVERLAY_PILL_SIZE.height),
   );
-  await positionOverlayBottomCenter(overlay);
+  await positionOverlay(overlay);
 }
 
-async function positionOverlayBottomCenter(overlay: Window) {
+async function positionOverlay(overlay: Window) {
   const monitor = await currentMonitor();
   if (!monitor) return;
   const overlaySize = await overlay.outerSize();
-  const x = monitor.position.x + Math.floor((monitor.size.width - overlaySize.width) / 2);
-  const y = monitor.position.y + monitor.size.height - overlaySize.height - 96;
+  const pos = loadOverlayPosition();
+  const margin = 96;
+  const mx = monitor.position.x;
+  const my = monitor.position.y;
+  const mw = monitor.size.width;
+  const mh = monitor.size.height;
+  const ow = overlaySize.width;
+  const oh = overlaySize.height;
+  const centerX = mx + Math.floor((mw - ow) / 2);
+  const rightX = mx + mw - ow - margin;
+  const leftX = mx + margin;
+  const topY = my + margin;
+  const bottomY = my + mh - oh - margin;
+  let x = centerX;
+  let y = bottomY;
+  switch (pos) {
+    case "top-center":     x = centerX; y = topY;    break;
+    case "bottom-center":  x = centerX; y = bottomY; break;
+    case "top-right":      x = rightX;  y = topY;    break;
+    case "bottom-right":   x = rightX;  y = bottomY; break;
+    case "top-left":       x = leftX;   y = topY;    break;
+    case "bottom-left":    x = leftX;   y = bottomY; break;
+  }
   await overlay.setPosition(new PhysicalPosition(x, y));
 }

@@ -3,6 +3,9 @@ import ReactDOM from "react-dom/client";
 import { listen } from "@tauri-apps/api/event";
 import App from "./App";
 import "./styles/globals.css";
+import { installTheme } from "./lib/theme";
+
+installTheme();
 import { installHotkeyListeners } from "./lib/hotkey";
 import { toast } from "./components/ui/Toast";
 import { addTranscription, type OutputAction } from "./lib/history";

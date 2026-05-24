@@ -1,9 +1,11 @@
 import { useLocation, Link } from "react-router-dom";
-import { Mic, ChevronRight } from "lucide-react";
+import { Mic, ChevronRight, Sun, Moon } from "lucide-react";
 import { Button } from "../ui/Button";
+import { IconButton } from "../ui/IconButton";
 import { Avatar, AvatarFallback, AvatarImage } from "../ui/Avatar";
 import { Kbd } from "../ui/Kbd";
 import { useProfile, initials } from "../../lib/store/useProfile";
+import { useTheme } from "../../lib/theme";
 
 const routeLabels: Record<string, string> = {
   "": "Home",
@@ -46,6 +48,7 @@ export function TopBar() {
 
       {/* Right cluster */}
       <div className="flex items-center gap-2">
+        <ThemeToggle />
         <Button variant="secondary" size="sm" className="gap-1.5">
           <Mic className="h-3.5 w-3.5" />
           <span>Record now</span>
@@ -57,5 +60,23 @@ export function TopBar() {
         </Avatar>
       </div>
     </header>
+  );
+}
+
+function ThemeToggle() {
+  const theme = useTheme((s) => s.theme);
+  const set = useTheme((s) => s.set);
+  const isDark =
+    theme === "dark" ||
+    (theme === "system" && window.matchMedia?.("(prefers-color-scheme: dark)").matches);
+  return (
+    <IconButton
+      size="sm"
+      onClick={() => set(isDark ? "light" : "dark")}
+      aria-label="Toggle theme"
+      title={isDark ? "Switch to light" : "Switch to dark"}
+    >
+      {isDark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+    </IconButton>
   );
 }

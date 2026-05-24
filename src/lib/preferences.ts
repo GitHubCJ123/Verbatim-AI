@@ -10,19 +10,49 @@ import {
 import { sendNotification, isPermissionGranted, requestPermission } from "@tauri-apps/plugin-notification";
 
 const LS_NOTIFY = "sw.notify.success";
+const LS_OVERLAY_POSITION = "sw.overlay.position";
+
+export type OverlayPosition =
+  | "bottom-center"
+  | "top-center"
+  | "bottom-right"
+  | "top-right"
+  | "bottom-left"
+  | "top-left";
 
 export interface AppPreferences {
   notifyOnSuccess: boolean;
+  overlayPosition: OverlayPosition;
 }
 
 export function loadPreferences(): AppPreferences {
   return {
     notifyOnSuccess: localStorage.getItem(LS_NOTIFY) === "1",
+    overlayPosition: loadOverlayPosition(),
   };
 }
 
 export function setNotifyOnSuccess(v: boolean): void {
   localStorage.setItem(LS_NOTIFY, v ? "1" : "0");
+}
+
+export function loadOverlayPosition(): OverlayPosition {
+  const v = localStorage.getItem(LS_OVERLAY_POSITION);
+  switch (v) {
+    case "top-center":
+    case "bottom-right":
+    case "top-right":
+    case "bottom-left":
+    case "top-left":
+    case "bottom-center":
+      return v;
+    default:
+      return "bottom-center";
+  }
+}
+
+export function setOverlayPosition(v: OverlayPosition): void {
+  localStorage.setItem(LS_OVERLAY_POSITION, v);
 }
 
 export async function isAutostartEnabled(): Promise<boolean> {

@@ -65,7 +65,7 @@ export function RecordingPill({ state, modeName, controller, error }: RecordingP
             "shadow-md backdrop-blur-2xl",
             state === "error"
               ? "border-danger/40 bg-danger/10"
-              : "border-white/10 bg-[rgba(20,20,28,0.65)]",
+              : "border-border-strong bg-bg-glass",
           )}
         >
           {/* Accent ring on left */}
@@ -107,7 +107,7 @@ export function RecordingPill({ state, modeName, controller, error }: RecordingP
               <Waveform getBars={getBars} className="h-full w-full" />
             )}
             {(state === "processing" || state === "polishing") && (
-              <div className="relative h-1 w-full overflow-hidden rounded-pill bg-white/[0.06]">
+              <div className="relative h-1 w-full overflow-hidden rounded-pill bg-bg-elevated">
                 <motion.div
                   className="absolute inset-y-0 w-1/3 bg-gradient-to-r from-transparent via-accent-start to-transparent"
                   animate={{ x: ["-100%", "300%"] }}

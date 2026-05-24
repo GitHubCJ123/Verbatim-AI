@@ -1,4 +1,5 @@
-:root {
+:root,
+:root.dark {
   --bg-base: #0a0a0f;
   --bg-elevated: rgba(255, 255, 255, 0.04);
   --bg-glass: rgba(20, 20, 28, 0.55);
@@ -26,4 +27,23 @@
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
   --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.35);
   --shadow-glow: 0 0 40px rgba(168, 85, 247, 0.25);
+}
+
+:root.light {
+  --bg-base: #fbfaff;
+  --bg-elevated: rgba(15, 15, 25, 0.04);
+  --bg-glass: rgba(255, 255, 255, 0.72);
+
+  --border-subtle: rgba(15, 15, 25, 0.08);
+  --border-strong: rgba(15, 15, 25, 0.16);
+
+  --text-primary: #0f0f19;
+  --text-secondary: rgba(15, 15, 25, 0.68);
+  --text-muted: rgba(15, 15, 25, 0.44);
+
+  /* Accents unchanged */
+
+  --shadow-sm: 0 1px 2px rgba(15, 15, 25, 0.08);
+  --shadow-md: 0 8px 24px rgba(15, 15, 25, 0.12);
+  --shadow-glow: 0 0 40px rgba(168, 85, 247, 0.18);
 }

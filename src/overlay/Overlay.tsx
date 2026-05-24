@@ -16,6 +16,7 @@ import { startRecording, type AudioController } from "../lib/audio";
 import type { RecordingState } from "../lib/store/useRecording";
 import { getActiveProvider } from "../lib/ai";
 import { getModeById, getDefaultMode, loadVocabulary } from "../lib/store/useModes";
+import { applyVocabReplacements } from "../lib/vocab";
 import {
   resizeOverlayToPill,
   resizeOverlayToReview,
@@ -116,7 +117,8 @@ export default function Overlay() {
       void hideAfter(3500);
       return;
     }
-    const vocabularyTerms = loadVocabulary().map((t) => t.term);
+    const vocabularyAll = loadVocabulary();
+    const vocabularyTerms = vocabularyAll.map((t) => t.term);
 
     try {
       setState("processing");
@@ -135,7 +137,9 @@ export default function Overlay() {
       }
 
       setState("polishing");
-      const cleaned = await runCleanup(transcript.text, activeMode, vocabularyTerms);
+      const cleanedRaw = await runCleanup(transcript.text, activeMode, vocabularyTerms);
+      const cleaned = applyVocabReplacements(cleanedRaw, vocabularyAll);
+      if (cleaned !== cleanedRaw) setStreamingCleaned(cleaned);
 
       console.info("[SuperWisper] raw:", transcript.text);
       console.info("[SuperWisper] cleaned:", cleaned);
@@ -222,10 +226,13 @@ export default function Overlay() {
   const handleReviewRegenerate = async () => {
     const activeMode = modeRef.current ?? getDefaultMode();
     if (!activeMode) return;
-    const vocab = loadVocabulary().map((t) => t.term);
+    const vocabAll = loadVocabulary();
+    const vocab = vocabAll.map((t) => t.term);
     setState("polishing");
     try {
-      await runCleanup(rawText, activeMode, vocab);
+      const cleanedRaw = await runCleanup(rawText, activeMode, vocab);
+      const cleaned = applyVocabReplacements(cleanedRaw, vocabAll);
+      if (cleaned !== cleanedRaw) setStreamingCleaned(cleaned);
       setState("idle");
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));

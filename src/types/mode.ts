@@ -28,6 +28,7 @@ export interface VocabularyTerm {
   id: string;
   term: string;
   pronunciation: string | null;
+  replacement: string | null;
   notes: string | null;
   createdAt: string;
 }

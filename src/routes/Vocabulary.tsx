@@ -15,13 +15,17 @@ export default function Vocabulary() {
   const remove = useVocabulary((s) => s.remove);
   const importMany = useVocabulary((s) => s.importMany);
 
-  const [draft, setDraft] = useState({ term: "", notes: "" });
+  const [draft, setDraft] = useState({ term: "", replacement: "", notes: "" });
   const fileRef = useRef<HTMLInputElement>(null);
 
   const handleAdd = () => {
     if (!draft.term.trim()) return;
-    add({ term: draft.term.trim(), notes: draft.notes.trim() || null });
-    setDraft({ term: "", notes: "" });
+    add({
+      term: draft.term.trim(),
+      replacement: draft.replacement.trim() || null,
+      notes: draft.notes.trim() || null,
+    });
+    setDraft({ term: "", replacement: "", notes: "" });
   };
 
   const handleImport = async (file: File) => {
@@ -35,8 +39,9 @@ export default function Vocabulary() {
     const start = rows[0]?.[0]?.toLowerCase() === "term" ? 1 : 0;
     const items = rows.slice(start).map((cells) => ({
       term: cells[0] ?? "",
-      pronunciation: cells[1] || null,
-      notes: cells[2] || null,
+      replacement: cells[1] || null,
+      pronunciation: cells[2] || null,
+      notes: cells[3] || null,
     }));
     const n = await importMany(items);
     toast.success(`Imported ${n} term${n === 1 ? "" : "s"}`);
@@ -44,9 +49,9 @@ export default function Vocabulary() {
 
   const handleExport = () => {
     const lines = [
-      "term,pronunciation,notes",
+      "term,replacement,pronunciation,notes",
       ...terms.map((t) =>
-        [t.term, t.pronunciation ?? "", t.notes ?? ""]
+        [t.term, t.replacement ?? "", t.pronunciation ?? "", t.notes ?? ""]
           .map((c) => (c.includes(",") ? `"${c.replace(/"/g, '""')}"` : c))
           .join(","),
       ),
@@ -64,7 +69,7 @@ export default function Vocabulary() {
     <PageContainer>
       <PageHeader
         title="Vocabulary"
-        description="Specialized terms so proper nouns stay spelled correctly. Injected into every cleanup prompt."
+        description={`Keep proper nouns spelled correctly, and define replacements (e.g. "gonna" → "going to") that run after cleanup.`}
         actions={
           <>
             <input
@@ -107,6 +112,15 @@ export default function Vocabulary() {
             }}
           />
           <Input
+            placeholder="Replace with (optional)"
+            className="flex-1"
+            value={draft.replacement}
+            onChange={(e) => setDraft((d) => ({ ...d, replacement: e.target.value }))}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") handleAdd();
+            }}
+          />
+          <Input
             placeholder="Notes (optional)"
             className="flex-1"
             value={draft.notes}
@@ -141,6 +155,7 @@ export default function Vocabulary() {
               <thead>
                 <tr className="border-b border-border-subtle text-xs text-text-muted">
                   <th className="px-5 py-3 text-left font-medium">Term</th>
+                  <th className="px-5 py-3 text-left font-medium">Replace with</th>
                   <th className="px-5 py-3 text-left font-medium">Notes</th>
                   <th className="w-12" />
                 </tr>
@@ -153,6 +168,16 @@ export default function Vocabulary() {
                         value={t.term}
                         onChange={(e) => update(t.id, { term: e.target.value })}
                         className="h-8 border-transparent bg-transparent px-2"
+                      />
+                    </td>
+                    <td className="px-5 py-2">
+                      <Input
+                        value={t.replacement ?? ""}
+                        onChange={(e) =>
+                          update(t.id, { replacement: e.target.value || null })
+                        }
+                        className="h-8 border-transparent bg-transparent px-2 text-text-secondary"
+                        placeholder="—"
                       />
                     </td>
                     <td className="px-5 py-2">

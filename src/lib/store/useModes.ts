@@ -123,6 +123,7 @@ interface RemoteVocab {
   user_id: string;
   term: string;
   pronunciation: string | null;
+  replacement: string | null;
   notes: string | null;
   created_at: string;
 }
@@ -132,6 +133,7 @@ function rowToVocab(r: RemoteVocab): VocabularyTerm {
     id: r.id,
     term: r.term,
     pronunciation: r.pronunciation,
+    replacement: r.replacement,
     notes: r.notes,
     createdAt: r.created_at,
   };
@@ -333,6 +335,7 @@ export const useVocabulary = create<VocabularyState>((set, get) => ({
       id: newId(),
       term: input.term,
       pronunciation: input.pronunciation ?? null,
+      replacement: input.replacement ?? null,
       notes: input.notes ?? null,
       createdAt: nowIso(),
     };
@@ -341,6 +344,7 @@ export const useVocabulary = create<VocabularyState>((set, get) => ({
       user_id: userId,
       term: t.term,
       pronunciation: t.pronunciation,
+      replacement: t.replacement,
       notes: t.notes,
       created_at: t.createdAt,
     });
@@ -352,16 +356,20 @@ export const useVocabulary = create<VocabularyState>((set, get) => ({
   },
 
   update: async (id, patch) => {
+    const cur = get().terms.find((t) => t.id === id);
+    if (!cur) return;
+    const merged = { ...cur, ...patch };
     const { error } = await supabase
       .from("vocabulary")
       .update({
-        term: patch.term,
-        pronunciation: patch.pronunciation ?? null,
-        notes: patch.notes ?? null,
+        term: merged.term,
+        pronunciation: merged.pronunciation ?? null,
+        replacement: merged.replacement ?? null,
+        notes: merged.notes ?? null,
       })
       .eq("id", id);
     if (error) throw new Error(error.message);
-    const next = get().terms.map((t) => (t.id === id ? { ...t, ...patch } : t));
+    const next = get().terms.map((t) => (t.id === id ? merged : t));
     saveVocabCache(next);
     set({ terms: next });
   },
@@ -383,6 +391,7 @@ export const useVocabulary = create<VocabularyState>((set, get) => ({
         user_id: userId,
         term: i.term.trim(),
         pronunciation: i.pronunciation ?? null,
+        replacement: i.replacement ?? null,
         notes: i.notes ?? null,
         created_at: nowIso(),
       }));

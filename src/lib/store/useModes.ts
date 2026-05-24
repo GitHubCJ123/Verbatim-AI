@@ -71,6 +71,7 @@ interface RemoteMode {
   hotkey: string | null;
   push_to_talk: boolean;
   save_history: boolean;
+  skip_cleanup: boolean;
   is_builtin: boolean;
   position: number;
   created_at: string;
@@ -90,6 +91,7 @@ function rowToMode(r: RemoteMode): Mode {
     hotkey: r.hotkey,
     pushToTalk: r.push_to_talk,
     saveHistory: r.save_history,
+    skipCleanup: r.skip_cleanup ?? false,
     isBuiltin: r.is_builtin,
     position: r.position,
     createdAt: r.created_at,
@@ -111,6 +113,7 @@ function modeToRow(m: Mode, userId: string): RemoteMode {
     hotkey: m.hotkey,
     push_to_talk: m.pushToTalk,
     save_history: m.saveHistory,
+    skip_cleanup: m.skipCleanup,
     is_builtin: m.isBuiltin,
     position: m.position,
     created_at: m.createdAt,
@@ -209,6 +212,7 @@ export const useModes = create<ModesState>((set, get) => ({
       hotkey: input.hotkey ?? null,
       pushToTalk: input.pushToTalk ?? true,
       saveHistory: input.saveHistory ?? true,
+      skipCleanup: input.skipCleanup ?? false,
       isBuiltin: false,
       position: get().modes.length,
       createdAt: now,

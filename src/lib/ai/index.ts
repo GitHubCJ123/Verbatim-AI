@@ -62,6 +62,21 @@ async function safeReadText(res: Response): Promise<string> {
   }
 }
 
+async function loggedFetch(url: string, init: RequestInit, label: string): Promise<Response> {
+  console.info(`[ai:${label}] POST`, url);
+  try {
+    const res = await fetch(url, init);
+    console.info(`[ai:${label}] response`, res.status, res.statusText);
+    return res;
+  } catch (e) {
+    console.error(`[ai:${label}] fetch failed`, e);
+    const msg = e instanceof Error ? e.message : String(e);
+    throw new Error(
+      `Network error calling ${label} (${msg}). Check the Supabase URL is reachable and the Edge Function is deployed.`,
+    );
+  }
+}
+
 export class SupabaseAIProvider implements AIProvider {
   readonly name = "SuperWisper Cloud";
 
@@ -83,7 +98,7 @@ export class SupabaseAIProvider implements AIProvider {
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
       try {
         const res = await withTimeout(
-          fetch(url, { method: "POST", headers, body: form }),
+          loggedFetch(url, { method: "POST", headers, body: form }, "transcribe"),
           TRANSCRIBE_TIMEOUT_MS,
         );
         if (!res.ok) {
@@ -111,11 +126,11 @@ export class SupabaseAIProvider implements AIProvider {
     };
 
     const res = await withTimeout(
-      fetch(functionUrl("cleanup"), {
-        method: "POST",
-        headers,
-        body: JSON.stringify(input),
-      }),
+      loggedFetch(
+        functionUrl("cleanup"),
+        { method: "POST", headers, body: JSON.stringify(input) },
+        "cleanup",
+      ),
       CLEANUP_TIMEOUT_MS,
     );
 
@@ -146,7 +161,8 @@ export class SupabaseAIProvider implements AIProvider {
       );
       const latencyMs = Math.round(performance.now() - start);
       if (res.ok) return { ok: true, message: "Connected", latencyMs };
-      return { ok: false, message: `${res.status} ${res.statusText}` };
+      const body = await safeReadText(res);
+      return { ok: false, message: `${res.status}: ${body.slice(0, 600) || res.statusText}` };
     } catch (e) {
       return { ok: false, message: e instanceof Error ? e.message : String(e) };
     }

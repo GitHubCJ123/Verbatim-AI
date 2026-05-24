@@ -91,6 +91,14 @@ void listen<{ action: OutputAction; cleaned: string; modeId: string | null }>(
   },
 );
 
+void listen<{ message: string; stack?: string }>("recording:error", (e) => {
+  console.error("[SuperWisper] recording error:", e.payload.message, e.payload.stack);
+  toast.error("Transcription failed", {
+    description: e.payload.message,
+    duration: 10000,
+  });
+});
+
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
     <App />

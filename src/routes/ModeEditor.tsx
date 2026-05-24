@@ -202,6 +202,13 @@ function FormColumn({
           checked={draft.saveHistory}
           onChange={(v) => set("saveHistory", v)}
         />
+
+        <ToggleRow
+          title="Skip AI cleanup"
+          description="Paste the raw transcript instantly, no polishing pass. Fastest path. Vocabulary replacements still run."
+          checked={draft.skipCleanup}
+          onChange={(v) => set("skipCleanup", v)}
+        />
       </CardContent>
     </Card>
   );

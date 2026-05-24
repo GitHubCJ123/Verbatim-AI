@@ -15,6 +15,7 @@ import {
   setNotifyOnSuccess,
 } from "../lib/preferences";
 import { useOnboarding } from "../lib/store/useOnboarding";
+import { getActiveProvider } from "../lib/ai";
 
 interface RowProps {
   title: string;
@@ -187,6 +188,34 @@ export default function Settings() {
                     <SelectItem value="debug">Debug</SelectItem>
                   </SelectContent>
                 </Select>
+              </SettingRow>
+              <SettingRow
+                title="Test AI connection"
+                description="Sends a ping to the Supabase cleanup function. Tells you whether the network path works."
+              >
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={async () => {
+                    const provider = getActiveProvider();
+                    if (!provider) {
+                      toast.error("No provider configured");
+                      return;
+                    }
+                    toast.info("Pinging…");
+                    const h = await provider.health();
+                    if (h.ok) {
+                      toast.success(`Connected (${h.latencyMs ?? "?"} ms)`);
+                    } else {
+                      toast.error("Connection failed", {
+                        description: h.message ?? "Unknown",
+                        duration: 12000,
+                      });
+                    }
+                  }}
+                >
+                  Test
+                </Button>
               </SettingRow>
               <SettingRow
                 title="Re-run onboarding"

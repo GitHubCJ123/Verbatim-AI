@@ -141,21 +141,29 @@ export function isOnboardingComplete(): boolean {
 const TONE_SYSTEM_PROMPTS: Record<Tone, { name: string; description: string; prompt: string }> = {
   formal: {
     name: "Formal",
-    description: "Professional sentences, full punctuation.",
-    prompt:
-      "Write in complete, professional sentences. Maintain a respectful tone. Add a brief greeting and sign-off only if appropriate.",
+    description: "Full email shape: greeting, body, sign-off.",
+    prompt: `Rewrite this as a complete formal email.
+
+Structure:
+1. Greeting line ("Hi <name>," / "Hello <name>," / "Dear <name>,"). If no recipient was named, use "Hi there,".
+2. Blank line.
+3. Body in full, professional sentences. Expand fragmented speech into clear prose. Short paragraphs.
+4. Blank line.
+5. Closing ("Best," / "Thanks," / "Regards,") then the sender's name on its own line — use whatever name the speaker used for themselves.
+
+Do not invent facts. Keep the speaker's intent. Output ONLY the email text — no commentary, no markdown.`,
   },
   casual: {
     name: "Casual",
-    description: "Contractions and a lighter touch.",
+    description: "Clear sentences, friendly tone, no formalities.",
     prompt:
-      "Keep it conversational. Contractions are good. No formalities unless they were in the speech.",
+      "Rewrite in clear, conversational sentences. Contractions are good. No greeting or sign-off unless the speaker explicitly said one. Fix grammar and punctuation. Keep it natural — match the speaker's voice.",
   },
   very_casual: {
     name: "Very Casual",
     description: "Texting energy — minimal punctuation, lowercase OK.",
     prompt:
-      "Texting-style. Minimal punctuation, lowercase allowed, slang fine. Keep it short.",
+      "Texting-style. Lowercase is fine. Minimal punctuation — no periods at end of single sentences. Slang and contractions encouraged. Keep it short and natural. No greeting or sign-off.",
   },
   custom: {
     name: "Custom",

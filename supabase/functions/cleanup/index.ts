@@ -2,10 +2,9 @@
 // Streaming chat-completion proxy. Body is forwarded to Azure with
 // stream=true and the SSE stream is piped straight back to the client.
 
-const AZURE_ENDPOINT = Deno.env.get("AZURE_ENDPOINT");
-const AZURE_API_KEY = Deno.env.get("AZURE_API_KEY");
-const AZURE_CLEANUP_DEPLOYMENT = Deno.env.get("AZURE_CLEANUP_DEPLOYMENT");
-const API_VERSION = Deno.env.get("AZURE_API_VERSION") ?? "2024-06-01";
+function clean(v: string | undefined): string | undefined {
+  return v?.replace(/[\x00-\x1F\x7F]/g, "").trim();
+}
 
 const CORS_HEADERS = {
   "access-control-allow-origin": "*",
@@ -25,6 +24,16 @@ interface CleanupRequest {
 }
 
 Deno.serve(async (req) => {
+  try {
+    return await handle(req);
+  } catch (e) {
+    const msg = e instanceof Error ? `${e.message}\n${e.stack ?? ""}` : String(e);
+    console.error("cleanup crash:", msg);
+    return json({ error: `cleanup crashed: ${msg.slice(0, 800)}` }, 500);
+  }
+});
+
+async function handle(req: Request): Promise<Response> {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: CORS_HEADERS });
   }
@@ -32,8 +41,15 @@ Deno.serve(async (req) => {
     return json({ error: "Method not allowed" }, 405);
   }
 
+  const AZURE_ENDPOINT = clean(Deno.env.get("AZURE_ENDPOINT"));
+  const AZURE_API_KEY = clean(Deno.env.get("AZURE_API_KEY"));
+  const AZURE_CLEANUP_DEPLOYMENT = clean(Deno.env.get("AZURE_CLEANUP_DEPLOYMENT"));
+  const API_VERSION = clean(Deno.env.get("AZURE_API_VERSION")) ?? "2024-06-01";
+
   if (!AZURE_ENDPOINT || !AZURE_API_KEY || !AZURE_CLEANUP_DEPLOYMENT) {
-    return json({ error: "Server is missing Azure configuration." }, 500);
+    return json({
+      error: `Server is missing Azure configuration. endpoint:${!!AZURE_ENDPOINT} key:${!!AZURE_API_KEY} deployment:${!!AZURE_CLEANUP_DEPLOYMENT}`,
+    }, 500);
   }
 
   let payload: CleanupRequest;
@@ -87,7 +103,7 @@ Deno.serve(async (req) => {
       ...CORS_HEADERS,
     },
   });
-});
+}
 
 function trim(s: string): string {
   return s.replace(/\/+$/, "");
@@ -121,6 +137,17 @@ function buildPrompt(input: CleanupRequest): { system: string; user: string } {
     "- Preserve the speaker's intent and voice.",
     '- Remove disfluencies ("um", "uh", false starts, repeated words).',
     "- Fix grammar and punctuation.",
+    "- Convert spoken punctuation/formatting commands into the actual characters:",
+    '  "open paren" / "open parenthesis" / "open parentheses" -> (',
+    '  "close paren" / "close parenthesis" / "close parentheses" -> )',
+    '  "open bracket" -> [   "close bracket" -> ]',
+    '  "open brace" / "open curly" -> {   "close brace" / "close curly" -> }',
+    '  "quote" / "open quote" -> "   "close quote" / "unquote" -> "',
+    '  "comma" -> ,   "period" / "full stop" -> .   "question mark" -> ?   "exclamation mark" -> !',
+    '  "colon" -> :   "semicolon" -> ;   "dash" / "hyphen" -> -   "em dash" -> —',
+    '  "slash" -> /   "backslash" -> \\\\   "ampersand" -> &   "at sign" -> @',
+    '  "new line" / "newline" -> line break.   "new paragraph" -> blank line.',
+    "  Only do the substitution when the speaker clearly meant the symbol, not when they used the word naturally.",
     `- ${input.systemPrompt}${translationLine}`,
     "",
     "Return ONLY the polished text. No commentary, no quotes.",

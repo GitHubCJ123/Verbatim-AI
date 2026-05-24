@@ -18,6 +18,7 @@ export interface Mode {
   hotkey: string | null;
   pushToTalk: boolean;
   saveHistory: boolean;
+  skipCleanup: boolean;
   isBuiltin: boolean;
   position: number;
   createdAt: string;

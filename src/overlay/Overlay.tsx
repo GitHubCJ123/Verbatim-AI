@@ -136,10 +136,17 @@ export default function Overlay() {
         setView("review");
       }
 
-      setState("polishing");
-      const cleanedRaw = await runCleanup(transcript.text, activeMode, vocabularyTerms);
-      const cleaned = applyVocabReplacements(cleanedRaw, vocabularyAll);
-      if (cleaned !== cleanedRaw) setStreamingCleaned(cleaned);
+      let cleaned: string;
+      if (activeMode.skipCleanup) {
+        // Fast path: skip the LLM entirely; vocab replacements still run.
+        cleaned = applyVocabReplacements(transcript.text, vocabularyAll);
+        setStreamingCleaned(cleaned);
+      } else {
+        setState("polishing");
+        const cleanedRaw = await runCleanup(transcript.text, activeMode, vocabularyTerms);
+        cleaned = applyVocabReplacements(cleanedRaw, vocabularyAll);
+        if (cleaned !== cleanedRaw) setStreamingCleaned(cleaned);
+      }
 
       console.info("[SuperWisper] raw:", transcript.text);
       console.info("[SuperWisper] cleaned:", cleaned);
@@ -170,6 +177,7 @@ export default function Overlay() {
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error("[SuperWisper] pipeline error:", e);
+      void emit("recording:error", { message: msg, stack: e instanceof Error ? e.stack : undefined });
       setError(msg);
       setState("error");
       void hideAfter(3500);

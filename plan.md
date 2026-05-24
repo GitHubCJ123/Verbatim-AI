@@ -966,18 +966,65 @@ Each phase is independently testable. Phases roughly map to PRs.
 - `src/routes/{Home,Modes,ModeEditor,Apps,Vocabulary,History,Settings,Account}.tsx`
 - `src/App.tsx` rewritten as a `RouterProvider`
 
-### Phase 2 — Overlay window & audio capture
+### Phase 2 — Overlay window & audio capture ✅ **COMPLETE** (2026-05-24)
 - Configure overlay as a separate Tauri window: transparent, always-on-top, no-decorations, no-activate, skip-taskbar, draggable.
 - Render `RecordingPill` component with all visual states.
 - Implement audio capture with `MediaRecorder` + `AnalyserNode`.
 - Build canvas-based waveform (32 bars, smoothing).
 - Mock recording flow: button starts/stops, shows duration.
 
-### Phase 3 — Global hotkey & active-window detection
+**Phase 2 notes (what actually happened):**
+- Vite multi-page build: `overlay.html` added at project root, `vite.config.ts` updated with `rollupOptions.input` for `main` + `overlay`. The overlay bundle code-splits to ~7 kB (bonus — satisfies plan §19 "Frontend code-split: overlay bundle separate from main bundle" early).
+- New Tauri window `overlay` in [src-tauri/tauri.conf.json](src-tauri/tauri.conf.json): `420×96`, `transparent: true`, `decorations: false`, `alwaysOnTop: true`, `skipTaskbar: true`, `focus: false`, `shadow: false`, `visible: false` (shown on demand). The full WS_EX_NOACTIVATE / non-activating semantics need a Rust call (`SetWindowLongPtrW`); deferred to Phase 7 (paste flow) where focus-restore actually matters.
+- Capabilities ([src-tauri/capabilities/default.json](src-tauri/capabilities/default.json)) extended to grant `core:event:*` and `core:window:*` to both windows.
+- Audio capture ([src/lib/audio.ts](src/lib/audio.ts)): `MediaRecorder` (Opus/webm preferred, wav fallback) + parallel `AnalyserNode` (fftSize 256, smoothing 0.7). Controller exposes `getLevel()`, `getBars(32)`, `stop()`, `cancel()`. Capture happens **inside the overlay window** so the waveform reads from the same DOM that renders it (avoids cross-window streaming).
+- `Waveform` ([src/components/recording/Waveform.tsx](src/components/recording/Waveform.tsx)): canvas, 32 bars, per-bar exponential smoothing, violet→cyan linear gradient, DPR-aware via ResizeObserver, rAF render.
+- `RecordingPill` ([src/components/recording/RecordingPill.tsx](src/components/recording/RecordingPill.tsx)): 360×72 pill with state machine for `idle | recording | processing | polishing | success | error`. Pulsing accent ring during recording, shimmer bar during processing/polishing, check during success, danger ring + message during error. Spring entrance (stiffness 240, damping 26 per plan §10).
+- Recording store ([src/lib/store/useRecording.ts](src/lib/store/useRecording.ts)) — Zustand, owns state machine. Currently the overlay maintains local state; main window uses the cross-window bridge.
+- Cross-window bridge ([src/lib/recording-bridge.ts](src/lib/recording-bridge.ts)): emits `recording:start { modeName }`, `recording:stop`, `recording:cancel`. Positions the overlay bottom-center 96 px above the taskbar on the current monitor before showing.
+- Home page now has a working **Try it now** button (manual trigger — the global hotkey arrives in Phase 3). Esc inside the overlay also cancels.
+- Mocked pipeline after `stop()`: 600 ms processing → 800 ms polishing → 600 ms success → fade & hide. Real Azure transcription wires in Phase 4.
+
+**Known deferred work:**
+- `WS_EX_NOACTIVATE` / true non-stealing focus: needs a tiny Rust setup hook on the `overlay` window — Phase 7.
+- Permission denial UX: shows a Sonner toast with the raw error today. Onboarding (Phase 11) replaces this with a proper "Allow microphone in Windows settings" deeplink.
+- Audio device selection: device enumeration UI is in Settings stub but not wired — Phase 5/13.
+
+**Files added in Phase 2:**
+- `overlay.html`
+- `src/overlay/{main.tsx,Overlay.tsx}`
+- `src/lib/{audio.ts,recording-bridge.ts}`
+- `src/lib/store/useRecording.ts`
+- `src/components/recording/{RecordingPill.tsx,Waveform.tsx}`
+
+### Phase 3 — Global hotkey & active-window detection ✅ **COMPLETE** (2026-05-24)
 - Rust: register global shortcut, handle down/up events, support PTT and toggle.
 - Rust: `get_active_window()` command returning `{ exe, title }`.
 - Frontend: settings UI to record a hotkey.
 - Wire: hotkey → show overlay → capture active window → emit event with target info.
+
+**Phase 3 notes (what actually happened):**
+- Rust deps added: `tauri-plugin-global-shortcut = "2"`, `windows = "0.59"` (Win32_Foundation, WindowsAndMessaging, Threading, ProcessStatus features). Cargo file uses `[target.'cfg(windows)'.dependencies]` so non-Windows builds still type-check the stub fallback.
+- New Rust modules: [src-tauri/src/commands/hotkey.rs](src-tauri/src/commands/hotkey.rs), [src-tauri/src/commands/active_window.rs](src-tauri/src/commands/active_window.rs), [src-tauri/src/commands/mod.rs](src-tauri/src/commands/mod.rs).
+- The global-shortcut plugin handler emits `hotkey:down` / `hotkey:up` events on `ShortcutState::Pressed` / `Released`, so the same handler covers both PTT and toggle modes — the frontend chooses the semantics.
+- `HotkeyState` (Mutex<Option<Shortcut>>) is `manage()`d on the app. `install_default()` registers `CommandOrControl+Space` at startup. The IPC commands `set_hotkey(spec)` and `clear_hotkey()` swap registrations safely (unregister-then-register).
+- Active window uses `GetForegroundWindow` + `GetWindowTextW` + `GetWindowThreadProcessId` + `OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION)` + `QueryFullProcessImageNameW` (plan §13 pseudo-Rust made real). Returns `{ exe, exe_path, title }`. Non-Windows builds get an empty struct.
+- Capabilities updated to include `global-shortcut:default` and the explicit `core:window:*` permissions used by the recording bridge.
+- Frontend: [src/lib/hotkey.ts](src/lib/hotkey.ts) persists `{ spec, pushToTalk }` in localStorage, calls Rust commands, and installs the global `listen()` handlers. Listener logic:
+  - On `hotkey:down`: snap the active window (`get_active_window`), then if PTT → `startRecording(exe)`. If toggle → flip an internal flag and start or stop.
+  - On `hotkey:up`: PTT → `stopRecording`. Toggle ignores.
+- [src/components/settings/HotkeyRecorder.tsx](src/components/settings/HotkeyRecorder.tsx) — focusable button that captures the next combination (must include at least one modifier; Esc cancels). Pretty-prints with `Kbd`.
+- Settings page now drives a real hotkey: recording new combos calls `applyHotkey()` which goes through Rust; the PTT toggle persists immediately.
+- [src/main.tsx](src/main.tsx) installs `listen()` subscriptions on boot — even before the user navigates to Settings the default Ctrl+Space already works app-wide.
+
+**Known deferred work:**
+- Conflict detection: today a `set_hotkey` failure shows a Sonner toast. A nicer "Try another key" hint with suggestions belongs in onboarding (Phase 11) / Settings polish (Phase 13).
+- Active window is **logged** today but not used to resolve a Mode. App-mapping resolution happens in Phase 6.
+- Toggle-mode safety long-press to stop (plan §8.1) deferred to Phase 13 polish.
+
+**Files added in Phase 3:**
+- Rust: `src-tauri/src/commands/{mod.rs,hotkey.rs,active_window.rs}`
+- TS: `src/lib/hotkey.ts`, `src/components/settings/HotkeyRecorder.tsx`
 
 ### Phase 4 — AI provider layer
 - Define `AIProvider` interface + types.

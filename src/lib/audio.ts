@@ -1,0 +1,158 @@
+/**
+ * Audio capture pipeline.
+ *
+ * - Uses `getUserMedia` for the mic, `MediaRecorder` for encoding,
+ *   and a parallel `AnalyserNode` for live waveform RMS data.
+ * - Returns a controller that exposes `stop()` and a `level` reader
+ *   that callers can poll from `requestAnimationFrame`.
+ *
+ * Spec: plan §12 (Audio Pipeline).
+ */
+
+export interface AudioControllerOptions {
+  deviceId?: string;
+  /** Called when the user clicks "Allow" and capture is live. */
+  onStart?: () => void;
+  /** Called once with the final encoded blob (webm/opus or wav). */
+  onStop?: (blob: Blob, durationMs: number) => void;
+  /** Called if anything blows up. */
+  onError?: (err: Error) => void;
+}
+
+export interface AudioController {
+  /** Latest amplitude in [0,1], smoothed. Updated continuously while recording. */
+  getLevel: () => number;
+  /** Latest per-bar amplitude array, length = bars (default 32), values in [0,1]. */
+  getBars: (bars?: number) => number[];
+  /** Stop recording. Resolves when the final blob is delivered. */
+  stop: () => Promise<void>;
+  /** Hard-abort: stop the recorder and discard any final blob. */
+  cancel: () => void;
+}
+
+function pickMimeType(): string {
+  const candidates = [
+    "audio/webm;codecs=opus",
+    "audio/webm",
+    "audio/ogg;codecs=opus",
+    "audio/wav",
+  ];
+  for (const c of candidates) {
+    if (typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported(c)) return c;
+  }
+  return "";
+}
+
+export async function startRecording(opts: AudioControllerOptions = {}): Promise<AudioController> {
+  let stream: MediaStream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        deviceId: opts.deviceId,
+        channelCount: 1,
+        sampleRate: 16000,
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      },
+    });
+  } catch (err) {
+    const e = err instanceof Error ? err : new Error(String(err));
+    opts.onError?.(e);
+    throw e;
+  }
+
+  const audioCtx = new AudioContext();
+  const source = audioCtx.createMediaStreamSource(stream);
+  const analyser = audioCtx.createAnalyser();
+  analyser.fftSize = 256;
+  analyser.smoothingTimeConstant = 0.7;
+  source.connect(analyser);
+
+  const freqBuffer = new Uint8Array(analyser.frequencyBinCount);
+  const timeBuffer = new Uint8Array(analyser.fftSize);
+
+  // Smoothed amplitude
+  let smoothedLevel = 0;
+  const smoothing = 0.65;
+
+  const getLevel = () => {
+    analyser.getByteTimeDomainData(timeBuffer);
+    let sumSq = 0;
+    for (let i = 0; i < timeBuffer.length; i++) {
+      const v = (timeBuffer[i] - 128) / 128;
+      sumSq += v * v;
+    }
+    const rms = Math.sqrt(sumSq / timeBuffer.length);
+    // Boost low signal so visible motion appears at normal speech levels.
+    const boosted = Math.min(1, rms * 3);
+    smoothedLevel = smoothing * smoothedLevel + (1 - smoothing) * boosted;
+    return smoothedLevel;
+  };
+
+  const getBars = (bars = 32) => {
+    analyser.getByteFrequencyData(freqBuffer);
+    const out = new Array<number>(bars);
+    const bucket = Math.max(1, Math.floor(freqBuffer.length / bars));
+    for (let b = 0; b < bars; b++) {
+      let sum = 0;
+      const start = b * bucket;
+      const end = Math.min(freqBuffer.length, start + bucket);
+      for (let i = start; i < end; i++) sum += freqBuffer[i];
+      const avg = sum / (end - start);
+      // Normalize 0..255 -> 0..1, with a soft curve.
+      out[b] = Math.min(1, (avg / 255) ** 0.8);
+    }
+    return out;
+  };
+
+  const mimeType = pickMimeType();
+  const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+  const chunks: BlobPart[] = [];
+
+  recorder.addEventListener("dataavailable", (e) => {
+    if (e.data && e.data.size > 0) chunks.push(e.data);
+  });
+
+  const startedAt = performance.now();
+  let cancelled = false;
+
+  const cleanup = () => {
+    stream.getTracks().forEach((t) => t.stop());
+    void audioCtx.close().catch(() => {});
+  };
+
+  const stop = () =>
+    new Promise<void>((resolve) => {
+      if (recorder.state === "inactive") {
+        cleanup();
+        resolve();
+        return;
+      }
+      recorder.addEventListener(
+        "stop",
+        () => {
+          const durationMs = performance.now() - startedAt;
+          if (!cancelled) {
+            const blob = new Blob(chunks, { type: mimeType || "audio/webm" });
+            opts.onStop?.(blob, durationMs);
+          }
+          cleanup();
+          resolve();
+        },
+        { once: true },
+      );
+      recorder.stop();
+    });
+
+  const cancel = () => {
+    cancelled = true;
+    if (recorder.state !== "inactive") recorder.stop();
+    cleanup();
+  };
+
+  recorder.start();
+  opts.onStart?.();
+
+  return { getLevel, getBars, stop, cancel };
+}

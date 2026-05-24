@@ -21,6 +21,22 @@
         "resizable": true,
         "visible": true,
         "decorations": true
+      },
+      {
+        "label": "overlay",
+        "url": "overlay.html",
+        "title": "SuperWisper Overlay",
+        "width": 420,
+        "height": 96,
+        "resizable": false,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "shadow": false,
+        "focus": false,
+        "visible": false,
+        "center": true
       }
     ],
     "security": {

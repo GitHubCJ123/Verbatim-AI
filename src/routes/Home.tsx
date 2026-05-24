@@ -1,10 +1,32 @@
-import { Mic, Sparkles, Zap, ChevronRight } from "lucide-react";
+import { useState } from "react";
+import { Mic, Sparkles, Zap, ChevronRight, Square } from "lucide-react";
 import { Card, CardContent } from "../components/ui/Card";
 import { Kbd } from "../components/ui/Kbd";
 import { Badge } from "../components/ui/Badge";
+import { Button } from "../components/ui/Button";
 import { PageContainer, PageHeader } from "../components/layout/PageHeader";
+import { startRecording, stopRecording } from "../lib/recording-bridge";
+import { toast } from "../components/ui/Toast";
 
 export default function Home() {
+  const [active, setActive] = useState(false);
+
+  const handleStart = async () => {
+    try {
+      await startRecording("Default");
+      setActive(true);
+    } catch (e) {
+      toast.error("Couldn't start recording", {
+        description: e instanceof Error ? e.message : String(e),
+      });
+    }
+  };
+
+  const handleStop = async () => {
+    await stopRecording();
+    setActive(false);
+  };
+
   return (
     <PageContainer>
       <PageHeader
@@ -12,7 +34,6 @@ export default function Home() {
         description="Press your shortcut anywhere in Windows and start talking."
       />
 
-      {/* Hero card */}
       <Card className="relative overflow-hidden bg-gradient-to-br from-bg-elevated to-transparent">
         <div className="pointer-events-none absolute -top-24 right-0 h-64 w-64 rounded-full bg-accent-solid/20 blur-3xl" />
         <CardContent className="relative flex items-center gap-6 p-8 pt-8">
@@ -28,10 +49,22 @@ export default function Home() {
               Press and hold <Kbd>Ctrl</Kbd> <Kbd>Space</Kbd> from any app. Release to transcribe.
             </p>
           </div>
+          <div className="flex shrink-0 gap-2">
+            {!active ? (
+              <Button variant="primary" onClick={handleStart}>
+                <Mic className="h-4 w-4" />
+                Try it now
+              </Button>
+            ) : (
+              <Button variant="danger" onClick={handleStop}>
+                <Square className="h-4 w-4" />
+                Stop
+              </Button>
+            )}
+          </div>
         </CardContent>
       </Card>
 
-      {/* Stats */}
       <div className="mt-6 grid grid-cols-3 gap-4">
         {[
           { label: "Words today", value: "0", icon: Sparkles },
@@ -50,7 +83,6 @@ export default function Home() {
         ))}
       </div>
 
-      {/* Empty state */}
       <div className="mt-6">
         <h3 className="mb-3 text-sm font-medium text-text-secondary">Recent transcriptions</h3>
         <Card>

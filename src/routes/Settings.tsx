@@ -1,10 +1,13 @@
+import { useEffect, useState } from "react";
+import { toast } from "../components/ui/Toast";
 import { PageContainer, PageHeader } from "../components/layout/PageHeader";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "../components/ui/Tabs";
 import { Card, CardContent } from "../components/ui/Card";
 import { Switch } from "../components/ui/Switch";
 import { Input } from "../components/ui/Input";
-import { Kbd } from "../components/ui/Kbd";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "../components/ui/Select";
+import { HotkeyRecorder } from "../components/settings/HotkeyRecorder";
+import { applyHotkey, loadHotkeyConfig, saveHotkeyConfig } from "../lib/hotkey";
 
 interface RowProps {
   title: string;
@@ -25,6 +28,24 @@ function SettingRow({ title, description, children }: RowProps) {
 }
 
 export default function Settings() {
+  const [hotkey, setHotkey] = useState(() => loadHotkeyConfig());
+
+  useEffect(() => {
+    saveHotkeyConfig(hotkey);
+  }, [hotkey]);
+
+  const handleHotkeyChange = async (spec: string) => {
+    try {
+      await applyHotkey(spec);
+      setHotkey((h) => ({ ...h, spec }));
+      toast.success("Hotkey updated", { description: `Now using ${spec}` });
+    } catch (e) {
+      toast.error("Couldn't register that shortcut", {
+        description: e instanceof Error ? e.message : String(e),
+      });
+    }
+  };
+
   return (
     <PageContainer>
       <PageHeader title="Settings" description="Configure SuperWisper to fit your workflow." />
@@ -61,10 +82,15 @@ export default function Settings() {
           <Card>
             <CardContent className="p-5 pt-5">
               <SettingRow title="Global hotkey" description="Hold to dictate from anywhere.">
-                <div className="flex gap-1"><Kbd>Ctrl</Kbd><Kbd>Space</Kbd></div>
+                <HotkeyRecorder value={hotkey.spec} onChange={handleHotkeyChange} />
               </SettingRow>
               <SettingRow title="Push-to-talk" description="Hold to record. Off = tap to toggle.">
-                <Switch defaultChecked />
+                <Switch
+                  checked={hotkey.pushToTalk}
+                  onCheckedChange={(checked) =>
+                    setHotkey((h) => ({ ...h, pushToTalk: checked }))
+                  }
+                />
               </SettingRow>
               <SettingRow title="Noise suppression" description="Filter background noise during recording.">
                 <Switch defaultChecked />

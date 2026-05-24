@@ -11,6 +11,21 @@ use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Auto-accept the WebView2 mic permission prompt. The fake-UI flag makes
+    // Chromium silently grant any media prompt; the user already gave OS-level
+    // mic consent during onboarding.
+    #[cfg(windows)]
+    {
+        let existing = std::env::var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS").unwrap_or_default();
+        let extra = "--use-fake-ui-for-media-stream";
+        let merged = if existing.is_empty() {
+            extra.to_string()
+        } else {
+            format!("{existing} {extra}")
+        };
+        std::env::set_var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", merged);
+    }
+
     tauri::Builder::default()
         .manage(HotkeyState::default())
         .manage(TargetWindowState::default())

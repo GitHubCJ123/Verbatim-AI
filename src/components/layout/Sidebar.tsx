@@ -7,7 +7,6 @@ import {
   History,
   Settings,
   CircleUser,
-  Mic,
 } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { useAuth } from "../../lib/store/useAuth";
@@ -33,9 +32,7 @@ export function Sidebar() {
     <aside className="flex h-full w-60 shrink-0 flex-col gap-4 border-r border-border-subtle bg-bg-base/60 px-3 py-4 backdrop-blur-xl">
       {/* Logo */}
       <div className="flex items-center gap-2 px-2 py-1">
-        <div className="flex h-7 w-7 items-center justify-center rounded-md bg-gradient-to-br from-accent-start to-accent-end shadow-glow">
-          <Mic className="h-3.5 w-3.5 text-white" strokeWidth={2.5} />
-        </div>
+        <img src="/logo.svg" alt="" className="h-7 w-7 rounded-md shadow-glow" />
         <span className="text-sm font-semibold tracking-tight">Verbatim AI</span>
       </div>
 

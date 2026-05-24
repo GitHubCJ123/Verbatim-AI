@@ -27,13 +27,14 @@ function parts(spec: string): string[] {
 
 function eventToSpec(e: KeyboardEvent): string | null {
   const mods: string[] = [];
-  if (e.ctrlKey || e.metaKey) mods.push("CommandOrControl");
+  if (e.ctrlKey) mods.push("Control");
+  if (e.metaKey) mods.push("Super"); // Win key on Windows, ⌘ on macOS
   if (e.shiftKey) mods.push("Shift");
   if (e.altKey) mods.push("Alt");
 
   // Ignore pure modifier presses.
   const key = e.key;
-  if (key === "Control" || key === "Shift" || key === "Alt" || key === "Meta") {
+  if (key === "Control" || key === "Shift" || key === "Alt" || key === "Meta" || key === "OS") {
     return null;
   }
 

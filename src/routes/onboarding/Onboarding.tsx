@@ -164,13 +164,13 @@ function Welcome() {
 
   return (
     <div className="text-center">
-      <motion.div
+      <motion.img
+        src="/logo.svg"
+        alt=""
         animate={{ scale: [1, 1.05, 1] }}
         transition={{ duration: 3.5, repeat: Infinity, ease: "easeInOut" }}
-        className="mx-auto mb-8 flex h-20 w-20 items-center justify-center rounded-lg2 bg-gradient-to-br from-accent-start to-accent-end shadow-glow"
-      >
-        <Mic className="h-9 w-9 text-white" strokeWidth={2} />
-      </motion.div>
+        className="mx-auto mb-8 h-24 w-24 rounded-lg2 shadow-glow"
+      />
       <h1 className="bg-gradient-to-r from-accent-start to-accent-end bg-clip-text text-4xl font-semibold tracking-tight text-transparent">
         Verbatim AI
       </h1>

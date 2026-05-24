@@ -15,6 +15,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { startRecording, stopRecording } from "./recording-bridge";
 import { resolveModeAtPress } from "./modeResolver";
 import { isHotkeyPaused } from "./preferences";
+import { isOnboardingComplete } from "./store/useOnboarding";
 
 const LS_HOTKEY = "sw.hotkey.spec";
 const LS_PTT = "sw.hotkey.ptt";
@@ -65,6 +66,7 @@ export async function installHotkeyListeners(): Promise<UnlistenFn> {
 
   const offDown = await listen("hotkey:down", async () => {
     if (isHotkeyPaused()) return;
+    if (!isOnboardingComplete()) return;
     const cfg = loadHotkeyConfig();
     const { mode, activeWindow } = await resolveModeAtPress();
     if (!mode) {

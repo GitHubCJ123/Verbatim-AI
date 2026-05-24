@@ -4,7 +4,7 @@
  */
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Mic, Loader2, AlertCircle } from "lucide-react";
+import { Loader2, AlertCircle } from "lucide-react";
 import { Card, CardContent } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
 import { Input } from "../components/ui/Input";
@@ -20,9 +20,11 @@ export default function AuthGate() {
     >
       <div className="w-full max-w-md px-6">
         <div className="mb-8 text-center">
-          <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-lg2 bg-gradient-to-br from-accent-start to-accent-end shadow-glow">
-            <Mic className="h-6 w-6 text-white" strokeWidth={2.25} />
-          </div>
+          <img
+            src="/logo.svg"
+            alt=""
+            className="mx-auto mb-5 h-16 w-16 rounded-lg2 shadow-glow"
+          />
           <h1 className="bg-gradient-to-r from-accent-start to-accent-end bg-clip-text text-3xl font-semibold tracking-tight text-transparent">
             Verbatim AI
           </h1>

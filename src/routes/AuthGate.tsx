@@ -12,6 +12,7 @@ import { useAuth } from "../lib/store/useAuth";
 import { isOnboardingComplete } from "../lib/store/useOnboarding";
 import { toast } from "../components/ui/Toast";
 import { clearAppMode } from "../lib/appMode";
+import { isMigrationPending } from "../lib/migration";
 
 export default function AuthGate() {
   return (
@@ -89,9 +90,13 @@ function PasswordForm() {
       // Auth listener in App.tsx also handles this, but navigate explicitly
       // so we don't depend on subscriber ordering.
       if (useAuth.getState().user) {
-        navigate(mode === "signup" || !isOnboardingComplete() ? "/onboarding" : "/", {
-          replace: true,
-        });
+        if (isMigrationPending()) {
+          navigate("/migrate", { replace: true });
+        } else {
+          navigate(mode === "signup" || !isOnboardingComplete() ? "/onboarding" : "/", {
+            replace: true,
+          });
+        }
       } else if (mode === "signup") {
         setError(
           "Account created but no session was returned. Check your Supabase Auth settings (email confirmation should be off).",

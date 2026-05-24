@@ -19,8 +19,8 @@ import { hydrateAll, clearAllCaches } from "./lib/store/useModes";
 import { useAppMappings } from "./lib/store/useAppMappings";
 import { useProfile } from "./lib/store/useProfile";
 import { getAppMode } from "./lib/appMode";
-import { isMigrationPending, migrateLocalToCloud } from "./lib/migration";
-import { toast } from "./components/ui/Toast";
+import { isMigrationPending } from "./lib/migration";
+import MigrationPicker from "./routes/MigrationPicker";
 import { Loader2, AlertTriangle } from "lucide-react";
 import { Toaster } from "./components/ui/Toast";
 
@@ -54,6 +54,14 @@ const router = createMemoryRouter(
   [
     { path: "/picker", element: <ModePicker /> },
     { path: "/auth", element: <AuthGate /> },
+    {
+      path: "/migrate",
+      element: (
+        <MigrationPicker
+          onDone={() => router.navigate(isOnboardingComplete() ? "/" : "/onboarding", { replace: true })}
+        />
+      ),
+    },
     { path: "/onboarding", element: <Onboarding /> },
     {
       path: "/",
@@ -130,21 +138,11 @@ export default function App() {
       useAuth.subscribe((state, prev) => {
         if (state.user && state.user.id !== prev.user?.id) {
           void (async () => {
-            try {
-              if (isMigrationPending()) {
-                const result = await migrateLocalToCloud();
-                const total =
-                  result.modes + result.vocabulary + result.appMappings + result.transcriptions;
-                if (total > 0) {
-                  toast.success(
-                    `Migrated ${result.modes} modes, ${result.vocabulary} terms, ${result.appMappings} app rules, ${result.transcriptions} transcripts`,
-                  );
-                }
-              }
-            } catch (e) {
-              toast.error("Migration failed", {
-                description: e instanceof Error ? e.message : String(e),
-              });
+            if (isMigrationPending()) {
+              // Defer hydrate; the migration picker will run hydrate
+              // itself after the user decides.
+              router.navigate("/migrate", { replace: true });
+              return;
             }
             try {
               await hydrateAll();
@@ -166,6 +164,15 @@ export default function App() {
 
       const user = useAuth.getState().user;
       if (user) {
+        if (isMigrationPending()) {
+          // Show the picker before hydrate — the picker runs hydrate
+          // itself after the user decides.
+          if (!cancelled) {
+            router.navigate("/migrate", { replace: true });
+            setPhase("ready");
+          }
+          return;
+        }
         try {
           await Promise.all([
             hydrateAll(),

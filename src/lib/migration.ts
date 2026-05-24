@@ -18,6 +18,10 @@ export function markMigrationPending(): void {
   localStorage.setItem(LS_PENDING, "1");
 }
 
+export function clearMigrationPending(): void {
+  localStorage.removeItem(LS_PENDING);
+}
+
 export function isMigrationPending(): boolean {
   return localStorage.getItem(LS_PENDING) === "1";
 }
@@ -85,7 +89,30 @@ function loadLocalHistory(): Transcription[] {
   }
 }
 
-export async function migrateLocalToCloud(): Promise<{
+export interface MigrationSelection {
+  modes: boolean;
+  vocabulary: boolean;
+  appMappings: boolean;
+  transcriptions: boolean;
+}
+
+export function loadLocalSnapshot() {
+  return {
+    modes: loadModes(),
+    vocabulary: loadVocabulary(),
+    appMappings: loadAppMappings(),
+    transcriptions: loadLocalHistory(),
+  };
+}
+
+export async function migrateLocalToCloud(
+  selection: MigrationSelection = {
+    modes: true,
+    vocabulary: true,
+    appMappings: true,
+    transcriptions: true,
+  },
+): Promise<{
   modes: number;
   vocabulary: number;
   appMappings: number;
@@ -94,14 +121,29 @@ export async function migrateLocalToCloud(): Promise<{
   const userId = useAuth.getState().user?.id;
   if (!userId) throw new Error("Not signed in.");
 
-  const modes = loadModes();
-  const vocab = loadVocabulary();
-  const mappings = loadAppMappings();
-  const history = loadLocalHistory();
+  const modes = selection.modes ? loadModes() : [];
+  const vocab = selection.vocabulary ? loadVocabulary() : [];
+  const mappings = selection.appMappings ? loadAppMappings() : [];
+  const history = selection.transcriptions ? loadLocalHistory() : [];
 
   // The DB trigger seeded built-in modes for the new account. Drop the
   // built-ins from our local list so we don't end up with duplicates.
   const userModes = modes.filter((m) => !m.isBuiltin);
+
+  // Any row whose mode_id points at a LOCAL built-in (which we're not
+  // uploading) would fail the FK check on the server. Null those out
+  // so they still migrate, just unlinked from a mode.
+  const allLocalModeIds = new Set(modes.map((m) => m.id));
+  const userModeIds = new Set(userModes.map((m) => m.id));
+  const sanitizeModeId = (id: string | null) => {
+    if (!id) return null;
+    if (userModeIds.has(id)) return id;
+    return null; // local built-in or unknown — drop the reference
+  };
+  // Discard mappings/transcripts that reference an unknown id? We keep
+  // them but null the link. The name snapshot on transcripts preserves
+  // the mode label.
+  void allLocalModeIds; // (currently unused; kept for clarity)
 
   if (userModes.length > 0) {
     const { error } = await supabase.from("modes").insert(userModes.map((m) => modeRow(m, userId)));
@@ -112,15 +154,20 @@ export async function migrateLocalToCloud(): Promise<{
     if (error) throw new Error(`vocabulary: ${error.message}`);
   }
   if (mappings.length > 0) {
+    const sanitized = mappings.map((a) => ({
+      ...a,
+      modeId: sanitizeModeId(a.modeId),
+    }));
     const { error } = await supabase
       .from("app_mappings")
-      .insert(mappings.map((a) => appMappingRow(a, userId)));
+      .insert(sanitized.map((a) => appMappingRow(a, userId)));
     if (error) throw new Error(`app_mappings: ${error.message}`);
   }
   if (history.length > 0) {
     const rows = history.map((t) => ({
       ...t,
       user_id: userId,
+      mode_id: sanitizeModeId(t.mode_id),
     }));
     const { error } = await supabase.from("transcriptions").insert(rows);
     if (error) throw new Error(`transcriptions: ${error.message}`);

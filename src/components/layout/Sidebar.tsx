@@ -29,7 +29,7 @@ export function Sidebar() {
   const name = profile?.display_name || user?.email?.split("@")[0] || "Signed in";
   const sub = user?.email ?? "—";
   return (
-    <aside className="flex h-full w-60 shrink-0 flex-col gap-4 border-r border-border-subtle bg-bg-base/60 px-3 py-4 backdrop-blur-xl">
+    <aside className="flex h-full w-48 shrink-0 flex-col gap-4 border-r border-border-subtle bg-bg-base/60 px-3 py-4 backdrop-blur-xl">
       {/* Logo */}
       <div className="flex items-center gap-2 px-2 py-1">
         <img src="/logo.svg" alt="" className="h-7 w-7 rounded-md shadow-glow" />

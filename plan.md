@@ -1159,13 +1159,10 @@ Each phase is independently testable. Phases roughly map to PRs.
 - Update: `src/lib/recording-bridge.ts` (capture target + resize helpers)
 - Update: `src-tauri/capabilities/default.json` (clipboard + set-size perms)
 
-### Phase 8 — File transcription
-- Drop zone on Home.
-- Chunking helper (or single-shot for small files).
-- Progress UI.
-- Results appended to history.
+### Phase 8 — File transcription ⏭️ **SKIPPED** (2026-05-24)
+User opted out for v1. Drag-and-drop / file picker for transcribing pre-recorded `.mp3` / `.wav` / etc. is deferred. The `AzureFoundryProvider.transcribe()` API already accepts a `Blob`, so reviving this later only needs a drop zone + chunk helper.
 
-### Phase 9 — Supabase auth & sync
+### Phase 9 — Supabase auth & sync ✅ **COMPLETE** (2026-05-24)
 - `supabase.ts` client.
 - Auth screens (sign in, sign up, magic link, forgot password) + email confirmation flow.
 - Account screen.
@@ -1173,10 +1170,67 @@ Each phase is independently testable. Phases roughly map to PRs.
 - Sync engine for modes, vocab, app_mappings, settings, transcriptions.
 - "Sync now" + last-sync indicator.
 
-### Phase 10 — History
+**Phase 9 notes (scope trimmed by user):**
+- **Scope reduced** by user choice: only transcript history goes to Supabase when signed in. Modes / vocabulary / app_mappings stay in localStorage. Full bi-directional sync engine + "Sync now" / last-sync indicator deferred.
+- Migrations (full schema, ready for the future sync work):
+  - [supabase/migrations/0001_init.sql](supabase/migrations/0001_init.sql) — `profiles`, `modes`, `app_mappings`, `vocabulary`, `transcriptions`, `user_settings` with check constraints and FKs per plan §7.
+  - [supabase/migrations/0002_rls_and_indexes.sql](supabase/migrations/0002_rls_and_indexes.sql) — `auth.uid() = user_id` policies generated for every table via a single `do $$ ... $$` loop. Indexes: `transcriptions(user_id, created_at desc)`, `modes(user_id, position)`, `app_mappings(user_id, app_executable)`, `vocabulary(user_id, term)`.
+  - [supabase/migrations/0003_search.sql](supabase/migrations/0003_search.sql) — `pg_trgm` GIN indexes on `transcriptions.cleaned_text` + `raw_text`.
+  - [supabase/migrations/0004_profile_on_signup.sql](supabase/migrations/0004_profile_on_signup.sql) — `handle_new_user()` trigger inserts a `profiles` row whenever `auth.users` gets a new row.
+  - **Migrations are file-only** — user runs `supabase db push` themselves.
+- [src/lib/supabase.ts](src/lib/supabase.ts) — lazy `getSupabase()` that constructs (and memoizes) a client from `{ url, anonKey }` in `localStorage`. Anon key is safe to keep in localStorage; RLS gates real access.
+- [src/lib/store/useAuth.ts](src/lib/store/useAuth.ts) — Zustand store: `init`, `signInWithPassword`, `signUpWithPassword`, `signInWithMagicLink`, `resetPassword`, `signOut`. Subscribes to `onAuthStateChange` so the UI reacts instantly to sign-in/out from any window.
+- [src/routes/Account.tsx](src/routes/Account.tsx) — three-state route:
+  - Supabase not configured → prompt to add URL/key in Settings → Sync.
+  - Configured but signed out → Magic Link / Password tabs with sign-up toggle + forgot-password.
+  - Signed in → avatar, email, sign out button.
+- [src/routes/Settings.tsx](src/routes/Settings.tsx) **Sync** tab — URL + anon key inputs (password-style), status badge (`Not configured` / `Configured · not signed in` / `Signed in as {email}`), Sign Out button. Editing URL/anon-key auto-resets the cached client and re-initializes auth.
+- [src/lib/store/useAuth.ts](src/lib/store/useAuth.ts) `init()` is idempotent — every time Supabase config changes it resets and re-subscribes.
+
+**Known deferred work:**
+- Modes / vocabulary / app-mappings sync (the full plan §17 sync engine).
+- "Delete my account and all data" button (plan §8.9). Schema is set up for `on delete cascade` so the call itself is one Supabase Edge RPC; UI deferred.
+- Email confirmation redirect URL: not wired — magic link / signup confirmations land on Supabase's default URL today. We'll add a deep-link handler when Phase 12 (tray + autostart) sets up the custom URL scheme.
+
+**Files added in Phase 9:**
+- `supabase/migrations/{0001_init,0002_rls_and_indexes,0003_search,0004_profile_on_signup}.sql`
+- `src/lib/supabase.ts`
+- `src/lib/store/useAuth.ts`
+- Rewrite: `src/routes/Account.tsx`
+- Update: `src/routes/Settings.tsx` (Sync tab)
+
+### Phase 10 — History ✅ **COMPLETE** (2026-05-24)
 - Local SQLite via `tauri-plugin-sql`.
 - History UI with virtualized list + filters + search.
 - Row actions: copy, re-paste, re-clean, delete.
+
+**Phase 10 notes (scope adjusted by user):**
+- **No SQLite.** User chose "Supabase-only when signed in; localStorage when not" — simpler dual backend, no offline sync queue. `tauri-plugin-sql` is not installed.
+- [src/lib/history.ts](src/lib/history.ts) — single CRUD module that picks its backend at call time:
+  - `addTranscription`, `listTranscriptions`, `deleteTranscription`, `clearAllTranscriptions`.
+  - When `getSupabase()` returns a client AND `useAuth.user` is set → Supabase. Else → `localStorage` under `sw.history` (capped to 500 rows for safety).
+  - Supabase search uses `ilike` over `cleaned_text` + `raw_text` (the `pg_trgm` indexes in 0003 make these fast). Local search is plain substring match.
+  - **Mode FK is `null` in Supabase rows** because modes still live in localStorage — the denormalized `mode_name_snap` is what the UI displays. Wires up correctly when modes get cloud-synced later.
+- Auto-save: [src/main.tsx](src/main.tsx) listens for `recording:result` and `recording:reviewed` and calls `addTranscription` with the right `output_action`. Auto-paste persists immediately as `pasted`; review mode waits for the user to commit (`pasted` / `copied` / `discarded`) before saving. `mode.save_history === false` skips persistence entirely.
+- [src/routes/History.tsx](src/routes/History.tsx) full rewrite:
+  - Header badge shows **Cloud** (if Supabase + signed in) or **Local**.
+  - Search bar with debounced refresh, Mode filter dropdown.
+  - Each row: timestamp (today→HH:MM, recent→Mon DD, older→full date), mode chip, output-action chip, cleaned preview (140 chars). Click to expand to full text + the raw transcript shown below.
+  - Hover actions: Copy, Paste-into-target (reuses Phase 7 `pasteCleanedText`), **Re-clean** (streams a fresh polish through the current Azure provider, copies the result), Delete.
+  - "Clear all" deletes everything (with confirm).
+  - Auto-refreshes when sign-in state flips (so signing in pulls cloud history immediately).
+- Virtualization deferred — `listTranscriptions({ limit: 200 })` is plenty for now; switching to `react-virtual` is a one-component swap when histories grow.
+
+**Known deferred work:**
+- Audio playback for kept recordings: plan §9.7 mentions "opt-in retained audio". We don't store audio blobs anywhere yet.
+- Date-range + app filters from plan §9.7: search + mode filter are enough for v1.
+- Virtualized list (`react-virtual`) and FTS5 — add when needed.
+- Cost/token tracking (plan §11) still empty in the row.
+
+**Files added in Phase 10:**
+- `src/lib/history.ts`
+- Rewrite: `src/routes/History.tsx`
+- Update: `src/main.tsx` (listen + persist)
 
 ### Phase 11 — Onboarding flow
 - All 8 steps implemented.

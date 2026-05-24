@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Loader2 } from "lucide-react";
+import { Loader2, LogOut } from "lucide-react";
 import { toast } from "../components/ui/Toast";
 import { PageContainer, PageHeader } from "../components/layout/PageHeader";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "../components/ui/Tabs";
@@ -18,6 +18,14 @@ import {
   saveAzureConfig,
   type AzureConfig,
 } from "../lib/ai";
+import {
+  isConfigured as supabaseIsConfigured,
+  loadSupabaseConfig,
+  saveSupabaseConfig,
+  resetSupabase,
+  type SupabaseConfig,
+} from "../lib/supabase";
+import { useAuth } from "../lib/store/useAuth";
 
 interface RowProps {
   title: string;
@@ -40,7 +48,11 @@ function SettingRow({ title, description, children }: RowProps) {
 export default function Settings() {
   const [hotkey, setHotkey] = useState(() => loadHotkeyConfig());
   const [azure, setAzure] = useState<Partial<AzureConfig>>(() => loadAzureConfig());
+  const [supabase, setSupabase] = useState<Partial<SupabaseConfig>>(() => loadSupabaseConfig());
   const [testing, setTesting] = useState(false);
+  const user = useAuth((s) => s.user);
+  const signOut = useAuth((s) => s.signOut);
+  const initAuth = useAuth((s) => s.init);
 
   useEffect(() => {
     saveHotkeyConfig(hotkey);
@@ -49,6 +61,12 @@ export default function Settings() {
   useEffect(() => {
     saveAzureConfig(azure);
   }, [azure]);
+
+  useEffect(() => {
+    saveSupabaseConfig(supabase);
+    resetSupabase();
+    void initAuth();
+  }, [supabase, initAuth]);
 
   const handleHotkeyChange = async (spec: string) => {
     try {
@@ -97,6 +115,7 @@ export default function Settings() {
           <TabsTrigger value="overlay">Overlay</TabsTrigger>
           <TabsTrigger value="ai">AI</TabsTrigger>
           <TabsTrigger value="privacy">Privacy</TabsTrigger>
+          <TabsTrigger value="sync">Sync</TabsTrigger>
           <TabsTrigger value="advanced">Advanced</TabsTrigger>
         </TabsList>
 
@@ -240,6 +259,54 @@ export default function Settings() {
                   </SelectContent>
                 </Select>
               </SettingRow>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="sync">
+          <Card>
+            <CardContent className="p-5 pt-5">
+              <SettingRow title="Supabase URL" description="https://your-project.supabase.co">
+                <Input
+                  placeholder="https://…"
+                  className="w-80"
+                  value={supabase.url ?? ""}
+                  onChange={(e) => setSupabase((s) => ({ ...s, url: e.target.value }))}
+                />
+              </SettingRow>
+              <SettingRow
+                title="Anon key"
+                description="Safe to store locally — Row-Level Security gates real access."
+              >
+                <Input
+                  type="password"
+                  placeholder="eyJhbGciOi…"
+                  className="w-80"
+                  value={supabase.anonKey ?? ""}
+                  onChange={(e) => setSupabase((s) => ({ ...s, anonKey: e.target.value }))}
+                />
+              </SettingRow>
+              <div className="flex items-center justify-between gap-6 pt-4">
+                <div className="flex items-center gap-2 text-xs">
+                  {!supabaseIsConfigured(supabase) ? (
+                    <Badge variant="warning">Not configured</Badge>
+                  ) : user ? (
+                    <Badge variant="success">Signed in as {user.email}</Badge>
+                  ) : (
+                    <Badge variant="default">Configured · not signed in</Badge>
+                  )}
+                </div>
+                {user && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => signOut().then(() => toast.success("Signed out"))}
+                  >
+                    <LogOut className="h-3.5 w-3.5" />
+                    Sign out
+                  </Button>
+                )}
+              </div>
             </CardContent>
           </Card>
         </TabsContent>

@@ -122,7 +122,48 @@ mod imp {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+mod imp {
+    use super::RunningApp;
+    use objc2_app_kit::{NSApplicationActivationPolicy, NSWorkspace};
+
+    pub fn list() -> Vec<RunningApp> {
+        unsafe {
+            let workspace = NSWorkspace::sharedWorkspace();
+            let apps = workspace.runningApplications();
+            let mut out: Vec<RunningApp> = Vec::new();
+            for app in apps.iter() {
+                // Only "regular" apps (have a Dock icon / appear in ⌘Tab).
+                if app.activationPolicy() != NSApplicationActivationPolicy::Regular {
+                    continue;
+                }
+                let exe = app
+                    .localizedName()
+                    .map(|s| s.to_string())
+                    .unwrap_or_default();
+                if exe.is_empty() {
+                    continue;
+                }
+                let exe_path = app
+                    .bundleURL()
+                    .and_then(|u| u.path())
+                    .map(|s| s.to_string())
+                    .unwrap_or_default();
+                let pid = app.processIdentifier() as u32;
+                out.push(RunningApp {
+                    exe,
+                    exe_path,
+                    title: String::new(),
+                    pid,
+                });
+            }
+            out.sort_by(|a, b| a.exe.to_lowercase().cmp(&b.exe.to_lowercase()));
+            out
+        }
+    }
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 mod imp {
     use super::RunningApp;
     pub fn list() -> Vec<RunningApp> {

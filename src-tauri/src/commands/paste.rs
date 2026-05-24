@@ -49,7 +49,33 @@ mod imp {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+mod imp {
+    use objc2_app_kit::{NSApplicationActivationOptions, NSRunningApplication, NSWorkspace};
+
+    /// Returns the PID of the frontmost app (stored as isize so we can
+    /// share the same TargetWindowState slot with Windows).
+    pub fn current_foreground() -> Option<isize> {
+        unsafe {
+            let workspace = NSWorkspace::sharedWorkspace();
+            let app = workspace.frontmostApplication()?;
+            Some(app.processIdentifier() as isize)
+        }
+    }
+
+    pub fn restore_foreground(pid_raw: isize) -> bool {
+        unsafe {
+            let Some(app) =
+                NSRunningApplication::runningApplicationWithProcessIdentifier(pid_raw as i32)
+            else {
+                return false;
+            };
+            app.activateWithOptions(NSApplicationActivationOptions::ActivateAllWindows)
+        }
+    }
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 mod imp {
     pub fn current_foreground() -> Option<isize> { None }
     pub fn restore_foreground(_: isize) -> bool { false }
@@ -93,14 +119,19 @@ pub fn paste_to_target(state: State<'_, TargetWindowState>) -> Result<bool, Stri
     std::thread::sleep(std::time::Duration::from_millis(60));
 
     let mut enigo = Enigo::new(&Settings::default()).map_err(|e| e.to_string())?;
+    // ⌘ on macOS, Ctrl elsewhere.
+    #[cfg(target_os = "macos")]
+    let modifier = Key::Meta;
+    #[cfg(not(target_os = "macos"))]
+    let modifier = Key::Control;
     enigo
-        .key(Key::Control, Direction::Press)
+        .key(modifier, Direction::Press)
         .map_err(|e| e.to_string())?;
     enigo
         .key(Key::Unicode('v'), Direction::Click)
         .map_err(|e| e.to_string())?;
     enigo
-        .key(Key::Control, Direction::Release)
+        .key(modifier, Direction::Release)
         .map_err(|e| e.to_string())?;
 
     Ok(true)

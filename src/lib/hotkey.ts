@@ -19,7 +19,10 @@ import { isOnboardingComplete } from "./store/useOnboarding";
 
 const LS_HOTKEY = "sw.hotkey.spec";
 const LS_PTT = "sw.hotkey.ptt";
-const DEFAULT_SPEC = "CommandOrControl+Space";
+// On macOS ⌘+Space is Spotlight — pick something the user can use out of the box.
+const IS_MAC =
+  typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
+const DEFAULT_SPEC = IS_MAC ? "Control+Shift+Space" : "CommandOrControl+Space";
 
 export interface HotkeyConfig {
   spec: string;

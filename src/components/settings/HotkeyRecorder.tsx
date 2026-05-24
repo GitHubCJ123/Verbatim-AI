@@ -13,13 +13,24 @@ interface HotkeyRecorderProps {
   onChange: (spec: string) => void;
 }
 
-const MODIFIER_LABEL: Record<string, string> = {
-  CommandOrControl: "Ctrl",
-  Control: "Ctrl",
-  Shift: "Shift",
-  Alt: "Alt",
-  Super: "Win",
-};
+const IS_MAC =
+  typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
+
+const MODIFIER_LABEL: Record<string, string> = IS_MAC
+  ? {
+      CommandOrControl: "⌘",
+      Control: "⌃",
+      Shift: "⇧",
+      Alt: "⌥",
+      Super: "⌘",
+    }
+  : {
+      CommandOrControl: "Ctrl",
+      Control: "Ctrl",
+      Shift: "Shift",
+      Alt: "Alt",
+      Super: "Win",
+    };
 
 function parts(spec: string): string[] {
   return spec.split("+").map((p) => p.trim()).filter(Boolean);

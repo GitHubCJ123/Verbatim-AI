@@ -45,10 +45,10 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["msi", "nsis"],
+    "targets": ["msi", "nsis", "dmg", "app"],
     "publisher": "Verbatim AI",
     "category": "Productivity",
-    "shortDescription": "Voice transcription for Windows.",
+    "shortDescription": "Voice transcription.",
     "longDescription": "Hold a hotkey, speak, and get polished text pasted into any app.",
     "copyright": "Copyright © 2026 Verbatim AI",
     "icon": [
@@ -64,6 +64,11 @@
         "installerIcon": "icons/icon.ico",
         "displayLanguageSelector": false
       }
+    },
+    "macOS": {
+      "minimumSystemVersion": "11.0",
+      "signingIdentity": null,
+      "entitlements": "entitlements.plist"
     }
   }
 }

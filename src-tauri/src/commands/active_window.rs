@@ -105,7 +105,40 @@ impl Default for ActiveWindow {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+mod imp {
+    use super::ActiveWindow;
+    use objc2_app_kit::NSWorkspace;
+
+    pub fn get() -> ActiveWindow {
+        unsafe {
+            let workspace = NSWorkspace::sharedWorkspace();
+            let Some(app) = workspace.frontmostApplication() else {
+                return ActiveWindow::default();
+            };
+            let exe = app
+                .localizedName()
+                .map(|s| s.to_string())
+                .unwrap_or_default();
+            let exe_path = app
+                .bundleURL()
+                .and_then(|u| u.path())
+                .map(|s| s.to_string())
+                .unwrap_or_default();
+            // Window title is expensive/permission-gated on macOS
+            // (CGWindowListCopyWindowInfo needs Screen Recording perm to
+            // see other apps' titles). Leave empty for now — app
+            // resolution still works on `exe`.
+            ActiveWindow {
+                exe,
+                exe_path,
+                title: String::new(),
+            }
+        }
+    }
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 mod imp {
     use super::ActiveWindow;
     pub fn get() -> ActiveWindow {

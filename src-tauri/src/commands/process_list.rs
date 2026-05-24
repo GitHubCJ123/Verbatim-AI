@@ -125,14 +125,17 @@ mod imp {
 #[cfg(target_os = "macos")]
 mod imp {
     use super::RunningApp;
+    use objc2::msg_send;
     use objc2_app_kit::{NSApplicationActivationPolicy, NSWorkspace};
 
     pub fn list() -> Vec<RunningApp> {
         unsafe {
             let workspace = NSWorkspace::sharedWorkspace();
             let apps = workspace.runningApplications();
+            let count = apps.count();
             let mut out: Vec<RunningApp> = Vec::new();
-            for app in apps.iter() {
+            for i in 0..count {
+                let app = apps.objectAtIndex(i);
                 // Only "regular" apps (have a Dock icon / appear in ⌘Tab).
                 if app.activationPolicy() != NSApplicationActivationPolicy::Regular {
                     continue;
@@ -149,12 +152,12 @@ mod imp {
                     .and_then(|u| u.path())
                     .map(|s| s.to_string())
                     .unwrap_or_default();
-                let pid = app.processIdentifier() as u32;
+                let pid: i32 = msg_send![&*app, processIdentifier];
                 out.push(RunningApp {
                     exe,
                     exe_path,
                     title: String::new(),
-                    pid,
+                    pid: pid as u32,
                 });
             }
             out.sort_by(|a, b| a.exe.to_lowercase().cmp(&b.exe.to_lowercase()));

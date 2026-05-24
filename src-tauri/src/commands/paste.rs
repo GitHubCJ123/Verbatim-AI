@@ -51,7 +51,9 @@ mod imp {
 
 #[cfg(target_os = "macos")]
 mod imp {
-    use objc2_app_kit::{NSApplicationActivationOptions, NSRunningApplication, NSWorkspace};
+    use objc2::rc::Retained;
+    use objc2::{class, msg_send, msg_send_id};
+    use objc2_app_kit::{NSRunningApplication, NSWorkspace};
 
     /// Returns the PID of the frontmost app (stored as isize so we can
     /// share the same TargetWindowState slot with Windows).
@@ -59,18 +61,22 @@ mod imp {
         unsafe {
             let workspace = NSWorkspace::sharedWorkspace();
             let app = workspace.frontmostApplication()?;
-            Some(app.processIdentifier() as isize)
+            let pid: i32 = msg_send![&*app, processIdentifier];
+            Some(pid as isize)
         }
     }
 
     pub fn restore_foreground(pid_raw: isize) -> bool {
         unsafe {
-            let Some(app) =
-                NSRunningApplication::runningApplicationWithProcessIdentifier(pid_raw as i32)
-            else {
-                return false;
-            };
-            app.activateWithOptions(NSApplicationActivationOptions::ActivateAllWindows)
+            let cls = class!(NSRunningApplication);
+            let pid: i32 = pid_raw as i32;
+            let app: Option<Retained<NSRunningApplication>> =
+                msg_send_id![cls, runningApplicationWithProcessIdentifier: pid];
+            let Some(app) = app else { return false };
+            // NSApplicationActivateAllWindows = 1 << 0
+            let opts: u64 = 1;
+            let ok: bool = msg_send![&*app, activateWithOptions: opts];
+            ok
         }
     }
 }

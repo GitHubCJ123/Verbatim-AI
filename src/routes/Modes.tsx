@@ -38,6 +38,7 @@ import {
 import { PageContainer, PageHeader } from "../components/layout/PageHeader";
 import { useModes } from "../lib/store/useModes";
 import { toast } from "../components/ui/Toast";
+import { confirmDialog } from "../components/ui/confirmDialog";
 import type { Mode } from "../types/mode";
 
 function pickIcon(
@@ -116,8 +117,17 @@ export default function Modes() {
                   const dup = await duplicate(mode.id);
                   if (dup) navigate(`/modes/editor?id=${dup.id}`);
                 }}
-                onDelete={() => {
-                  if (confirm(`Delete "${mode.name}"?`)) void remove(mode.id);
+                onDelete={async () => {
+                  if (
+                    await confirmDialog({
+                      title: `Delete "${mode.name}"?`,
+                      message: "This mode and its app mappings won't be recoverable.",
+                      confirmLabel: "Delete",
+                      destructive: true,
+                    })
+                  ) {
+                    void remove(mode.id);
+                  }
                 }}
                 onSetDefault={() => {
                   setDefault(mode.id);

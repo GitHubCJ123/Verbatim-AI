@@ -32,6 +32,7 @@ import {
 import { useAuth } from "../lib/store/useAuth";
 import { isSupabaseConfigured } from "../lib/supabase";
 import { toast } from "../components/ui/Toast";
+import { confirmDialog } from "../components/ui/confirmDialog";
 import { copyCleanedText, pasteCleanedText } from "../lib/output";
 import { useModes } from "../lib/store/useModes";
 import { getActiveProvider } from "../lib/ai";
@@ -84,7 +85,16 @@ export default function History() {
   };
 
   const handleClearAll = async () => {
-    if (!confirm("Delete every transcript? This can't be undone.")) return;
+    if (
+      !(await confirmDialog({
+        title: "Delete every transcript?",
+        message: "This can't be undone.",
+        confirmLabel: "Delete all",
+        destructive: true,
+      }))
+    ) {
+      return;
+    }
     try {
       await clearAllTranscriptions();
       setItems([]);

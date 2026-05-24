@@ -22,6 +22,7 @@ import {
   resizeOverlayToReview,
 } from "../lib/recording-bridge";
 import { pasteCleanedText, copyCleanedText, clearCapturedTarget } from "../lib/output";
+import { isAiImproveDisabled } from "../lib/preferences";
 import type { Mode } from "../types/mode";
 
 type View = "pill" | "review";
@@ -137,7 +138,7 @@ export default function Overlay() {
       }
 
       let cleaned: string;
-      if (activeMode.skipCleanup) {
+      if (activeMode.skipCleanup || isAiImproveDisabled()) {
         // Fast path: skip the LLM entirely; vocab replacements still run.
         cleaned = applyVocabReplacements(transcript.text, vocabularyAll);
         setStreamingCleaned(cleaned);

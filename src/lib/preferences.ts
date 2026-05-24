@@ -14,6 +14,7 @@ const LS_OVERLAY_POSITION = "sw.overlay.position";
 const LS_HOTKEY_PAUSED = "sw.hotkey.paused";
 const LS_CLIPBOARD_RESTORE = "sw.clipboard.restore";
 const LS_TELEMETRY = "sw.telemetry.enabled";
+const LS_AI_DISABLED = "sw.ai.disabled";
 
 export type OverlayPosition =
   | "bottom-center"
@@ -64,6 +65,14 @@ export function isHotkeyPaused(): boolean {
 
 export function setHotkeyPaused(v: boolean): void {
   localStorage.setItem(LS_HOTKEY_PAUSED, v ? "1" : "0");
+}
+
+export function isAiImproveDisabled(): boolean {
+  return localStorage.getItem(LS_AI_DISABLED) === "1";
+}
+
+export function setAiImproveDisabled(v: boolean): void {
+  localStorage.setItem(LS_AI_DISABLED, v ? "1" : "0");
 }
 
 export function isClipboardRestoreEnabled(): boolean {

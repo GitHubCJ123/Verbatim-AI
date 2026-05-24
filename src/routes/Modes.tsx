@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   DndContext,
@@ -37,6 +37,8 @@ import {
 } from "../components/ui/Tooltip";
 import { PageContainer, PageHeader } from "../components/layout/PageHeader";
 import { useModes } from "../lib/store/useModes";
+import { isAiImproveDisabled, setAiImproveDisabled } from "../lib/preferences";
+import { Switch } from "../components/ui/Switch";
 import { toast } from "../components/ui/Toast";
 import { confirmDialog } from "../components/ui/confirmDialog";
 import type { Mode } from "../types/mode";
@@ -103,6 +105,8 @@ export default function Modes() {
           </Button>
         }
       />
+
+      <AiImproveToggle />
 
       <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
         <SortableContext items={ids} strategy={rectSortingStrategy}>
@@ -275,6 +279,29 @@ function SortableModeCard({
           </div>
         </CardContent>
       </Card>
+    </div>
+  );
+}
+
+function AiImproveToggle() {
+  const [disabled, setDisabled] = useState(isAiImproveDisabled());
+  return (
+    <div className="mb-4 flex items-center justify-between rounded-md border border-border-subtle bg-bg-elevated/40 px-4 py-3">
+      <div className="flex flex-col gap-0.5">
+        <div className="text-sm font-medium">Don't improve with AI</div>
+        <div className="text-xs text-text-muted">
+          Globally skip the cleanup pass for every Mode. You'll get the raw transcript
+          (with vocabulary replacements still applied). Overrides per-mode settings.
+        </div>
+      </div>
+      <Switch
+        checked={disabled}
+        onCheckedChange={(v: boolean) => {
+          setAiImproveDisabled(v);
+          setDisabled(v);
+          toast.info(v ? "AI cleanup disabled" : "AI cleanup enabled");
+        }}
+      />
     </div>
   );
 }

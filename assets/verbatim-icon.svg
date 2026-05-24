@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#7C3AED"/>
+      <stop offset="0.55" stop-color="#A855F7"/>
+      <stop offset="1" stop-color="#22D3EE"/>
+    </linearGradient>
+    <radialGradient id="vignette" cx="0.5" cy="0.15" r="0.9">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.22"/>
+      <stop offset="0.6" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="vstroke" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#E9D5FF"/>
+    </linearGradient>
+  </defs>
+
+  <!-- background squircle -->
+  <rect x="48" y="48" width="928" height="928" rx="232" ry="232" fill="url(#bg)"/>
+  <rect x="48" y="48" width="928" height="928" rx="232" ry="232" fill="url(#vignette)"/>
+
+  <!-- tapered V via filled polygon: thick at top, narrows to apex -->
+  <path d="M 232 240
+           L 380 240
+           L 512 612
+           L 644 240
+           L 792 240
+           L 568 832
+           Q 512 884 456 832 Z"
+        fill="url(#vstroke)"/>
+
+  <!-- apex pulse dot -->
+  <circle cx="512" cy="858" r="22" fill="#ffffff" opacity="0.95"/>
+  <circle cx="512" cy="858" r="40" fill="none" stroke="#ffffff" stroke-width="6" opacity="0.35"/>
+</svg>

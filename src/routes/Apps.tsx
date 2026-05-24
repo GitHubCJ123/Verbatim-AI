@@ -63,7 +63,7 @@ export default function Apps() {
         }
       />
 
-      <div className="rounded-md border border-border-subtle bg-bg-elevated/40 px-4 py-3 text-xs text-text-secondary">
+      <div className="mb-4 rounded-md border border-border-subtle bg-bg-elevated/40 px-4 py-3 text-xs text-text-secondary">
         <span className="font-medium text-text-primary">Heads up:</span> the
         common-app names below are guesses. If a rule doesn't trigger, the real
         executable on your PC is probably different. Open the app you want to map,

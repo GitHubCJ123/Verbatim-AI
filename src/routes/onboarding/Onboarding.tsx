@@ -33,6 +33,7 @@ import {
 import { applyHotkey, saveHotkeyConfig } from "../../lib/hotkey";
 import { cn } from "../../lib/utils";
 import { useAuth } from "../../lib/store/useAuth";
+import { isLocalMode } from "../../lib/appMode";
 import { toast } from "../../components/ui/Toast";
 
 const TOTAL_STEPS = 8;
@@ -287,6 +288,31 @@ function SignInStep() {
   const back = useOnboarding((s) => s.back);
   const next = useOnboarding((s) => s.next);
   const user = useAuth((s) => s.user);
+  const local = isLocalMode();
+
+  if (local) {
+    return (
+      <div>
+        <StepHeading
+          title="Local mode"
+          subtitle="No account — everything stays on this device. You can sign in later from Account to sync across machines."
+        />
+        <Card className="mt-8">
+          <CardContent className="flex items-center gap-4 p-6 pt-6">
+            <div className="flex h-10 w-10 items-center justify-center rounded-pill bg-bg-elevated">
+              <Check className="h-4 w-4 text-text-secondary" strokeWidth={3} />
+            </div>
+            <div className="flex-1">
+              <div className="text-sm font-medium">No account</div>
+              <div className="text-xs text-text-muted">Data lives in this app only.</div>
+            </div>
+            <Badge variant="warning">Local</Badge>
+          </CardContent>
+        </Card>
+        <NavRow onBack={back} onPrimary={next} primaryLabel="Continue" />
+      </div>
+    );
+  }
 
   return (
     <div>

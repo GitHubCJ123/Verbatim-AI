@@ -48,6 +48,16 @@ pub fn set_hotkey<R: Runtime>(
     let manager = app.global_shortcut();
     let parsed = Shortcut::from_str(&spec).map_err(|e| format!("Invalid shortcut: {e}"))?;
 
+    // Idempotent: if the same shortcut is already current, no-op.
+    {
+        let current = state.current.lock().map_err(|e| e.to_string())?;
+        if let Some(prev) = current.as_ref() {
+            if *prev == parsed {
+                return Ok(());
+            }
+        }
+    }
+
     // Unregister whatever was active first.
     {
         let mut current = state.current.lock().map_err(|e| e.to_string())?;
@@ -56,9 +66,23 @@ pub fn set_hotkey<R: Runtime>(
         }
     }
 
-    manager
-        .register(parsed.clone())
-        .map_err(|e| format!("Failed to register shortcut: {e}"))?;
+    // Also try to unregister the *new* shortcut in case it's lingering
+    // from a stale registration (hot-reload, prior process, etc.).
+    let _ = manager.unregister(parsed.clone());
+
+    match manager.register(parsed.clone()) {
+        Ok(()) => {}
+        Err(e) => {
+            // "Already registered" can happen if the plugin's internal map
+            // still thinks it owns the shortcut even after our unregister.
+            // Treat it as success — the end state (this spec active) is
+            // what the user wanted.
+            let msg = e.to_string();
+            if !msg.contains("already registered") {
+                return Err(format!("Failed to register shortcut: {msg}"));
+            }
+        }
+    }
 
     let mut current = state.current.lock().map_err(|e| e.to_string())?;
     *current = Some(parsed);

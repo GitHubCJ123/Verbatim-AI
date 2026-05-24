@@ -8,7 +8,8 @@
  * The main window picks which via the active Mode's `outputStyle`.
  */
 import { useEffect, useRef, useState } from "react";
-import { emit, listen } from "@tauri-apps/api/event";
+import { listen } from "@tauri-apps/api/event";
+import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { RecordingPill } from "../components/recording/RecordingPill";
 import { ReviewPanel } from "../components/recording/ReviewPanel";
@@ -152,7 +153,9 @@ export default function Overlay() {
       console.info("[Verbatim AI] raw:", transcript.text);
       console.info("[Verbatim AI] cleaned:", cleaned);
 
-      await emit("recording:result", {
+      console.info("[Verbatim AI] emitting recording:result to main", { mode, modeId: activeMode.id });
+      const payload = {
+        emitId: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         raw: transcript.text,
         cleaned,
         durationMs,
@@ -161,7 +164,8 @@ export default function Overlay() {
         modeId: activeMode.id,
         outputStyle: activeMode.outputStyle,
         saveHistory: activeMode.saveHistory,
-      });
+      };
+      await invoke("relay_event", { name: "recording:result", payload });
 
       if (activeMode.outputStyle === "paste") {
         const pasted = await pasteCleanedText(cleaned);
@@ -178,7 +182,10 @@ export default function Overlay() {
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error("[Verbatim AI] pipeline error:", e);
-      void emit("recording:error", { message: msg, stack: e instanceof Error ? e.stack : undefined });
+      void invoke("relay_event", {
+        name: "recording:error",
+        payload: { message: msg, stack: e instanceof Error ? e.stack : undefined },
+      });
       setError(msg);
       setState("error");
       void hideAfter(3500);
@@ -205,30 +212,36 @@ export default function Overlay() {
 
   const handleReviewPaste = async (text: string) => {
     const ok = await pasteCleanedText(text);
-    await emit("recording:reviewed", {
-      action: ok ? "pasted" : "copied",
+    const payload = {
+      emitId: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      action: ok ? ("pasted" as const) : ("copied" as const),
       cleaned: text,
       modeId: modeRef.current?.id ?? null,
-    });
+    };
+    await invoke("relay_event", { name: "recording:reviewed", payload });
     void reset();
   };
 
   const handleReviewCopy = async (text: string) => {
     await copyCleanedText(text);
-    await emit("recording:reviewed", {
-      action: "copied",
+    const payload = {
+      emitId: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      action: "copied" as const,
       cleaned: text,
       modeId: modeRef.current?.id ?? null,
-    });
+    };
+    await invoke("relay_event", { name: "recording:reviewed", payload });
     void reset();
   };
 
   const handleReviewDiscard = async () => {
-    await emit("recording:reviewed", {
-      action: "discarded",
+    const payload = {
+      emitId: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      action: "discarded" as const,
       cleaned: streamingCleaned,
       modeId: modeRef.current?.id ?? null,
-    });
+    };
+    await invoke("relay_event", { name: "recording:reviewed", payload });
     void reset();
   };
 

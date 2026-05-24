@@ -11,6 +11,8 @@ import type { Mode, VocabularyTerm } from "../../types/mode";
 import { newId, nowIso } from "../../types/mode";
 import { supabase } from "../supabase";
 import { useAuth } from "./useAuth";
+import { isLocalMode } from "../appMode";
+import { buildBuiltinModes } from "./builtinModes";
 
 const LS_MODES = "sw.modes";
 const LS_VOCAB = "sw.vocab";
@@ -172,6 +174,20 @@ export const useModes = create<ModesState>((set, get) => ({
   hydrate: async () => {
     set({ loading: true });
     try {
+      if (isLocalMode()) {
+        let modes = loadModes();
+        if (modes.length === 0) {
+          modes = buildBuiltinModes();
+          saveModesCache(modes);
+        }
+        const stored = localStorage.getItem(LS_DEFAULT_MODE);
+        const defId = modes.some((m) => m.id === stored)
+          ? stored
+          : (modes[0]?.id ?? null);
+        if (defId) localStorage.setItem(LS_DEFAULT_MODE, defId);
+        set({ modes, defaultModeId: defId, loading: false });
+        return;
+      }
       const { data, error } = await supabase
         .from("modes")
         .select("*")
@@ -198,7 +214,6 @@ export const useModes = create<ModesState>((set, get) => ({
   },
 
   create: async (input) => {
-    const userId = requireUserId();
     const now = nowIso();
     const mode: Mode = {
       id: newId(),
@@ -218,6 +233,13 @@ export const useModes = create<ModesState>((set, get) => ({
       createdAt: now,
       updatedAt: now,
     };
+    if (isLocalMode()) {
+      const next = [...get().modes, mode];
+      saveModesCache(next);
+      set({ modes: next });
+      return mode;
+    }
+    const userId = requireUserId();
     const { error } = await supabase.from("modes").insert(modeToRow(mode, userId));
     if (error) throw new Error(error.message);
     const next = [...get().modes, mode];
@@ -231,6 +253,12 @@ export const useModes = create<ModesState>((set, get) => ({
     const cur = get().modes.find((m) => m.id === id);
     if (!cur) return;
     const merged = { ...cur, ...patch, updatedAt: updated };
+    if (isLocalMode()) {
+      const next = get().modes.map((m) => (m.id === id ? merged : m));
+      saveModesCache(next);
+      set({ modes: next });
+      return;
+    }
     const userId = requireUserId();
     const { error } = await supabase
       .from("modes")
@@ -243,8 +271,10 @@ export const useModes = create<ModesState>((set, get) => ({
   },
 
   remove: async (id) => {
-    const { error } = await supabase.from("modes").delete().eq("id", id);
-    if (error) throw new Error(error.message);
+    if (!isLocalMode()) {
+      const { error } = await supabase.from("modes").delete().eq("id", id);
+      if (error) throw new Error(error.message);
+    }
     const next = get().modes.filter((m) => m.id !== id);
     saveModesCache(next);
     set({ modes: next });
@@ -275,6 +305,7 @@ export const useModes = create<ModesState>((set, get) => ({
       .filter((m): m is Mode => m !== null);
     saveModesCache(next);
     set({ modes: next });
+    if (isLocalMode()) return;
     const userId = requireUserId();
     // Bulk position update — one round trip per mode is fine for small N.
     await Promise.all(
@@ -314,6 +345,10 @@ export const useVocabulary = create<VocabularyState>((set, get) => ({
   hydrate: async () => {
     set({ loading: true });
     try {
+      if (isLocalMode()) {
+        set({ terms: loadVocabulary(), loading: false });
+        return;
+      }
       const { data, error } = await supabase
         .from("vocabulary")
         .select("*")
@@ -334,7 +369,6 @@ export const useVocabulary = create<VocabularyState>((set, get) => ({
   },
 
   add: async (input) => {
-    const userId = requireUserId();
     const t: VocabularyTerm = {
       id: newId(),
       term: input.term,
@@ -343,6 +377,13 @@ export const useVocabulary = create<VocabularyState>((set, get) => ({
       notes: input.notes ?? null,
       createdAt: nowIso(),
     };
+    if (isLocalMode()) {
+      const next = [...get().terms, t];
+      saveVocabCache(next);
+      set({ terms: next });
+      return t;
+    }
+    const userId = requireUserId();
     const { error } = await supabase.from("vocabulary").insert({
       id: t.id,
       user_id: userId,
@@ -363,6 +404,12 @@ export const useVocabulary = create<VocabularyState>((set, get) => ({
     const cur = get().terms.find((t) => t.id === id);
     if (!cur) return;
     const merged = { ...cur, ...patch };
+    if (isLocalMode()) {
+      const next = get().terms.map((t) => (t.id === id ? merged : t));
+      saveVocabCache(next);
+      set({ terms: next });
+      return;
+    }
     const { error } = await supabase
       .from("vocabulary")
       .update({
@@ -379,27 +426,42 @@ export const useVocabulary = create<VocabularyState>((set, get) => ({
   },
 
   remove: async (id) => {
-    const { error } = await supabase.from("vocabulary").delete().eq("id", id);
-    if (error) throw new Error(error.message);
+    if (!isLocalMode()) {
+      const { error } = await supabase.from("vocabulary").delete().eq("id", id);
+      if (error) throw new Error(error.message);
+    }
     const next = get().terms.filter((t) => t.id !== id);
     saveVocabCache(next);
     set({ terms: next });
   },
 
   importMany: async (inputs) => {
-    const userId = requireUserId();
-    const additions = inputs
-      .filter((i) => i.term && i.term.trim().length > 0)
-      .map((i) => ({
+    const cleaned = inputs.filter((i) => i.term && i.term.trim().length > 0);
+    if (cleaned.length === 0) return 0;
+    if (isLocalMode()) {
+      const additions: VocabularyTerm[] = cleaned.map((i) => ({
         id: newId(),
-        user_id: userId,
         term: i.term.trim(),
         pronunciation: i.pronunciation ?? null,
         replacement: i.replacement ?? null,
         notes: i.notes ?? null,
-        created_at: nowIso(),
+        createdAt: nowIso(),
       }));
-    if (additions.length === 0) return 0;
+      const next = [...get().terms, ...additions];
+      saveVocabCache(next);
+      set({ terms: next });
+      return additions.length;
+    }
+    const userId = requireUserId();
+    const additions = cleaned.map((i) => ({
+      id: newId(),
+      user_id: userId,
+      term: i.term.trim(),
+      pronunciation: i.pronunciation ?? null,
+      replacement: i.replacement ?? null,
+      notes: i.notes ?? null,
+      created_at: nowIso(),
+    }));
     const { error } = await supabase.from("vocabulary").insert(additions);
     if (error) throw new Error(error.message);
     await get().hydrate();
@@ -410,6 +472,10 @@ export const useVocabulary = create<VocabularyState>((set, get) => ({
 // ─── Convenience hydrate-everything ──────────────────────────────────
 
 export async function hydrateAll(): Promise<void> {
+  if (isLocalMode()) {
+    await Promise.all([useModes.getState().hydrate(), useVocabulary.getState().hydrate()]);
+    return;
+  }
   if (!useAuth.getState().user) return;
   await Promise.all([useModes.getState().hydrate(), useVocabulary.getState().hydrate()]);
 }

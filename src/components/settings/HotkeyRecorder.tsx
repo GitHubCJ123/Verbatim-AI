@@ -2,11 +2,15 @@
  * HotkeyRecorder — focusable widget that captures a keyboard
  * combination from the user and returns its Tauri shortcut spec
  * string (e.g. "CommandOrControl+Space", "Alt+F1").
+ *
+ * Build-up UX: modifiers appear in the field as soon as you press them.
+ * Press a non-modifier next to commit. Click again to start over.
  */
 import { useCallback, useEffect, useState } from "react";
 import { Kbd } from "../ui/Kbd";
 import { Button } from "../ui/Button";
 import { cn } from "../../lib/utils";
+import { applyHotkey, clearHotkey } from "../../lib/hotkey";
 
 interface HotkeyRecorderProps {
   value: string;
@@ -36,49 +40,78 @@ function parts(spec: string): string[] {
   return spec.split("+").map((p) => p.trim()).filter(Boolean);
 }
 
-function eventToSpec(e: KeyboardEvent): string | null {
-  const mods: string[] = [];
-  if (e.ctrlKey) mods.push("Control");
-  if (e.metaKey) mods.push("Super"); // Win key on Windows, ⌘ on macOS
-  if (e.shiftKey) mods.push("Shift");
-  if (e.altKey) mods.push("Alt");
+// Returns the canonical modifier name for this key event, or null if
+// it's not a modifier.
+function modifierFromEvent(e: KeyboardEvent): string | null {
+  if (e.key === "Control" || e.code === "ControlLeft" || e.code === "ControlRight") return "Control";
+  if (e.key === "Shift" || e.code === "ShiftLeft" || e.code === "ShiftRight") return "Shift";
+  if (e.key === "Alt" || e.code === "AltLeft" || e.code === "AltRight") return "Alt";
+  if (e.key === "Meta" || e.key === "OS" || e.code === "MetaLeft" || e.code === "MetaRight") return "Super";
+  return null;
+}
 
-  // Ignore pure modifier presses.
+// Returns the canonical main-key name (non-modifier) or null.
+function mainKeyFromEvent(e: KeyboardEvent): string | null {
   const key = e.key;
-  if (key === "Control" || key === "Shift" || key === "Alt" || key === "Meta" || key === "OS") {
-    return null;
-  }
-
-  let mainKey: string;
-  if (key === " ") mainKey = "Space";
-  else if (key.length === 1) mainKey = key.toUpperCase();
-  else if (key.startsWith("Arrow")) mainKey = key.replace("Arrow", "");
-  else mainKey = key;
-
-  if (mods.length === 0) return null; // require at least one modifier
-  return [...mods, mainKey].join("+");
+  if (key === " " || e.code === "Space") return "Space";
+  if (e.code?.startsWith("Arrow")) return e.code.replace("Arrow", "");
+  if (key.length === 1) return key.toUpperCase();
+  if (key.startsWith("Arrow")) return key.replace("Arrow", "");
+  if (key === "Escape" || key === "Tab" || key === "Enter" || key === "Backspace") return null;
+  // Function keys (F1, F12, etc.) come through as multi-char e.key.
+  if (key.length > 1) return key;
+  return null;
 }
 
 export function HotkeyRecorder({ value, onChange }: HotkeyRecorderProps) {
   const [recording, setRecording] = useState(false);
-  const [pending, setPending] = useState<string | null>(null);
+  // Pending modifiers accumulated as the user presses keys.
+  const [pendingMods, setPendingMods] = useState<string[]>([]);
+  const [committed, setCommitted] = useState<string | null>(null);
 
   const handleKey = useCallback(
     (e: KeyboardEvent) => {
       if (!recording) return;
       e.preventDefault();
       e.stopPropagation();
+
       if (e.key === "Escape") {
         setRecording(false);
-        setPending(null);
+        setPendingMods([]);
+        setCommitted(null);
         return;
       }
-      const spec = eventToSpec(e);
-      if (spec) {
-        setPending(spec);
+
+      // Modifier key pressed — add to pending list (if not already there).
+      const mod = modifierFromEvent(e);
+      if (mod) {
+        setPendingMods((mods) => (mods.includes(mod) ? mods : [...mods, mod]));
+        return;
+      }
+
+      // Non-modifier — commit if we have at least one modifier.
+      const mainKey = mainKeyFromEvent(e);
+      if (!mainKey) return;
+
+      // Pull mods from BOTH the event state (e.ctrlKey etc.) and the
+      // accumulated pending list — Windows IME / global hotkeys may
+      // strip the modifier flag from a follow-up keystroke.
+      setPendingMods((accumulated) => {
+        const all = new Set<string>(accumulated);
+        if (e.ctrlKey) all.add("Control");
+        if (e.metaKey) all.add("Super");
+        if (e.shiftKey) all.add("Shift");
+        if (e.altKey) all.add("Alt");
+        if (all.size === 0) {
+          // No modifier — not a valid global shortcut. Keep recording.
+          return accumulated;
+        }
+        const spec = [...all, mainKey].join("+");
+        setCommitted(spec);
         setRecording(false);
         onChange(spec);
-      }
+        return [];
+      });
     },
     [recording, onChange],
   );
@@ -86,19 +119,33 @@ export function HotkeyRecorder({ value, onChange }: HotkeyRecorderProps) {
   useEffect(() => {
     if (!recording) return;
     window.addEventListener("keydown", handleKey, true);
-    return () => window.removeEventListener("keydown", handleKey, true);
-  }, [recording, handleKey]);
+    return () => {
+      window.removeEventListener("keydown", handleKey, true);
+      // Re-register whatever the user committed (or fall back to what
+      // they had before they opened the recorder).
+      const spec = committed ?? value;
+      if (spec) void applyHotkey(spec).catch(() => {});
+    };
+  }, [recording, handleKey, committed, value]);
 
-  const displayed = pending ?? value;
-  const tokens = parts(displayed);
+  const displayed = committed ?? value;
+  const tokens = recording && pendingMods.length > 0 ? pendingMods : parts(displayed);
 
   return (
     <div className="flex items-center gap-2">
       <button
         type="button"
-        onClick={() => {
+        onClick={async () => {
+          // Free the active global shortcut so its keys reach the
+          // recorder instead of triggering the recording pipeline.
+          try {
+            await clearHotkey();
+          } catch {
+            /* ignore */
+          }
+          setPendingMods([]);
+          setCommitted(null);
           setRecording(true);
-          setPending(null);
         }}
         className={cn(
           "flex h-9 min-w-[160px] items-center justify-center gap-1 rounded-md border px-3 transition-colors",
@@ -107,18 +154,32 @@ export function HotkeyRecorder({ value, onChange }: HotkeyRecorderProps) {
             : "border-border-subtle bg-bg-base text-text-primary hover:border-border-strong",
         )}
       >
-        {recording ? (
-          <span className="text-xs text-text-secondary">Press your shortcut…</span>
-        ) : tokens.length === 0 ? (
-          <span className="text-xs text-text-muted">No shortcut</span>
+        {tokens.length === 0 ? (
+          recording ? (
+            <span className="text-xs text-text-secondary">Press your shortcut…</span>
+          ) : (
+            <span className="text-xs text-text-muted">No shortcut</span>
+          )
         ) : (
-          tokens.map((t, i) => (
-            <Kbd key={i}>{MODIFIER_LABEL[t] ?? t}</Kbd>
-          ))
+          <>
+            {tokens.map((t, i) => (
+              <Kbd key={i}>{MODIFIER_LABEL[t] ?? t}</Kbd>
+            ))}
+            {recording && (
+              <span className="ml-1 text-xs text-text-muted">+ key…</span>
+            )}
+          </>
         )}
       </button>
       {recording && (
-        <Button variant="ghost" size="sm" onClick={() => setRecording(false)}>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => {
+            setRecording(false);
+            setPendingMods([]);
+          }}
+        >
           Cancel
         </Button>
       )}

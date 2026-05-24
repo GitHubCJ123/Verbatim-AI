@@ -11,12 +11,16 @@ import Settings from "./routes/Settings";
 import Account from "./routes/Account";
 import Onboarding from "./routes/onboarding/Onboarding";
 import AuthGate from "./routes/AuthGate";
+import ModePicker from "./routes/ModePicker";
 import { isOnboardingComplete } from "./lib/store/useOnboarding";
 import { isSupabaseConfigured } from "./lib/supabase";
 import { useAuth } from "./lib/store/useAuth";
 import { hydrateAll, clearAllCaches } from "./lib/store/useModes";
 import { useAppMappings } from "./lib/store/useAppMappings";
 import { useProfile } from "./lib/store/useProfile";
+import { getAppMode } from "./lib/appMode";
+import { isMigrationPending, migrateLocalToCloud } from "./lib/migration";
+import { toast } from "./components/ui/Toast";
 import { Loader2, AlertTriangle } from "lucide-react";
 import { Toaster } from "./components/ui/Toast";
 
@@ -48,6 +52,7 @@ function BootSpinner() {
 
 const router = createMemoryRouter(
   [
+    { path: "/picker", element: <ModePicker /> },
     { path: "/auth", element: <AuthGate /> },
     { path: "/onboarding", element: <Onboarding /> },
     {
@@ -66,7 +71,7 @@ const router = createMemoryRouter(
     },
     { path: "*", element: <Navigate to="/" replace /> },
   ],
-  { initialEntries: ["/auth"] },
+  { initialEntries: ["/picker"] },
 );
 
 export default function App() {
@@ -87,24 +92,69 @@ export default function App() {
           "sw.azure.config",
           "sw.supabase.config",
           "sw.history",
-          "sw.onboarding",
         ]) {
           localStorage.removeItem(k);
         }
         localStorage.setItem("sw.online.migrated", "v2");
       }
 
+      const mode = getAppMode();
+      if (mode === null) {
+        // First launch — route to picker.
+        if (!cancelled) {
+          router.navigate("/picker", { replace: true });
+          setPhase("ready");
+        }
+        return;
+      }
+
+      if (mode === "local") {
+        // Local mode: no auth, hydrate from localStorage (seeds built-ins).
+        try {
+          await hydrateAll();
+          await useAppMappings.getState().hydrate();
+        } catch (e) {
+          setHydrationError(e instanceof Error ? e.message : String(e));
+        }
+        if (!cancelled) {
+          router.navigate(isOnboardingComplete() ? "/" : "/onboarding", { replace: true });
+          setPhase("ready");
+        }
+        return;
+      }
+
+      // Cloud mode.
       await useAuth.getState().init();
 
       // Subscribe to subsequent auth changes so caches stay in sync.
       useAuth.subscribe((state, prev) => {
         if (state.user && state.user.id !== prev.user?.id) {
-          void hydrateAll().catch((e) => {
-            setHydrationError(e instanceof Error ? e.message : String(e));
-          });
-          void useAppMappings.getState().hydrate().catch(() => {});
-          void useProfile.getState().hydrate().catch(() => {});
-          router.navigate(isOnboardingComplete() ? "/" : "/onboarding", { replace: true });
+          void (async () => {
+            try {
+              if (isMigrationPending()) {
+                const result = await migrateLocalToCloud();
+                const total =
+                  result.modes + result.vocabulary + result.appMappings + result.transcriptions;
+                if (total > 0) {
+                  toast.success(
+                    `Migrated ${result.modes} modes, ${result.vocabulary} terms, ${result.appMappings} app rules, ${result.transcriptions} transcripts`,
+                  );
+                }
+              }
+            } catch (e) {
+              toast.error("Migration failed", {
+                description: e instanceof Error ? e.message : String(e),
+              });
+            }
+            try {
+              await hydrateAll();
+              await useAppMappings.getState().hydrate();
+              await useProfile.getState().hydrate();
+            } catch (e) {
+              setHydrationError(e instanceof Error ? e.message : String(e));
+            }
+            router.navigate(isOnboardingComplete() ? "/" : "/onboarding", { replace: true });
+          })();
         }
         if (!state.user && prev.user) {
           clearAllCaches();
@@ -128,6 +178,9 @@ export default function App() {
         if (!cancelled) {
           router.navigate(isOnboardingComplete() ? "/" : "/onboarding", { replace: true });
         }
+      } else if (!cancelled) {
+        // Cloud mode, signed out — go to auth gate.
+        router.navigate("/auth", { replace: true });
       }
 
       if (!cancelled) setPhase("ready");

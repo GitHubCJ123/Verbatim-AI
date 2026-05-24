@@ -6,6 +6,7 @@ use commands::{
     hotkey::{clear_hotkey, handle_event as handle_hotkey_event, install_default, set_hotkey, HotkeyState},
     paste::{capture_target_window, clear_target_window, paste_to_target, TargetWindowState},
     process_list::list_running_apps,
+    relay::relay_event,
 };
 use tauri::Manager;
 
@@ -51,6 +52,7 @@ pub fn run() {
             capture_target_window,
             clear_target_window,
             paste_to_target,
+            relay_event,
         ])
         .setup(|app| {
             install_default(&app.handle());

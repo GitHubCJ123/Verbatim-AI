@@ -4,13 +4,14 @@
  */
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Loader2, AlertCircle } from "lucide-react";
+import { Loader2, AlertCircle, ArrowLeft } from "lucide-react";
 import { Card, CardContent } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
 import { Input } from "../components/ui/Input";
 import { useAuth } from "../lib/store/useAuth";
 import { isOnboardingComplete } from "../lib/store/useOnboarding";
 import { toast } from "../components/ui/Toast";
+import { clearAppMode } from "../lib/appMode";
 
 export default function AuthGate() {
   return (
@@ -18,6 +19,17 @@ export default function AuthGate() {
       className="relative flex h-screen w-screen items-center justify-center overflow-hidden bg-bg-base text-text-primary"
       style={{ backgroundImage: "radial-gradient(80% 60% at 50% 0%, rgba(168, 85, 247, 0.18), transparent 70%)" }}
     >
+      <button
+        type="button"
+        onClick={() => {
+          clearAppMode();
+          window.location.reload();
+        }}
+        className="absolute left-6 top-6 inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs text-text-secondary transition hover:bg-bg-elevated hover:text-text-primary"
+      >
+        <ArrowLeft className="h-3.5 w-3.5" />
+        Back
+      </button>
       <div className="w-full max-w-md px-6">
         <div className="mb-8 text-center">
           <img

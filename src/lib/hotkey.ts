@@ -64,6 +64,14 @@ export async function getActiveWindow(): Promise<ActiveWindow> {
  * function that removes both subscriptions.
  */
 export async function installHotkeyListeners(): Promise<UnlistenFn> {
+  // Re-apply the persisted hotkey at boot so the registration matches
+  // whatever the user last picked (or the platform default if nothing
+  // is saved). Rust's `install_default` registers `Ctrl+Space` but the
+  // user may have rebound — or a previous session's recorder may have
+  // left the slot empty after a clear+capture.
+  const cfg0 = loadHotkeyConfig();
+  void applyHotkey(cfg0.spec).catch(() => {});
+
   // Toggle mode tracks "are we currently recording?" across taps.
   let toggleRecording = false;
 

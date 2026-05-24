@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { LogOut, Loader2, ImagePlus } from "lucide-react";
+import { LogOut, Loader2, ImagePlus, HardDrive, Cloud } from "lucide-react";
 import { Card, CardContent } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
 import { Input } from "../components/ui/Input";
@@ -9,6 +9,9 @@ import { PageContainer, PageHeader } from "../components/layout/PageHeader";
 import { useAuth } from "../lib/store/useAuth";
 import { useProfile, initials } from "../lib/store/useProfile";
 import { toast } from "../components/ui/Toast";
+import { isLocalMode, setAppMode } from "../lib/appMode";
+import { markMigrationPending } from "../lib/migration";
+import { confirmDialog } from "../components/ui/confirmDialog";
 
 interface RowProps {
   title: string;
@@ -29,6 +32,7 @@ function Row({ title, description, children }: RowProps) {
 }
 
 export default function Account() {
+  if (isLocalMode()) return <LocalAccount />;
   const user = useAuth((s) => s.user)!;
   const signOut = useAuth((s) => s.signOut);
   const profile = useProfile((s) => s.profile);
@@ -146,6 +150,60 @@ export default function Account() {
             <Button variant="primary" size="sm" onClick={save} disabled={!dirty || saving}>
               {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
               Save changes
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+    </PageContainer>
+  );
+}
+
+function LocalAccount() {
+  return (
+    <PageContainer>
+      <PageHeader
+        title="Account"
+        description="You are using Verbatim AI in local mode."
+      />
+      <Card>
+        <CardContent className="flex flex-col gap-5 p-6 pt-6">
+          <div className="flex items-center gap-4">
+            <div className="flex h-14 w-14 items-center justify-center rounded-lg2 bg-bg-elevated">
+              <HardDrive className="h-6 w-6 text-text-primary" strokeWidth={2} />
+            </div>
+            <div className="flex-1">
+              <div className="text-lg font-semibold">Local mode</div>
+              <div className="text-xs text-text-secondary">
+                Your modes, vocabulary, and transcripts are stored on this device only.
+              </div>
+              <div className="mt-2 flex items-center gap-2">
+                <Badge variant="warning">No account</Badge>
+              </div>
+            </div>
+          </div>
+          <div className="rounded-md border border-border-subtle bg-bg-elevated/40 p-4 text-xs text-text-secondary">
+            <div className="mb-1 font-medium text-text-primary">Want to sync across devices?</div>
+            Create an account and your existing local data will be migrated to the cloud.
+          </div>
+          <div className="flex gap-2">
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={async () => {
+                const ok = await confirmDialog({
+                  title: "Switch to account mode?",
+                  message:
+                    "You will be taken to the sign-in screen. Local data stays on this device until you migrate.",
+                  confirmLabel: "Continue",
+                });
+                if (!ok) return;
+                markMigrationPending();
+                setAppMode("cloud");
+                window.location.reload();
+              }}
+            >
+              <Cloud className="h-3.5 w-3.5" />
+              Create account / Sign in
             </Button>
           </div>
         </CardContent>

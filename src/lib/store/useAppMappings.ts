@@ -6,6 +6,7 @@ import { create } from "zustand";
 import type { AppMapping } from "../../types/appMapping";
 import { newId, nowIso } from "../../types/mode";
 import { supabase } from "../supabase";
+import { isLocalMode } from "../appMode";
 import { useAuth } from "./useAuth";
 
 const LS_KEY = "sw.app_mappings";
@@ -71,6 +72,10 @@ export const useAppMappings = create<AppMappingsState>((set, get) => ({
   hydrate: async () => {
     set({ loading: true });
     try {
+      if (isLocalMode()) {
+        set({ mappings: loadAppMappings(), loading: false });
+        return;
+      }
       const { data, error } = await supabase
         .from("app_mappings")
         .select("*")
@@ -91,7 +96,6 @@ export const useAppMappings = create<AppMappingsState>((set, get) => ({
   },
 
   add: async (input) => {
-    const userId = requireUserId();
     const m: AppMapping = {
       id: newId(),
       appExecutable: input.appExecutable.toLowerCase(),
@@ -101,6 +105,13 @@ export const useAppMappings = create<AppMappingsState>((set, get) => ({
       matchWindowTitle: input.matchWindowTitle ?? null,
       createdAt: nowIso(),
     };
+    if (isLocalMode()) {
+      const next = [...get().mappings, m];
+      saveCache(next);
+      set({ mappings: next });
+      return m;
+    }
+    const userId = requireUserId();
     const { error } = await supabase.from("app_mappings").insert({
       id: m.id,
       user_id: userId,
@@ -123,6 +134,12 @@ export const useAppMappings = create<AppMappingsState>((set, get) => ({
     if (!cur) return;
     const merged = { ...cur, ...patch };
     if (patch.appExecutable) merged.appExecutable = patch.appExecutable.toLowerCase();
+    if (isLocalMode()) {
+      const next = get().mappings.map((m) => (m.id === id ? merged : m));
+      saveCache(next);
+      set({ mappings: next });
+      return;
+    }
     const { error } = await supabase
       .from("app_mappings")
       .update({
@@ -140,8 +157,10 @@ export const useAppMappings = create<AppMappingsState>((set, get) => ({
   },
 
   remove: async (id) => {
-    const { error } = await supabase.from("app_mappings").delete().eq("id", id);
-    if (error) throw new Error(error.message);
+    if (!isLocalMode()) {
+      const { error } = await supabase.from("app_mappings").delete().eq("id", id);
+      if (error) throw new Error(error.message);
+    }
     const next = get().mappings.filter((m) => m.id !== id);
     saveCache(next);
     set({ mappings: next });

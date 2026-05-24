@@ -1,9 +1,29 @@
 /**
- * Transcription history — Supabase only (online-only architecture).
+ * Transcription history.
+ * - Cloud mode: Supabase `transcriptions` table.
+ * - Local mode: localStorage list (capped at 500 newest).
  */
 import { supabase } from "./supabase";
 import { useAuth } from "./store/useAuth";
 import { newId, nowIso } from "../types/mode";
+import { isLocalMode } from "./appMode";
+
+const LS_HISTORY = "sw.history.local";
+const LOCAL_CAP = 500;
+
+function loadLocal(): Transcription[] {
+  try {
+    const raw = localStorage.getItem(LS_HISTORY);
+    return raw ? (JSON.parse(raw) as Transcription[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveLocal(rows: Transcription[]): void {
+  const capped = rows.slice(0, LOCAL_CAP);
+  localStorage.setItem(LS_HISTORY, JSON.stringify(capped));
+}
 
 export type OutputAction = "pasted" | "reviewed" | "copied" | "discarded";
 
@@ -48,10 +68,9 @@ function requireUserId(): string {
 export async function addTranscription(
   input: CreateTranscriptionInput,
 ): Promise<Transcription> {
-  const userId = requireUserId();
   const row: Transcription = {
     id: newId(),
-    user_id: userId,
+    user_id: null,
     mode_id: input.modeId,
     mode_name_snap: input.modeNameSnap ?? null,
     raw_text: input.rawText,
@@ -64,6 +83,12 @@ export async function addTranscription(
     language_detected: input.languageDetected ?? null,
     created_at: nowIso(),
   };
+  if (isLocalMode()) {
+    const next = [row, ...loadLocal()];
+    saveLocal(next);
+    return row;
+  }
+  row.user_id = requireUserId();
   const { data, error } = await supabase
     .from("transcriptions")
     .insert(row)
@@ -78,6 +103,18 @@ export async function listTranscriptions(
 ): Promise<Transcription[]> {
   const limit = opts.limit ?? 200;
   const q = opts.query?.trim() ?? "";
+  if (isLocalMode()) {
+    let rows = loadLocal();
+    if (q) {
+      const needle = q.toLowerCase();
+      rows = rows.filter(
+        (r) =>
+          (r.cleaned_text ?? "").toLowerCase().includes(needle) ||
+          (r.raw_text ?? "").toLowerCase().includes(needle),
+      );
+    }
+    return rows.slice(0, limit);
+  }
   let query = supabase
     .from("transcriptions")
     .select("*")
@@ -90,11 +127,19 @@ export async function listTranscriptions(
 }
 
 export async function deleteTranscription(id: string): Promise<void> {
+  if (isLocalMode()) {
+    saveLocal(loadLocal().filter((r) => r.id !== id));
+    return;
+  }
   const { error } = await supabase.from("transcriptions").delete().eq("id", id);
   if (error) throw new Error(error.message);
 }
 
 export async function clearAllTranscriptions(): Promise<void> {
+  if (isLocalMode()) {
+    localStorage.removeItem(LS_HISTORY);
+    return;
+  }
   const userId = requireUserId();
   const { error } = await supabase.from("transcriptions").delete().eq("user_id", userId);
   if (error) throw new Error(error.message);

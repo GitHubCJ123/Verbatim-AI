@@ -11,18 +11,28 @@ import {
   type TranscribeResult,
 } from "./AIProvider";
 import { supabase, supabaseAnonKey, supabaseUrl } from "../supabase";
+import { isLocalMode } from "../appMode";
 
 const TRANSCRIBE_TIMEOUT_MS = 30_000;
 const CLEANUP_TIMEOUT_MS = 30_000;
 const MAX_RETRIES = 3;
 
 async function getAuthHeaders(): Promise<Record<string, string>> {
+  const anon = supabaseAnonKey();
+  // Local mode: no session, send anon key as bearer (Edge Functions are
+  // deployed --no-verify-jwt so this works).
+  if (isLocalMode()) {
+    return {
+      Authorization: `Bearer ${anon}`,
+      apikey: anon,
+    };
+  }
   const { data } = await supabase.auth.getSession();
   const token = data.session?.access_token;
   if (!token) throw new Error("Not signed in.");
   return {
     Authorization: `Bearer ${token}`,
-    apikey: supabaseAnonKey(),
+    apikey: anon,
   };
 }
 

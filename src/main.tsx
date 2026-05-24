@@ -16,6 +16,7 @@ import { loadPreferences, notify, isHotkeyPaused, setHotkeyPaused } from "./lib/
 
 // Install global hotkey event listeners as soon as the app boots.
 void installHotkeyListeners();
+console.info("[Verbatim AI] main.tsx booted, listeners installing");
 
 // Initialize Supabase auth (no-op if URL/anon key not configured yet).
 void useAuth.getState().init();
@@ -47,6 +48,7 @@ void listen("tray:pause-hotkey", () => {
 // Track the most recent transcription so review-mode resolution
 // (`recording:reviewed`) can attach the final output_action.
 interface PendingResult {
+  emitId?: string;
   raw: string;
   cleaned: string;
   durationMs: number;
@@ -57,11 +59,22 @@ interface PendingResult {
   saveHistory: boolean;
 }
 let pending: PendingResult | null = null;
+const handledEmitIds = new Set<string>();
 
 async function persist(result: PendingResult, action: OutputAction, finalCleaned?: string) {
-  if (!result.saveHistory) return;
+  console.info("[Verbatim AI] persist called", {
+    action,
+    saveHistory: result.saveHistory,
+    modeId: result.modeId,
+    modeName: result.modeName,
+    cleaned: (finalCleaned ?? result.cleaned).slice(0, 60),
+  });
+  if (!result.saveHistory) {
+    console.warn("[Verbatim AI] persist skipped: saveHistory=false on mode", result.modeName);
+    return;
+  }
   try {
-    await addTranscription({
+    const saved = await addTranscription({
       modeId: result.modeId,
       modeNameSnap: result.modeName,
       rawText: result.raw,
@@ -70,12 +83,25 @@ async function persist(result: PendingResult, action: OutputAction, finalCleaned
       outputAction: action,
       languageDetected: result.language,
     });
+    console.info("[Verbatim AI] persisted transcript id:", saved.id);
   } catch (e) {
     console.warn("[Verbatim AI] failed to persist transcript:", e);
   }
 }
 
 void listen<PendingResult>("recording:result", async (e) => {
+  if (e.payload.emitId && handledEmitIds.has(e.payload.emitId)) {
+    return;
+  }
+  if (e.payload.emitId) {
+    handledEmitIds.add(e.payload.emitId);
+    // Keep the set small.
+    if (handledEmitIds.size > 50) {
+      const first = handledEmitIds.values().next().value;
+      if (first) handledEmitIds.delete(first);
+    }
+  }
+  console.info("[Verbatim AI] recording:result received", e.payload.modeName);
   pending = e.payload;
   toast.success("Transcribed", {
     description: e.payload.cleaned.slice(0, 240),
@@ -92,9 +118,11 @@ void listen<PendingResult>("recording:result", async (e) => {
   }
 });
 
-void listen<{ action: OutputAction; cleaned: string; modeId: string | null }>(
+void listen<{ emitId?: string; action: OutputAction; cleaned: string; modeId: string | null }>(
   "recording:reviewed",
   async (e) => {
+    if (e.payload.emitId && handledEmitIds.has(e.payload.emitId)) return;
+    if (e.payload.emitId) handledEmitIds.add(e.payload.emitId);
     if (!pending) return;
     await persist(pending, e.payload.action, e.payload.cleaned);
     pending = null;

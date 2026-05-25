@@ -233,6 +233,10 @@ jobs:
             if [ -n "$sig_file" ] && [ -n "$exe_file" ]; then
               sig=$(cat "$sig_file")
               fname=$(basename "$exe_file")
+              # GitHub releases normalize asset filenames on upload:
+              # spaces become periods. We need to match that exactly in
+              # the manifest URL or the updater hits 404.
+              fname_url=$(printf '%s' "$fname" | tr ' ' '.')
               # The setup.exe was already uploaded by tauri-action; we
               # just need to attach the .sig next to it so the URL has a
               # neighbor signature file.
@@ -240,12 +244,12 @@ jobs:
               # Write BOTH the canonical and nsis-tagged keys so the
               # in-app updater finds whichever one it looks up first.
               cat > _updater/manifest-windows-x86_64.json <<EOF
-          { "platform": "windows-x86_64", "signature": $(printf '%s' "$sig" | jq -Rs .), "url": "https://github.com/GitHubCJ123/Verbatim-AI/releases/download/${VERSION}/$(printf '%s' "$fname" | jq -sRr @uri)" }
+          { "platform": "windows-x86_64", "signature": $(printf '%s' "$sig" | jq -Rs .), "url": "https://github.com/GitHubCJ123/Verbatim-AI/releases/download/${VERSION}/$(printf '%s' "$fname_url" | jq -sRr @uri)" }
           EOF
               cat > _updater/manifest-windows-x86_64-nsis.json <<EOF
-          { "platform": "windows-x86_64-nsis", "signature": $(printf '%s' "$sig" | jq -Rs .), "url": "https://github.com/GitHubCJ123/Verbatim-AI/releases/download/${VERSION}/$(printf '%s' "$fname" | jq -sRr @uri)" }
+          { "platform": "windows-x86_64-nsis", "signature": $(printf '%s' "$sig" | jq -Rs .), "url": "https://github.com/GitHubCJ123/Verbatim-AI/releases/download/${VERSION}/$(printf '%s' "$fname_url" | jq -sRr @uri)" }
           EOF
-              echo "WROTE windows manifest fragment for $fname"
+              echo "WROTE windows manifest fragment for $fname_url (orig $fname)"
             else
               echo "No windows signature/exe pair found; skipping."
             fi
@@ -256,12 +260,14 @@ jobs:
             if [ -n "$sig_file" ] && [ -n "$tar_file" ]; then
               sig=$(cat "$sig_file")
               fname=$(basename "$tar_file")
+              # Same space->period normalization as on Windows.
+              fname_url=$(printf '%s' "$fname" | tr ' ' '.')
               # Upload the tar + sig so the updater URL resolves.
               gh release upload "${VERSION}" "$tar_file" "$sig_file" --clobber --repo "${{ github.repository }}"
               cat > _updater/manifest-darwin-aarch64.json <<EOF
-          { "platform": "darwin-aarch64", "signature": $(printf '%s' "$sig" | jq -Rs .), "url": "https://github.com/GitHubCJ123/Verbatim-AI/releases/download/${VERSION}/$(printf '%s' "$fname" | jq -sRr @uri)" }
+          { "platform": "darwin-aarch64", "signature": $(printf '%s' "$sig" | jq -Rs .), "url": "https://github.com/GitHubCJ123/Verbatim-AI/releases/download/${VERSION}/$(printf '%s' "$fname_url" | jq -sRr @uri)" }
           EOF
-              echo "WROTE darwin manifest fragment from $tar_file"
+              echo "WROTE darwin manifest fragment for $fname_url (orig $fname)"
             else
               echo "No darwin signature/tar pair found; skipping."
             fi

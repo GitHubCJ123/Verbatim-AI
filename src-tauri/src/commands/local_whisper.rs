@@ -126,6 +126,26 @@ fn locate_whisper_cli(app: &AppHandle) -> Result<Option<PathBuf>, String> {
     Ok(walk(&dir, target))
 }
 
+/// Recursive list of every file under `root`. Used to chmod whisper-cli
+/// + dylibs after extraction (zip drops the executable bit).
+#[cfg(unix)]
+fn walk_dir(root: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    fn inner(dir: &Path, out: &mut Vec<PathBuf>) {
+        let Ok(entries) = std::fs::read_dir(dir) else { return };
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_file() {
+                out.push(p);
+            } else if p.is_dir() {
+                inner(&p, out);
+            }
+        }
+    }
+    inner(root, &mut out);
+    out
+}
+
 fn runtime_archive_url() -> Result<&'static str, String> {
     // Both runtime zips ship as assets on every published app release.
     // Using `/releases/latest/download/<name>` so the app always pulls
@@ -234,6 +254,39 @@ pub async fn install_whisper_runtime(app: AppHandle) -> Result<(), String> {
                 let mut out = std::fs::File::create(&out_path).map_err(|e| e.to_string())?;
                 std::io::copy(&mut entry, &mut out).map_err(|e| e.to_string())?;
             }
+        }
+
+        // macOS/Linux: zip doesn't preserve the executable bit and
+        // macOS slaps a com.apple.quarantine xattr on anything that
+        // came from a download. Without those two fixes, running
+        // whisper-cli yields EACCES (permission denied) or Gatekeeper
+        // refuses to launch it.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            for entry in walk_dir(&extract_dir) {
+                let name = entry.file_name().and_then(|s| s.to_str()).unwrap_or("");
+                let is_exec = name == "whisper-cli"
+                    || name.ends_with(".dylib")
+                    || name.ends_with(".so");
+                if is_exec {
+                    if let Ok(meta) = std::fs::metadata(&entry) {
+                        let mut perms = meta.permissions();
+                        // 0o755 = rwxr-xr-x
+                        perms.set_mode(perms.mode() | 0o111);
+                        let _ = std::fs::set_permissions(&entry, perms);
+                    }
+                }
+            }
+        }
+        #[cfg(target_os = "macos")]
+        {
+            // Strip the quarantine attribute recursively. Best-effort;
+            // it's fine if xattr isn't there.
+            let _ = std::process::Command::new("xattr")
+                .args(["-d", "-r", "com.apple.quarantine"])
+                .arg(&extract_dir)
+                .status();
         }
         Ok(())
     })

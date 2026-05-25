@@ -187,8 +187,12 @@ export async function pingOllama(host?: string): Promise<boolean> {
   try {
     const url = `${normalizeHost(host)}/api/tags`;
     const res = await fetch(url, { method: "GET" });
+    if (!res.ok) {
+      console.warn(`[ollama:ping] ${url} -> HTTP ${res.status}`);
+    }
     return res.ok;
-  } catch {
+  } catch (e) {
+    console.warn(`[ollama:ping] failed: ${e instanceof Error ? e.message : String(e)}`);
     return false;
   }
 }

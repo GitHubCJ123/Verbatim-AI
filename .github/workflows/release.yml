@@ -225,25 +225,29 @@ jobs:
           ls -la src-tauri/target/release/bundle/macos 2>/dev/null || echo "(no host-arch macos dir)"
 
           if [ -d "src-tauri/target/release/bundle/nsis" ]; then
-            # Windows: updater consumes the `.nsis.zip`, not the raw
-            # `.exe`. Tauri's updater downloads the zip, extracts it,
-            # and runs the embedded NSIS installer.
-            sig_file=$(find src-tauri/target/release/bundle/nsis -name "*.nsis.zip.sig" | head -n1 || true)
-            zip_file=$(find src-tauri/target/release/bundle/nsis -name "*.nsis.zip" ! -name "*.sig" | head -n1 || true)
-            if [ -n "$sig_file" ] && [ -n "$zip_file" ]; then
+            # Windows: Tauri 2's updater downloads the `.exe` installer
+            # directly when createUpdaterArtifacts is on; the `.sig` file
+            # sits next to it as `<name>.exe.sig`.
+            sig_file=$(find src-tauri/target/release/bundle/nsis -name "*.exe.sig" | head -n1 || true)
+            exe_file=$(find src-tauri/target/release/bundle/nsis -name "*.exe" ! -name "*.sig" | head -n1 || true)
+            if [ -n "$sig_file" ] && [ -n "$exe_file" ]; then
               sig=$(cat "$sig_file")
-              fname=$(basename "$zip_file")
-              # Upload the .nsis.zip and its .sig to the release so the
-              # URL in the manifest actually resolves. The raw .exe
-              # installer for first-time installs is uploaded by
-              # tauri-action separately.
-              gh release upload "${VERSION}" "$zip_file" "$sig_file" --clobber --repo "${{ github.repository }}"
+              fname=$(basename "$exe_file")
+              # The setup.exe was already uploaded by tauri-action; we
+              # just need to attach the .sig next to it so the URL has a
+              # neighbor signature file.
+              gh release upload "${VERSION}" "$sig_file" --clobber --repo "${{ github.repository }}"
+              # Write BOTH the canonical and nsis-tagged keys so the
+              # in-app updater finds whichever one it looks up first.
               cat > _updater/manifest-windows-x86_64.json <<EOF
           { "platform": "windows-x86_64", "signature": $(printf '%s' "$sig" | jq -Rs .), "url": "https://github.com/GitHubCJ123/Verbatim-AI/releases/download/${VERSION}/$(printf '%s' "$fname" | jq -sRr @uri)" }
           EOF
+              cat > _updater/manifest-windows-x86_64-nsis.json <<EOF
+          { "platform": "windows-x86_64-nsis", "signature": $(printf '%s' "$sig" | jq -Rs .), "url": "https://github.com/GitHubCJ123/Verbatim-AI/releases/download/${VERSION}/$(printf '%s' "$fname" | jq -sRr @uri)" }
+          EOF
               echo "WROTE windows manifest fragment for $fname"
             else
-              echo "No windows signature/zip pair found; skipping."
+              echo "No windows signature/exe pair found; skipping."
             fi
           fi
           if [ -d "src-tauri/target/aarch64-apple-darwin/release/bundle/macos" ]; then

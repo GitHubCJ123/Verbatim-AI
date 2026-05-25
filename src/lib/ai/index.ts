@@ -21,8 +21,8 @@ import {
 
 export * from "./localWhisper";
 
-const TRANSCRIBE_TIMEOUT_MS = 30_000;
-const CLEANUP_TIMEOUT_MS = 30_000;
+const TRANSCRIBE_TIMEOUT_MS = 10 * 60 * 1000; // 10 min — covers long recordings; whisper auto-chunks anyway.
+const CLEANUP_TIMEOUT_MS = 10 * 60 * 1000; // 10 min — long transcripts can stream for a while.
 const MAX_RETRIES = 3;
 
 async function getAuthHeaders(): Promise<Record<string, string>> {

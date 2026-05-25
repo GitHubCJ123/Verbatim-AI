@@ -479,7 +479,8 @@ function AiOverridesSection({
     let cancelled = false;
     (async () => {
       const host = getOllamaHost();
-      const reachable = await pingOllama(host);
+      const ping = await pingOllama(host);
+      const reachable = ping.kind === "ok";
       if (cancelled) return;
       setOllamaReachable(reachable);
       if (!reachable) {

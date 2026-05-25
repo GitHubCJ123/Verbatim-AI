@@ -13,6 +13,7 @@ import { isHotkeyPaused, setHotkeyPaused } from "../lib/preferences";
 import { listTranscriptions, type Transcription } from "../lib/history";
 import { listen } from "@tauri-apps/api/event";
 import { useNavigate } from "react-router-dom";
+import { osName } from "../lib/os";
 
 export default function Home() {
   const [active, setActive] = useState(false);
@@ -61,7 +62,7 @@ export default function Home() {
     <PageContainer>
       <PageHeader
         title="Welcome back"
-        description="Press your shortcut anywhere in Windows and start talking."
+        description={`Press your shortcut anywhere on ${osName()} and start talking.`}
       />
 
       <Card className="relative overflow-hidden bg-gradient-to-br from-bg-elevated to-transparent">

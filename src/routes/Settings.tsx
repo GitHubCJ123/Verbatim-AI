@@ -35,6 +35,7 @@ import {
   type WhisperTier,
 } from "../lib/ai";
 import { useTheme, type Theme } from "../lib/theme";
+import { osName, clipboardHistoryHint } from "../lib/os";
 import {
   loadOverlayPosition,
   setOverlayPosition,
@@ -169,7 +170,7 @@ export default function Settings() {
         <TabsContent value="general">
           <Card>
             <CardContent className="p-5 pt-5">
-              <SettingRow title="Launch at startup" description="Open Verbatim AI when Windows starts.">
+              <SettingRow title="Launch at startup" description={`Open Verbatim AI when ${osName()} starts.`}>
                 <Switch
                   checked={autostart}
                   onCheckedChange={async (v) => {
@@ -196,7 +197,7 @@ export default function Settings() {
                   }}
                 />
               </SettingRow>
-              <SettingRow title="Theme" description="Match Windows or pick light/dark.">
+              <SettingRow title="Theme" description={`Match ${osName()} or pick light/dark.`}>
                 <ThemeSelect />
               </SettingRow>
             </CardContent>
@@ -236,7 +237,7 @@ export default function Settings() {
               </SettingRow>
               <SettingRow
                 title="Restore clipboard after paste"
-                description="When on, Verbatim AI remembers whatever you had on the clipboard before dictating, pastes the cleaned text, then puts your original content back ~1 second later. Off by default — Windows already keeps clipboard history (press Win+V to view it), so the cleaned text just stays on the clipboard."
+                description={`When on, Verbatim AI remembers whatever you had on the clipboard before dictating, pastes the cleaned text, then puts your original content back ~1 second later. Off by default — ${clipboardHistoryHint()}`}
               >
                 <ClipboardRestoreSwitch />
               </SettingRow>

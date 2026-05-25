@@ -30,6 +30,7 @@ import {
   useOnboarding,
   type Tone,
 } from "../../lib/store/useOnboarding";
+import { osName, micPermissionPath } from "../../lib/os";
 import { applyHotkey, saveHotkeyConfig } from "../../lib/hotkey";
 import { cn } from "../../lib/utils";
 import { useAuth } from "../../lib/store/useAuth";
@@ -257,8 +258,8 @@ function Permissions() {
               </div>
               <div className="text-xs text-text-muted">
                 {permission === "denied"
-                  ? "Open Windows Settings → Privacy → Microphone to allow access."
-                  : "Click below; Windows will ask once."}
+                  ? `Open ${micPermissionPath()} to allow access.`
+                  : `Click below; ${osName()} will ask once.`}
               </div>
             </div>
           </div>
@@ -363,7 +364,7 @@ function HotkeyStep() {
     <div>
       <StepHeading
         title="Pick your shortcut"
-        subtitle="Hold this anywhere in Windows to start dictating."
+        subtitle={`Hold this anywhere on ${osName()} to start dictating.`}
       />
       <Card className="mt-8">
         <CardContent className="flex flex-col gap-5 p-6 pt-6">
@@ -607,7 +608,7 @@ function TestRecording() {
       </div>
       <h2 className="text-2xl font-semibold tracking-tight">You're all set</h2>
       <p className="mt-3 text-sm text-text-secondary">
-        Hold <Kbd>Ctrl</Kbd> <Kbd>Space</Kbd> anywhere in Windows and say something. The pill will
+        Hold <Kbd>Ctrl</Kbd> <Kbd>Space</Kbd> anywhere on {osName()} and say something. The pill will
         appear, your voice will type itself wherever your cursor is.
       </p>
       <p className="mt-2 text-xs text-text-muted">

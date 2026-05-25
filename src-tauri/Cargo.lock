@@ -5224,7 +5224,7 @@ dependencies = [
 
 [[package]]
 name = "verbatim-ai"
-version = "0.3.5"
+version = "0.3.7"
 dependencies = [
  "enigo",
  "futures-util",

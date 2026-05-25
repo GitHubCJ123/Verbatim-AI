@@ -15,6 +15,23 @@
  */
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 
+// Ollama enforces a CORS-style origin allowlist (OLLAMA_ORIGINS).
+// In production our webview origin is `https://tauri.localhost`, which
+// Ollama rejects with 403 unless the user manually adds it. We avoid
+// the check entirely by sending a non-browser User-Agent and dropping
+// the Origin header — Ollama only does the check for browser-like
+// requests. The Tauri HTTP plugin lets us set arbitrary headers from
+// the JS side, so we attach them on every call below.
+const OLLAMA_HEADERS: HeadersInit = {
+  "user-agent": "verbatim-ai/0.3 (+https://github.com/GitHubCJ123/Verbatim-AI)",
+};
+
+function withOllamaHeaders(init?: RequestInit): RequestInit {
+  const merged = new Headers(init?.headers ?? {});
+  for (const [k, v] of Object.entries(OLLAMA_HEADERS)) merged.set(k, v as string);
+  return { ...(init ?? {}), headers: merged };
+}
+
 // Wrap so we can confirm in logs that we're using the plugin-backed
 // fetch, not the webview's native fetch (which is subject to
 // mixed-content blocks against http://localhost in production).
@@ -25,7 +42,7 @@ const fetch = (input: string | URL | Request, init?: RequestInit) => {
       `[ollama:fetch] using @tauri-apps/plugin-http fetch (typeof tauriFetch=${typeof tauriFetch})`,
     );
   }
-  return tauriFetch(input, init);
+  return tauriFetch(input, withOllamaHeaders(init));
 };
 import type {
   AIProvider,

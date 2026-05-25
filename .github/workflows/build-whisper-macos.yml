@@ -1,0 +1,104 @@
+name: Build Whisper.cpp runtime (macOS)
+
+# Manually-triggered workflow that builds the whisper.cpp `whisper-cli`
+# binary for Apple Silicon (arm64) with Metal acceleration, packages it
+# together with its dynamic libraries, and publishes it as an asset on
+# a GitHub release. The desktop app downloads from there at runtime
+# when a Mac user clicks "Install runtime" in Settings → AI model.
+#
+# To use:
+#   1. Push this file to main.
+#   2. Go to Actions → "Build Whisper.cpp runtime (macOS)" → Run workflow.
+#   3. Optionally change the whisper_version input.
+#   4. Wait ~5 minutes. A new release tagged
+#      `whisper-runtime-<version>` will appear with
+#      `whisper-bin-macos-arm64.zip` attached.
+
+on:
+  workflow_dispatch:
+    inputs:
+      whisper_version:
+        description: "whisper.cpp tag to build (e.g. v1.8.4)"
+        required: true
+        default: "v1.8.4"
+
+jobs:
+  build:
+    runs-on: macos-14 # Apple Silicon
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout (just for workflow context)
+        uses: actions/checkout@v4
+
+      - name: Clone whisper.cpp
+        run: |
+          git clone --depth 1 --branch "${{ github.event.inputs.whisper_version }}" \
+            https://github.com/ggml-org/whisper.cpp.git whisper.cpp
+
+      - name: Configure
+        working-directory: whisper.cpp
+        run: |
+          cmake -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DGGML_METAL=ON \
+            -DGGML_METAL_EMBED_LIBRARY=ON \
+            -DBUILD_SHARED_LIBS=ON \
+            -DWHISPER_BUILD_TESTS=OFF \
+            -DWHISPER_BUILD_EXAMPLES=ON
+
+      - name: Build
+        working-directory: whisper.cpp
+        run: cmake --build build --config Release -j$(sysctl -n hw.ncpu)
+
+      - name: Stage binaries + fix dylib paths
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp whisper.cpp/build/bin/whisper-cli dist/
+          # Collect all built dylibs.
+          find whisper.cpp/build -type f -name "*.dylib" -exec cp -n {} dist/ \;
+
+          cd dist
+          # Make every dylib install_name point to @executable_path/<name>.
+          for dylib in *.dylib; do
+            install_name_tool -id "@executable_path/$(basename "$dylib")" "$dylib" || true
+          done
+          # Rewrite each binary's references to its dependencies so they
+          # resolve next to the executable rather than from absolute
+          # build paths.
+          for bin in whisper-cli *.dylib; do
+            otool -L "$bin" \
+              | awk 'NR>1 {print $1}' \
+              | while read -r dep; do
+                  base=$(basename "$dep")
+                  if [ -f "$base" ] && [ "$dep" != "@executable_path/$base" ]; then
+                    install_name_tool -change "$dep" "@executable_path/$base" "$bin" || true
+                  fi
+                done
+          done
+          # Sanity: list deps after rewriting.
+          echo "--- final deps ---"
+          for bin in whisper-cli *.dylib; do
+            echo "## $bin"
+            otool -L "$bin"
+          done
+
+      - name: Package
+        run: |
+          cd dist
+          zip -r ../whisper-bin-macos-arm64.zip .
+
+      - name: Publish release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: whisper-runtime-${{ github.event.inputs.whisper_version }}
+          name: Whisper Runtime ${{ github.event.inputs.whisper_version }}
+          body: |
+            Prebuilt whisper.cpp runtime for the desktop app.
+            Source: https://github.com/ggml-org/whisper.cpp/tree/${{ github.event.inputs.whisper_version }}
+            Built with Metal acceleration enabled.
+          files: whisper-bin-macos-arm64.zip
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

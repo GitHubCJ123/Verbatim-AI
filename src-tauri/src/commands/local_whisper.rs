@@ -134,9 +134,20 @@ fn runtime_archive_url() -> Result<&'static str, String> {
         // to CPU if no CUDA device is present.
         Ok("https://github.com/ggml-org/whisper.cpp/releases/download/v1.8.4/whisper-cublas-12.4.0-bin-x64.zip")
     }
-    #[cfg(not(all(target_os = "windows", target_arch = "x86_64")))]
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     {
-        Err("No prebuilt whisper.cpp runtime is available for this platform yet. Install whisper.cpp manually and place 'whisper-cli' under <app data>/whisper-bin/.".into())
+        // Apple Silicon build with Metal acceleration. Built by
+        // .github/workflows/build-whisper-macos.yml and published to
+        // this repo's own releases. Run that workflow once per
+        // whisper.cpp version bump.
+        Ok("https://github.com/GitHubCJ123/Verbatim-AI/releases/download/whisper-runtime-v1.8.4/whisper-bin-macos-arm64.zip")
+    }
+    #[cfg(not(any(
+        all(target_os = "windows", target_arch = "x86_64"),
+        all(target_os = "macos", target_arch = "aarch64"),
+    )))]
+    {
+        Err("No prebuilt whisper.cpp runtime is available for this platform yet.".into())
     }
 }
 

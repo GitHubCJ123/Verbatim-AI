@@ -84,7 +84,11 @@ jobs:
             Existing installs on a previous version will detect this release in the background and offer one-click install.
           releaseDraft: true
           prerelease: false
-          includeUpdaterJson: true
+          # tauri-action's auto latest.json is racy with our matrix
+          # (skips upload "signature not found" even when the .sig
+          # exists). We generate latest.json ourselves in the
+          # publish-latest-json job below.
+          includeUpdaterJson: false
           args: ${{ matrix.target && format('--target {0}', matrix.target) || '' }}
 
       # --- Whisper runtime zips, attached to the same draft release ---
@@ -192,3 +196,108 @@ jobs:
           else
             echo "No whisper runtime artifacts produced on this platform."
           fi
+
+      # tauri-action's auto-generated `latest.json` upload is racy: it
+      # scans for `.sig` files before all bundles finish, then "skips
+      # upload" even when signatures exist. We rebuild the manifest
+      # from disk ourselves and upload it after each platform finishes,
+      # then merge the platforms together below.
+      - name: Generate platform updater manifest fragment
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        env:
+          VERSION: ${{ github.ref_name }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          version="${VERSION#v}"
+          pub_date=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          mkdir -p _updater
+          if [ -d "src-tauri/target/release/bundle/nsis" ]; then
+            # Windows: updater consumes the `.nsis.zip`, not the raw
+            # `.exe`. Tauri's updater downloads the zip, extracts it,
+            # and runs the embedded NSIS installer.
+            sig_file=$(find src-tauri/target/release/bundle/nsis -name "*.nsis.zip.sig" | head -n1 || true)
+            zip_file=$(find src-tauri/target/release/bundle/nsis -name "*.nsis.zip" ! -name "*.sig" | head -n1 || true)
+            if [ -n "$sig_file" ] && [ -n "$zip_file" ]; then
+              sig=$(cat "$sig_file")
+              fname=$(basename "$zip_file")
+              # Upload the .nsis.zip and its .sig to the release so the
+              # URL in the manifest actually resolves. The raw .exe
+              # installer for first-time installs is uploaded by
+              # tauri-action separately.
+              gh release upload "${VERSION}" "$zip_file" "$sig_file" --clobber --repo "${{ github.repository }}"
+              cat > _updater/manifest-windows-x86_64.json <<EOF
+          { "platform": "windows-x86_64", "signature": $(printf '%s' "$sig" | jq -Rs .), "url": "https://github.com/GitHubCJ123/Verbatim-AI/releases/download/${VERSION}/$(printf '%s' "$fname" | jq -sRr @uri)" }
+          EOF
+              echo "WROTE windows manifest fragment for $fname"
+            else
+              echo "No windows signature/zip pair found; skipping."
+            fi
+          fi
+          if [ -d "src-tauri/target/aarch64-apple-darwin/release/bundle/macos" ]; then
+            sig_file=$(find src-tauri/target/aarch64-apple-darwin/release/bundle/macos -name "*.app.tar.gz.sig" | head -n1 || true)
+            tar_file=$(find src-tauri/target/aarch64-apple-darwin/release/bundle/macos -name "*.app.tar.gz" ! -name "*.sig" | head -n1 || true)
+            if [ -n "$sig_file" ] && [ -n "$tar_file" ]; then
+              sig=$(cat "$sig_file")
+              fname=$(basename "$tar_file")
+              # Upload the tar + sig so the updater URL resolves.
+              gh release upload "${VERSION}" "$tar_file" "$sig_file" --clobber --repo "${{ github.repository }}"
+              cat > _updater/manifest-darwin-aarch64.json <<EOF
+          { "platform": "darwin-aarch64", "signature": $(printf '%s' "$sig" | jq -Rs .), "url": "https://github.com/GitHubCJ123/Verbatim-AI/releases/download/${VERSION}/$(printf '%s' "$fname" | jq -sRr @uri)" }
+          EOF
+              echo "WROTE darwin manifest fragment from $tar_file"
+            else
+              echo "No darwin signature/tar pair found; skipping."
+            fi
+          fi
+          ls -la _updater || true
+
+      - name: Upload manifest fragment
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: actions/upload-artifact@v4
+        with:
+          name: updater-fragment-${{ matrix.platform }}
+          path: _updater/*.json
+          if-no-files-found: warn
+          retention-days: 1
+
+
+  publish-latest-json:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download fragments
+        uses: actions/download-artifact@v4
+        with:
+          path: fragments
+          pattern: updater-fragment-*
+          merge-multiple: true
+
+      - name: Build merged latest.json
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          version="${VERSION#v}"
+          pub_date=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          notes="See the release page for full notes."
+          platforms='{}'
+          for f in fragments/*.json; do
+            entry=$(cat "$f")
+            platform=$(printf '%s' "$entry" | jq -r .platform)
+            payload=$(printf '%s' "$entry" | jq '{signature, url}')
+            platforms=$(printf '%s' "$platforms" | jq --arg p "$platform" --argjson v "$payload" '. + {($p): $v}')
+          done
+          jq -n --arg v "$version" --arg d "$pub_date" --arg n "$notes" --argjson p "$platforms" \
+            '{ version: $v, notes: $n, pub_date: $d, platforms: $p }' > latest.json
+          cat latest.json
+
+      - name: Upload latest.json to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ github.ref_name }}" latest.json --clobber --repo ${{ github.repository }}

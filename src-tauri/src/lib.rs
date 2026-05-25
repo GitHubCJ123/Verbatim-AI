@@ -4,6 +4,10 @@ mod tray;
 use commands::{
     active_window::get_active_window,
     hotkey::{clear_hotkey, handle_event as handle_hotkey_event, install_default, set_hotkey, HotkeyState},
+    local_whisper::{
+        delete_local_model, download_local_model, install_whisper_runtime,
+        is_whisper_runtime_installed, list_local_models, transcribe_local,
+    },
     paste::{capture_target_window, clear_target_window, paste_to_target, TargetWindowState},
     process_list::list_running_apps,
     relay::relay_event,
@@ -53,6 +57,12 @@ pub fn run() {
             clear_target_window,
             paste_to_target,
             relay_event,
+            list_local_models,
+            download_local_model,
+            delete_local_model,
+            transcribe_local,
+            is_whisper_runtime_installed,
+            install_whisper_runtime,
         ])
         .setup(|app| {
             install_default(&app.handle());

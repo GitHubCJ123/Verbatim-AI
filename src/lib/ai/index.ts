@@ -12,6 +12,14 @@ import {
 } from "./AIProvider";
 import { supabase, supabaseAnonKey, supabaseUrl } from "../supabase";
 import { isLocalMode } from "../appMode";
+import {
+  LocalWhisperProvider,
+  getAiProviderKind,
+  getLocalWhisperTier,
+  type WhisperTier,
+} from "./localWhisper";
+
+export * from "./localWhisper";
 
 const TRANSCRIBE_TIMEOUT_MS = 30_000;
 const CLEANUP_TIMEOUT_MS = 30_000;
@@ -179,10 +187,27 @@ export class SupabaseAIProvider implements AIProvider {
   }
 }
 
-let cached: SupabaseAIProvider | null = null;
+let cloudCache: SupabaseAIProvider | null = null;
+let localCache: LocalWhisperProvider | null = null;
+let localCacheTier: WhisperTier | null = null;
+
+function getCloud(): SupabaseAIProvider {
+  if (!cloudCache) cloudCache = new SupabaseAIProvider();
+  return cloudCache;
+}
+
 export function getActiveProvider(): AIProvider | null {
-  if (!cached) cached = new SupabaseAIProvider();
-  return cached;
+  const kind = getAiProviderKind();
+  if (kind === "cloud") return getCloud();
+  const tier = getLocalWhisperTier();
+  if (!localCache || localCacheTier !== tier) {
+    localCache = new LocalWhisperProvider({
+      tier,
+      cleanupFallback: getCloud(),
+    });
+    localCacheTier = tier;
+  }
+  return localCache;
 }
 
 async function* parseSSEStream(body: ReadableStream<Uint8Array>): AsyncIterable<string> {

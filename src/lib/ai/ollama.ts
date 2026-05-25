@@ -353,10 +353,6 @@ export class OllamaProvider implements AIProvider {
   }
 }
 
-async function* parseOllamaNDJSON(body: ReadableStream<Uint8Array>): AsyncIterable<string> {
-  yield* parseOllamaNDJSONInstrumented(body, () => {});
-}
-
 async function* parseOllamaNDJSONInstrumented(
   body: ReadableStream<Uint8Array>,
   onPiece: (kind: "content" | "thinking", bytes: number) => void,

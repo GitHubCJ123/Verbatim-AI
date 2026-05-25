@@ -104,22 +104,53 @@ jobs:
           find whisper.cpp/build -type f -name "*.dylib" -exec cp -n {} "$STAGE/" \;
 
           cd "$STAGE"
+
+          # Set every dylib's install_name to point at its sibling next to
+          # the executable. This is the id _other_ binaries will see.
           for dylib in *.dylib; do
-            install_name_tool -id "@executable_path/$(basename "$dylib")" "$dylib" || true
+            install_name_tool -id "@executable_path/$dylib" "$dylib" || true
           done
-          for bin in whisper-cli *.dylib; do
+
+          # Rewrite every @rpath/<dep> reference in whisper-cli and each
+          # dylib so it points at @executable_path/<actual file>.
+          # Dependencies are named like @rpath/libwhisper.1.dylib but the
+          # real files have full versions like libwhisper.1.8.4.dylib —
+          # match by `<prefix>.<major>.dylib` against `<prefix>.<major>.*.dylib`.
+          rewrite_deps() {
+            local bin="$1"
             otool -L "$bin" | awk 'NR>1 {print $1}' | while read -r dep; do
-              base=$(basename "$dep")
-              if [ -f "$base" ] && [ "$dep" != "@executable_path/$base" ]; then
-                install_name_tool -change "$dep" "@executable_path/$base" "$bin" || true
-              fi
+              case "$dep" in
+                @rpath/*)
+                  local key="${dep#@rpath/}"            # libwhisper.1.dylib
+                  local prefix="${key%.dylib}"          # libwhisper.1
+                  local target=""
+                  for candidate in ${prefix}.*.dylib; do
+                    if [ -f "$candidate" ]; then
+                      target="$candidate"
+                      break
+                    fi
+                  done
+                  if [ -n "$target" ]; then
+                    install_name_tool -change "$dep" "@executable_path/$target" "$bin" || true
+                  fi
+                  ;;
+              esac
             done
+          }
+
+          for bin in whisper-cli *.dylib; do
+            rewrite_deps "$bin"
           done
 
           echo "--- staged contents ---"
           ls -lh
           echo "--- whisper-cli deps after rewriting ---"
           otool -L whisper-cli
+          echo "--- libwhisper deps after rewriting ---"
+          for d in libwhisper.*.dylib; do
+            echo "## $d"
+            otool -L "$d"
+          done
 
           zip -r ../whisper-bin-macos-arm64.zip .
           cd ..

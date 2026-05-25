@@ -48,6 +48,12 @@ jobs:
         uses: swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+          # Stable shared key so bumping verbatim-ai's version (which
+          # touches Cargo.lock) doesn't invalidate the whole cache. When
+          # the lockfile changes we still get a restore-key match against
+          # the previous build, so only changed deps recompile.
+          shared-key: release-${{ matrix.platform }}
+          cache-on-failure: true
 
       - name: Install frontend deps
         run: pnpm install --frozen-lockfile

@@ -22,7 +22,7 @@
     "autostart:default",
     "notification:default",
     "updater:default",
-    "core:app:allow-version",
-    "process:allow-restart"
+    "process:default",
+    "core:app:allow-version"
   ]
 }

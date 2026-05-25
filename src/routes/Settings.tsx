@@ -51,6 +51,13 @@ import {
 import { useTheme, type Theme } from "../lib/theme";
 import { osName, clipboardHistoryHint } from "../lib/os";
 import {
+  checkForUpdate,
+  getUpdateStatus,
+  installAndRelaunch,
+  subscribeUpdateStatus,
+  type UpdateStatus,
+} from "../lib/updater";
+import {
   loadOverlayPosition,
   setOverlayPosition,
   type OverlayPosition,
@@ -143,6 +150,104 @@ function HistoryDisabledSwitch() {
   );
 }
 
+function UpdateSettingRow() {
+  const [status, setStatus] = useState<UpdateStatus>(getUpdateStatus());
+  useEffect(() => subscribeUpdateStatus(setStatus), []);
+
+  const { description, action } = renderUpdate(status);
+  return (
+    <SettingRow title="App updates" description={description}>
+      {action}
+    </SettingRow>
+  );
+
+  function renderUpdate(s: UpdateStatus): {
+    description: string;
+    action: React.ReactNode;
+  } {
+    switch (s.kind) {
+      case "idle":
+        return {
+          description: "Check GitHub for a newer version of Verbatim AI.",
+          action: (
+            <Button variant="secondary" size="sm" onClick={() => void checkForUpdate()}>
+              Check for updates
+            </Button>
+          ),
+        };
+      case "checking":
+        return {
+          description: "Checking GitHub for a newer version…",
+          action: (
+            <Button variant="secondary" size="sm" disabled>
+              <Loader2 className="mr-1 h-4 w-4 animate-spin" /> Checking
+            </Button>
+          ),
+        };
+      case "up-to-date":
+        return {
+          description: "You're on the latest version.",
+          action: (
+            <Button variant="secondary" size="sm" onClick={() => void checkForUpdate()}>
+              Check again
+            </Button>
+          ),
+        };
+      case "available":
+        return {
+          description: `Verbatim AI ${s.version} is available — starting download…`,
+          action: (
+            <Button variant="secondary" size="sm" disabled>
+              <Loader2 className="mr-1 h-4 w-4 animate-spin" /> Starting
+            </Button>
+          ),
+        };
+      case "downloading": {
+        const pct = s.totalBytes > 0 ? Math.round((s.downloadedBytes / s.totalBytes) * 100) : 0;
+        return {
+          description: `Downloading Verbatim AI ${s.version}…`,
+          action: (
+            <Button variant="secondary" size="sm" disabled>
+              <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+              {s.totalBytes > 0 ? `${pct}%` : "Downloading"}
+            </Button>
+          ),
+        };
+      }
+      case "ready":
+        return {
+          description: `Verbatim AI ${s.version} downloaded. Install will restart the app.`,
+          action: (
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={async () => {
+                try {
+                  await installAndRelaunch();
+                } catch (e) {
+                  toast.error("Couldn't install update", {
+                    description: e instanceof Error ? e.message : String(e),
+                  });
+                }
+              }}
+            >
+              Install and restart
+            </Button>
+          ),
+        };
+      case "error":
+        return {
+          description: `Update check failed: ${s.message}`,
+          action: (
+            <Button variant="secondary" size="sm" onClick={() => void checkForUpdate()}>
+              Retry
+            </Button>
+          ),
+        };
+    }
+  }
+}
+
 export default function Settings() {
   const [hotkey, setHotkey] = useState(() => loadHotkeyConfig());
   const [autostart, setAutostartState] = useState(false);
@@ -214,6 +319,7 @@ export default function Settings() {
               <SettingRow title="Theme" description={`Match ${osName()} or pick light/dark.`}>
                 <ThemeSelect />
               </SettingRow>
+              <UpdateSettingRow />
             </CardContent>
           </Card>
         </TabsContent>

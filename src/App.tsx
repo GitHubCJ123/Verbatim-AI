@@ -23,6 +23,8 @@ import { isMigrationPending } from "./lib/migration";
 import MigrationPicker from "./routes/MigrationPicker";
 import { Loader2, AlertTriangle } from "lucide-react";
 import { Toaster } from "./components/ui/Toast";
+import { UpdateBanner } from "./components/layout/UpdateBanner";
+import { checkForUpdate } from "./lib/updater";
 
 function FatalConfig() {
   return (
@@ -191,6 +193,11 @@ export default function App() {
       }
 
       if (!cancelled) setPhase("ready");
+
+      // Fire-and-forget update check on launch. The updater module
+      // also auto-downloads in the background; UpdateBanner shows
+      // when the download finishes.
+      void checkForUpdate();
     })();
 
     return () => {
@@ -206,6 +213,7 @@ export default function App() {
   return (
     <>
       <Toaster />
+      <UpdateBanner />
       <RouterProvider router={router} />
     </>
   );

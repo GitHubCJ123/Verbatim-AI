@@ -64,6 +64,12 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+          # Updater signing. If TAURI_SIGNING_PRIVATE_KEY is set,
+          # tauri-action also produces `.sig` files next to each
+          # bundle and a `latest.json` manifest the in-app updater
+          # polls. Missing secrets = unsigned build, no auto-update.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "Verbatim AI ${{ github.ref_name }}"
@@ -73,8 +79,12 @@ jobs:
 
             ## Local Whisper runtime
             If you turn on **Local Whisper** in Settings → AI model, the app downloads the matching runtime zip from this release automatically. You don't need to grab it manually.
+
+            ## Auto-update
+            Existing installs on a previous version will detect this release in the background and offer one-click install.
           releaseDraft: true
           prerelease: false
+          includeUpdaterJson: true
           args: ${{ matrix.target && format('--target {0}', matrix.target) || '' }}
 
       # --- Whisper runtime zips, attached to the same draft release ---

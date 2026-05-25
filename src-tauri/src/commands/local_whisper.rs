@@ -179,11 +179,16 @@ pub async fn install_whisper_runtime(app: AppHandle) -> Result<(), String> {
     let tmp_zip = dir.join("whisper-bin.partial.zip");
 
     let client = reqwest::Client::builder()
+        .user_agent("Verbatim-AI/0.2 (+https://github.com/GitHubCJ123/Verbatim-AI)")
         .build()
         .map_err(|e| e.to_string())?;
     let res = client.get(url).send().await.map_err(|e| e.to_string())?;
     if !res.status().is_success() {
-        return Err(format!("download failed: HTTP {}", res.status()));
+        return Err(format!(
+            "download failed: HTTP {} from {}",
+            res.status(),
+            url
+        ));
     }
     let total = res.content_length().unwrap_or(0);
 

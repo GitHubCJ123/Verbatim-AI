@@ -127,20 +127,17 @@ fn locate_whisper_cli(app: &AppHandle) -> Result<Option<PathBuf>, String> {
 }
 
 fn runtime_archive_url() -> Result<&'static str, String> {
+    // Both runtime zips ship as assets on every published app release.
+    // Using `/releases/latest/download/<name>` so the app always pulls
+    // the bundle that matches the most recent published release — no
+    // need to bump a URL when we cut a new app version.
     #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
     {
-        // CUDA-accelerated build. Bundles the cuBLAS/cuDART DLLs; runs on
-        // any machine with a reasonably current NVIDIA driver. Falls back
-        // to CPU if no CUDA device is present.
-        Ok("https://github.com/ggml-org/whisper.cpp/releases/download/v1.8.4/whisper-cublas-12.4.0-bin-x64.zip")
+        Ok("https://github.com/GitHubCJ123/Verbatim-AI/releases/latest/download/whisper-bin-windows-x64.zip")
     }
     #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     {
-        // Apple Silicon build with Metal acceleration. Built by
-        // .github/workflows/build-whisper-macos.yml and published to
-        // this repo's own releases. Run that workflow once per
-        // whisper.cpp version bump.
-        Ok("https://github.com/GitHubCJ123/Verbatim-AI/releases/download/whisper-runtime-v1.8.4/whisper-bin-macos-arm64.zip")
+        Ok("https://github.com/GitHubCJ123/Verbatim-AI/releases/latest/download/whisper-bin-macos-arm64.zip")
     }
     #[cfg(not(any(
         all(target_os = "windows", target_arch = "x86_64"),

@@ -95,11 +95,15 @@ jobs:
             -DWHISPER_BUILD_EXAMPLES=ON
           cmake --build whisper.cpp/build --config Release -j$(sysctl -n hw.ncpu)
 
-          mkdir -p dist
-          cp whisper.cpp/build/bin/whisper-cli dist/
-          find whisper.cpp/build -type f -name "*.dylib" -exec cp -n {} dist/ \;
+          # Stage into a dedicated dir name that can't collide with Vite's
+          # `dist/` output in the repo root.
+          STAGE=whisper-stage
+          rm -rf "$STAGE"
+          mkdir -p "$STAGE"
+          cp whisper.cpp/build/bin/whisper-cli "$STAGE/"
+          find whisper.cpp/build -type f -name "*.dylib" -exec cp -n {} "$STAGE/" \;
 
-          cd dist
+          cd "$STAGE"
           for dylib in *.dylib; do
             install_name_tool -id "@executable_path/$(basename "$dylib")" "$dylib" || true
           done
@@ -111,17 +115,33 @@ jobs:
               fi
             done
           done
+
+          echo "--- staged contents ---"
+          ls -lh
+          echo "--- whisper-cli deps after rewriting ---"
+          otool -L whisper-cli
+
           zip -r ../whisper-bin-macos-arm64.zip .
+          cd ..
+          echo "--- final archive ---"
+          ls -lh whisper-bin-macos-arm64.zip
 
       - name: Attach whisper runtime to release
         if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.ref_name }}
-          draft: true
-          files: |
-            whisper-bin-windows-x64.zip
-            whisper-bin-macos-arm64.zip
-          fail_on_unmatched_files: false
+        shell: bash
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # `gh release upload` targets the existing draft release that
+        # tauri-action created for this tag and adds our extra assets to
+        # it. `--clobber` lets a re-run overwrite a previously uploaded
+        # file with the same name. The bash conditional skips a file if
+        # the platform-specific build step didn't produce it.
+        run: |
+          files=()
+          [ -f whisper-bin-windows-x64.zip ] && files+=("whisper-bin-windows-x64.zip")
+          [ -f whisper-bin-macos-arm64.zip ] && files+=("whisper-bin-macos-arm64.zip")
+          if [ ${#files[@]} -gt 0 ]; then
+            gh release upload "${{ github.ref_name }}" "${files[@]}" --clobber
+          else
+            echo "No whisper runtime artifacts produced on this platform."
+          fi

@@ -5,7 +5,15 @@
  * /v1/chat/completions, so we can reuse the same SSE parsing the cloud
  * provider uses. We never spawn / manage Ollama ourselves — the user
  * installs it from ollama.com and pulls models via `ollama pull <name>`.
+ *
+ * Important: we use the Tauri HTTP plugin's `fetch` instead of the
+ * webview's built-in `fetch`. In production builds Tauri loads the app
+ * over `https://tauri.localhost` (Windows) — the webview's
+ * mixed-content policy blocks any plain-HTTP request, including
+ * `http://localhost:11434`. The plugin makes the request from Rust, so
+ * it isn't subject to that policy.
  */
+import { fetch } from "@tauri-apps/plugin-http";
 import type {
   AIProvider,
   CleanupInput,

@@ -84,11 +84,13 @@ jobs:
             Existing installs on a previous version will detect this release in the background and offer one-click install.
           releaseDraft: true
           prerelease: false
-          # tauri-action's auto latest.json is racy with our matrix
-          # (skips upload "signature not found" even when the .sig
-          # exists). We generate latest.json ourselves in the
-          # publish-latest-json job below.
-          includeUpdaterJson: false
+          # We *do* want the updater bundles (.nsis.zip / .app.tar.gz /
+          # .sig). Without this flag tauri-action skips packaging them
+          # entirely. tauri-action will then try to upload its own
+          # latest.json and fail with a "signature not found" race;
+          # that's harmless — our publish-latest-json job below
+          # overwrites with a correctly-merged manifest.
+          includeUpdaterJson: true
           args: ${{ matrix.target && format('--target {0}', matrix.target) || '' }}
 
       # --- Whisper runtime zips, attached to the same draft release ---

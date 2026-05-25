@@ -13,7 +13,20 @@
  * `http://localhost:11434`. The plugin makes the request from Rust, so
  * it isn't subject to that policy.
  */
-import { fetch } from "@tauri-apps/plugin-http";
+import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
+
+// Wrap so we can confirm in logs that we're using the plugin-backed
+// fetch, not the webview's native fetch (which is subject to
+// mixed-content blocks against http://localhost in production).
+const fetch = (input: string | URL | Request, init?: RequestInit) => {
+  if (typeof window !== "undefined" && !(window as unknown as { __ollamaFetchLogged?: boolean }).__ollamaFetchLogged) {
+    (window as unknown as { __ollamaFetchLogged?: boolean }).__ollamaFetchLogged = true;
+    console.info(
+      `[ollama:fetch] using @tauri-apps/plugin-http fetch (typeof tauriFetch=${typeof tauriFetch})`,
+    );
+  }
+  return tauriFetch(input, init);
+};
 import type {
   AIProvider,
   CleanupInput,
@@ -171,11 +184,21 @@ function normalizeHost(host?: string): string {
 
 export async function listOllamaModels(host?: string): Promise<OllamaModelInfo[]> {
   const url = `${normalizeHost(host)}/api/tags`;
-  const res = await fetch(url, { method: "GET" });
+  console.info(`[ollama:list] GET ${url}`);
+  let res: Response;
+  try {
+    res = await fetch(url, { method: "GET" });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error(`[ollama:list] fetch threw: ${msg}`);
+    throw new Error(`Couldn't reach Ollama at ${normalizeHost(host)}: ${msg}`);
+  }
+  console.info(`[ollama:list] ${url} -> HTTP ${res.status}`);
   if (!res.ok) throw new Error(`Ollama /api/tags returned ${res.status}`);
   const data = (await res.json()) as {
     models?: Array<{ name: string; size: number; modified_at: string }>;
   };
+  console.info(`[ollama:list] ${data.models?.length ?? 0} models pulled`);
   return (data.models ?? []).map((m) => ({
     name: m.name,
     sizeBytes: m.size,
@@ -184,15 +207,21 @@ export async function listOllamaModels(host?: string): Promise<OllamaModelInfo[]
 }
 
 export async function pingOllama(host?: string): Promise<boolean> {
+  const url = `${normalizeHost(host)}/api/tags`;
+  console.info(`[ollama:ping] GET ${url}`);
   try {
-    const url = `${normalizeHost(host)}/api/tags`;
     const res = await fetch(url, { method: "GET" });
+    console.info(`[ollama:ping] ${url} -> HTTP ${res.status} ${res.statusText}`);
     if (!res.ok) {
-      console.warn(`[ollama:ping] ${url} -> HTTP ${res.status}`);
+      const body = await res.text().catch(() => "");
+      console.warn(`[ollama:ping] body (first 200): ${body.slice(0, 200)}`);
     }
     return res.ok;
   } catch (e) {
-    console.warn(`[ollama:ping] failed: ${e instanceof Error ? e.message : String(e)}`);
+    const msg = e instanceof Error ? e.message : String(e);
+    const stack = e instanceof Error ? e.stack : "";
+    console.error(`[ollama:ping] fetch threw: ${msg}`);
+    if (stack) console.error(`[ollama:ping] stack: ${stack.split("\n").slice(0, 5).join(" | ")}`);
     return false;
   }
 }

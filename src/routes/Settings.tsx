@@ -438,6 +438,27 @@ export default function Settings() {
                   Restart
                 </Button>
               </SettingRow>
+              <SettingRow
+                title="Open developer tools"
+                description="Show the WebView2 dev tools for the main window. Use the Console tab to see app logs (Ollama, transcription, updates, etc)."
+              >
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={async () => {
+                    try {
+                      const { invoke } = await import("@tauri-apps/api/core");
+                      await invoke("open_main_devtools");
+                    } catch (e) {
+                      toast.error("Couldn't open dev tools", {
+                        description: e instanceof Error ? e.message : String(e),
+                      });
+                    }
+                  }}
+                >
+                  Open
+                </Button>
+              </SettingRow>
             </CardContent>
           </Card>
         </TabsContent>

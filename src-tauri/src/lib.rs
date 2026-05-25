@@ -3,6 +3,7 @@ mod tray;
 
 use commands::{
     active_window::get_active_window,
+    devtools::{open_devtools, open_main_devtools},
     hotkey::{clear_hotkey, handle_event as handle_hotkey_event, install_default, set_hotkey, HotkeyState},
     local_whisper::{
         delete_local_model, download_local_model, install_whisper_runtime,
@@ -66,6 +67,8 @@ pub fn run() {
             transcribe_local,
             is_whisper_runtime_installed,
             install_whisper_runtime,
+            open_devtools,
+            open_main_devtools,
         ])
         .setup(|app| {
             install_default(&app.handle());

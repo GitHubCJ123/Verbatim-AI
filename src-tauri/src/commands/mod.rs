@@ -1,4 +1,5 @@
 pub mod active_window;
+pub mod devtools;
 pub mod hotkey;
 pub mod local_whisper;
 pub mod paste;

@@ -18,11 +18,24 @@ import { HotkeyRecorder } from "../components/settings/HotkeyRecorder";
 import { Badge } from "../components/ui/Badge";
 import { toast } from "../components/ui/Toast";
 import { useModes, loadVocabulary } from "../lib/store/useModes";
-import { getActiveProvider } from "../lib/ai";
+import {
+  getActiveProvider,
+  WHISPER_TIERS,
+  listOllamaModels,
+  pingOllama,
+  getOllamaHost,
+  type OllamaModelInfo,
+} from "../lib/ai";
 import { estimateTokens } from "../lib/ai/promptBuilder";
 import { startRecording, type AudioController } from "../lib/audio";
 import { Waveform } from "../components/recording/Waveform";
-import type { Mode, OutputStyle } from "../types/mode";
+import type {
+  Mode,
+  OutputStyle,
+  TranscribeProviderKind,
+  WhisperTierKind,
+  CleanupProviderKind,
+} from "../types/mode";
 
 const ICON_OPTIONS = [
   "Sparkles",
@@ -209,6 +222,8 @@ function FormColumn({
           checked={draft.skipCleanup}
           onChange={(v) => set("skipCleanup", v)}
         />
+
+        <AiOverridesSection draft={draft} set={set} />
       </CardContent>
     </Card>
   );
@@ -299,7 +314,7 @@ function TestColumn({ draft }: { draft: Mode }) {
       return;
     }
 
-    const provider = getActiveProvider();
+    const provider = getActiveProvider(draft);
     if (!provider) {
       setError("Configure Azure in Settings → AI first.");
       setState("error");
@@ -434,4 +449,164 @@ function labelFor(s: TestState): string {
     default:
       return "";
   }
+}
+
+// ─── Per-Mode AI overrides ────────────────────────────────────────────
+
+const INHERIT = "__inherit__";
+
+function AiOverridesSection({
+  draft,
+  set,
+}: {
+  draft: Mode;
+  set: <K extends keyof Mode>(k: K, v: Mode[K]) => void;
+}) {
+  const [open, setOpen] = useState(
+    draft.transcribeProviderOverride !== null ||
+      draft.whisperTierOverride !== null ||
+      draft.cleanupProviderOverride !== null ||
+      draft.ollamaModelOverride !== null,
+  );
+  const [ollamaModels, setOllamaModels] = useState<OllamaModelInfo[]>([]);
+  const [ollamaReachable, setOllamaReachable] = useState<boolean | null>(null);
+
+  // Refresh Ollama models if the cleanup override is local-ollama. We
+  // need a populated dropdown to pick from; without it the user can't
+  // override the model meaningfully.
+  useEffect(() => {
+    if (draft.cleanupProviderOverride !== "local-ollama") return;
+    let cancelled = false;
+    (async () => {
+      const host = getOllamaHost();
+      const reachable = await pingOllama(host);
+      if (cancelled) return;
+      setOllamaReachable(reachable);
+      if (!reachable) {
+        setOllamaModels([]);
+        return;
+      }
+      try {
+        const list = await listOllamaModels(host);
+        if (!cancelled) setOllamaModels(list);
+      } catch {
+        if (!cancelled) setOllamaModels([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [draft.cleanupProviderOverride]);
+
+  return (
+    <div className="rounded-md border border-border-subtle">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="flex w-full items-center justify-between px-4 py-3 text-left"
+      >
+        <div>
+          <div className="text-sm font-medium">AI overrides (advanced)</div>
+          <div className="text-xs text-text-muted">
+            Pin this Mode to a specific transcription / cleanup model. Leave on "Use global default" to inherit Settings → AI model.
+          </div>
+        </div>
+        <span className="text-xs text-text-muted">{open ? "Hide" : "Show"}</span>
+      </button>
+      {open && (
+        <div className="flex flex-col gap-4 border-t border-border-subtle p-4">
+          <Row label="Transcribe provider">
+            <Select
+              value={draft.transcribeProviderOverride ?? INHERIT}
+              onValueChange={(v) =>
+                set(
+                  "transcribeProviderOverride",
+                  v === INHERIT ? null : (v as TranscribeProviderKind),
+                )
+              }
+            >
+              <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value={INHERIT}>Use global default</SelectItem>
+                <SelectItem value="cloud">Cloud (Azure Whisper)</SelectItem>
+                <SelectItem value="local-whisper">Local Whisper</SelectItem>
+              </SelectContent>
+            </Select>
+          </Row>
+
+          {draft.transcribeProviderOverride === "local-whisper" && (
+            <Row label="Whisper tier">
+              <Select
+                value={draft.whisperTierOverride ?? INHERIT}
+                onValueChange={(v) =>
+                  set(
+                    "whisperTierOverride",
+                    v === INHERIT ? null : (v as WhisperTierKind),
+                  )
+                }
+              >
+                <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={INHERIT}>Use global tier</SelectItem>
+                  {WHISPER_TIERS.map((t) => (
+                    <SelectItem key={t.tier} value={t.tier}>
+                      {t.label} · {t.tier}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </Row>
+          )}
+
+          <Row label="Cleanup provider">
+            <Select
+              value={draft.cleanupProviderOverride ?? INHERIT}
+              onValueChange={(v) =>
+                set(
+                  "cleanupProviderOverride",
+                  v === INHERIT ? null : (v as CleanupProviderKind),
+                )
+              }
+            >
+              <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value={INHERIT}>Use global default</SelectItem>
+                <SelectItem value="cloud">Cloud (Azure GPT)</SelectItem>
+                <SelectItem value="local-ollama">Local (Ollama)</SelectItem>
+              </SelectContent>
+            </Select>
+          </Row>
+
+          {draft.cleanupProviderOverride === "local-ollama" && (
+            <Row label="Ollama model">
+              {ollamaReachable === false ? (
+                <div className="text-xs text-text-muted">
+                  Ollama not reachable. Configure it in Settings → AI model first.
+                </div>
+              ) : ollamaModels.length === 0 ? (
+                <div className="text-xs text-text-muted">
+                  No models pulled. Pull one from Settings → AI model.
+                </div>
+              ) : (
+                <Select
+                  value={draft.ollamaModelOverride ?? INHERIT}
+                  onValueChange={(v) =>
+                    set("ollamaModelOverride", v === INHERIT ? null : v)
+                  }
+                >
+                  <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={INHERIT}>Use global model</SelectItem>
+                    {ollamaModels.map((m) => (
+                      <SelectItem key={m.name} value={m.name}>{m.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            </Row>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }

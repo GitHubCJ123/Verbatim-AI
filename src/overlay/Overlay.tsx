@@ -85,7 +85,7 @@ export default function Overlay() {
   };
 
   const runCleanup = async (raw: string, activeMode: Mode, vocab: string[]): Promise<string> => {
-    const provider = getActiveProvider();
+    const provider = getActiveProvider(activeMode);
     if (!provider) throw new Error("Provider not configured");
 
     setStreamingCleaned("");
@@ -105,7 +105,7 @@ export default function Overlay() {
   };
 
   const runPipeline = async (audio: Blob, durationMs: number, mode: string) => {
-    const provider = getActiveProvider();
+    const provider = getActiveProvider(modeRef.current);
     if (!provider) {
       setError("Configure Azure in Settings → AI to enable transcription.");
       setState("error");

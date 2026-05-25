@@ -1,12 +1,13 @@
 import { useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { Download, Trash2, CheckCircle2, Loader2 } from "lucide-react";
+import { Download, Trash2, CheckCircle2, Loader2, RefreshCw, ExternalLink } from "lucide-react";
 import { toast } from "../components/ui/Toast";
 import { PageContainer, PageHeader } from "../components/layout/PageHeader";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "../components/ui/Tabs";
 import { Card, CardContent } from "../components/ui/Card";
 import { Switch } from "../components/ui/Switch";
 import { Button } from "../components/ui/Button";
+import { Input } from "../components/ui/Input";
 import { ProgressBar } from "../components/ui/ProgressBar";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "../components/ui/Select";
 import { HotkeyRecorder } from "../components/settings/HotkeyRecorder";
@@ -33,6 +34,19 @@ import {
   type AiProviderKind,
   type LocalModelInfo,
   type WhisperTier,
+  getCleanupProviderKind,
+  setCleanupProviderKind,
+  getOllamaHost,
+  setOllamaHost,
+  getOllamaModel,
+  setOllamaModel,
+  listOllamaModels,
+  pingOllama,
+  pullOllamaModel,
+  SUGGESTED_OLLAMA_MODELS,
+  type CleanupProviderKind,
+  type OllamaModelInfo,
+  type SuggestedModel,
 } from "../lib/ai";
 import { useTheme, type Theme } from "../lib/theme";
 import { osName, clipboardHistoryHint } from "../lib/os";
@@ -448,7 +462,7 @@ function ModelTab() {
             </Select>
           </SettingRow>
           <div className="pt-3 text-xs text-text-muted">
-            Heads up: the cloud option may be removed in a future release. Cleanup (tone polish) still uses the cloud even when local Whisper is selected.
+            Cloud option may be removed in a future release. The cleanup step (tone polish) is configured separately below.
           </div>
         </CardContent>
       </Card>
@@ -581,6 +595,319 @@ function ModelTab() {
           </CardContent>
         </Card>
       )}
+
+      <CleanupSection />
     </div>
+  );
+}
+
+// --------------------------------------------------------------------------
+// Cleanup provider section (cloud vs local Ollama)
+// --------------------------------------------------------------------------
+
+function formatBytes(b: number): string {
+  if (b >= 1024 * 1024 * 1024) return `${(b / 1024 / 1024 / 1024).toFixed(1)} GB`;
+  if (b >= 1024 * 1024) return `${(b / 1024 / 1024).toFixed(0)} MB`;
+  return `${b} B`;
+}
+
+function CleanupSection() {
+  const [kind, setKind] = useState<CleanupProviderKind>(getCleanupProviderKind());
+  const [host, setHostState] = useState<string>(getOllamaHost());
+  const [model, setModelState] = useState<string>(getOllamaModel());
+  const [models, setModels] = useState<OllamaModelInfo[]>([]);
+  const [reachable, setReachable] = useState<boolean | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const refresh = async () => {
+    setRefreshing(true);
+    try {
+      const ok = await pingOllama(host);
+      setReachable(ok);
+      if (ok) {
+        const list = await listOllamaModels(host);
+        setModels(list);
+        // If the saved model isn't present, clear it so we don't silently use
+        // something the user can no longer run.
+        if (model && !list.find((m) => m.name === model)) {
+          setOllamaModel("");
+          setModelState("");
+        }
+      } else {
+        setModels([]);
+      }
+    } catch (e) {
+      setReachable(false);
+      setModels([]);
+      toast.error("Couldn't talk to Ollama", {
+        description: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  useEffect(() => {
+    if (kind === "local-ollama") void refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [kind, host]);
+
+  const handleKind = (next: CleanupProviderKind) => {
+    setCleanupProviderKind(next);
+    setKind(next);
+    toast.success(
+      next === "cloud" ? "Cleanup: using cloud" : "Cleanup: using local Ollama",
+    );
+  };
+
+  return (
+    <>
+      <Card>
+        <CardContent className="p-5 pt-5">
+          <SettingRow
+            title="Cleanup provider"
+            description="Where tone polish and grammar fix runs. Independent from transcription — you can mix and match."
+          >
+            <Select value={kind} onValueChange={(v) => handleKind(v as CleanupProviderKind)}>
+              <SelectTrigger className="w-56"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="cloud">Cloud (Azure GPT)</SelectItem>
+                <SelectItem value="local-ollama">Local (Ollama)</SelectItem>
+              </SelectContent>
+            </Select>
+          </SettingRow>
+        </CardContent>
+      </Card>
+
+      {kind === "local-ollama" && (
+        <Card>
+          <CardContent className="p-5 pt-5">
+            <div className="mb-3 text-sm font-medium">Ollama</div>
+            <div className="mb-4 text-xs text-text-muted">
+              Verbatim AI talks to a local Ollama server. Install Ollama once from{" "}
+              <a
+                href="https://ollama.com"
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1 text-accent-start hover:underline"
+              >
+                ollama.com <ExternalLink className="h-3 w-3" />
+              </a>{" "}
+              and pull a model in a terminal: <code className="text-text-primary">ollama pull qwen2.5:7b</code>.
+            </div>
+
+            <SettingRow
+              title="Status"
+              description="Whether Ollama is currently reachable at the configured host."
+            >
+              {reachable === null ? (
+                <span className="text-xs text-text-muted">—</span>
+              ) : reachable ? (
+                <span className="inline-flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
+                  <CheckCircle2 className="h-3.5 w-3.5" /> Connected
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1 text-xs text-danger">
+                  Not reachable
+                </span>
+              )}
+            </SettingRow>
+
+            <SettingRow
+              title="Host"
+              description="Default works for local Ollama. Change only if you run it elsewhere."
+            >
+              <div className="flex items-center gap-2">
+                <Input
+                  className="w-64"
+                  value={host}
+                  onChange={(e) => setHostState(e.target.value)}
+                  onBlur={() => {
+                    setOllamaHost(host);
+                    void refresh();
+                  }}
+                  placeholder="http://localhost:11434"
+                />
+                <Button variant="ghost" size="icon-sm" onClick={refresh} title="Refresh">
+                  <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
+                </Button>
+              </div>
+            </SettingRow>
+
+            <SettingRow
+              title="Model"
+              description="Pulled models on this Ollama instance. Pull more from a terminal."
+            >
+              {reachable === false ? (
+                <span className="text-xs text-text-muted">Connect first</span>
+              ) : models.length === 0 ? (
+                <span className="text-xs text-text-muted">No models pulled</span>
+              ) : (
+                <Select
+                  value={model || undefined}
+                  onValueChange={(v) => {
+                    setOllamaModel(v);
+                    setModelState(v);
+                  }}
+                >
+                  <SelectTrigger className="w-64">
+                    <SelectValue placeholder="Pick a model" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {models.map((m) => (
+                      <SelectItem key={m.name} value={m.name}>
+                        {m.name} · {formatBytes(m.sizeBytes)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            </SettingRow>
+
+            {reachable === false && (
+              <div className="mt-3 rounded-md border border-border-subtle bg-bg-elevated/40 p-3 text-xs text-text-muted">
+                Couldn't reach Ollama at <code className="text-text-primary">{host}</code>.
+                Make sure it's installed and running. On {osName()} it should auto-start after install.
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {kind === "local-ollama" && reachable && (
+        <SuggestedOllamaList
+          host={host}
+          installedNames={new Set(models.map((m) => m.name))}
+          currentModel={model}
+          onPulled={refresh}
+          onPick={(name) => {
+            setOllamaModel(name);
+            setModelState(name);
+          }}
+        />
+      )}
+    </>
+  );
+}
+
+function formatMB(mb: number): string {
+  if (mb >= 1024) return `${(mb / 1024).toFixed(1)} GB`;
+  return `${mb} MB`;
+}
+
+function SuggestedOllamaList({
+  host,
+  installedNames,
+  currentModel,
+  onPulled,
+  onPick,
+}: {
+  host: string;
+  installedNames: Set<string>;
+  currentModel: string;
+  onPulled: () => void | Promise<void>;
+  onPick: (name: string) => void;
+}) {
+  const [pulling, setPulling] = useState<Record<string, { completed: number; total: number; status: string } | undefined>>(
+    {} as Record<string, { completed: number; total: number; status: string } | undefined>,
+  );
+
+  const handlePull = async (m: SuggestedModel) => {
+    setPulling((p) => ({ ...p, [m.tag]: { completed: 0, total: 0, status: "starting" } }));
+    try {
+      await pullOllamaModel(m.tag, host, (prog) => {
+        setPulling((p) => ({
+          ...p,
+          [m.tag]: {
+            completed: prog.completed ?? 0,
+            total: prog.total ?? 0,
+            status: prog.status,
+          },
+        }));
+      });
+      toast.success(`Pulled ${m.tag}`);
+      await onPulled();
+    } catch (e) {
+      toast.error("Pull failed", {
+        description: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setPulling((p) => ({ ...p, [m.tag]: undefined }));
+    }
+  };
+
+  return (
+    <Card>
+      <CardContent className="p-5 pt-5">
+        <div className="mb-3 text-sm font-medium">Suggested models</div>
+        <div className="mb-4 text-xs text-text-muted">
+          Pull any of these directly into Ollama from here. You can also pull anything else with{" "}
+          <code className="text-text-primary">ollama pull &lt;tag&gt;</code> in a terminal.
+        </div>
+        <div className="flex flex-col gap-2">
+          {SUGGESTED_OLLAMA_MODELS.map((m) => {
+            const installed = installedNames.has(m.tag);
+            const selected = currentModel === m.tag;
+            const p = pulling[m.tag];
+            const pct = p && p.total > 0 ? Math.round((p.completed / p.total) * 100) : undefined;
+            return (
+              <div
+                key={m.tag}
+                className={`flex flex-col gap-2 rounded-md border p-3 ${
+                  selected ? "border-accent bg-accent/5" : "border-border-subtle"
+                }`}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex flex-col gap-0.5">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-sm font-medium">{m.label}</span>
+                      {m.recommended && (
+                        <span className="rounded bg-accent/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-accent-start">
+                          Recommended
+                        </span>
+                      )}
+                      <span className="text-xs text-text-muted">·</span>
+                      <span className="text-xs text-text-muted"><code>{m.tag}</code></span>
+                      <span className="text-xs text-text-muted">·</span>
+                      <span className="text-xs text-text-muted">
+                        {formatMB(m.approxDiskMB)} disk · ~{formatMB(m.approxVramMB)} VRAM
+                      </span>
+                      {installed && (
+                        <span className="inline-flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
+                          <CheckCircle2 className="h-3.5 w-3.5" /> installed
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-xs text-text-muted">{m.blurb}</div>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2">
+                    {installed ? (
+                      <Button
+                        variant={selected ? "primary" : "secondary"}
+                        size="sm"
+                        onClick={() => onPick(m.tag)}
+                        disabled={selected}
+                      >
+                        {selected ? "In use" : "Use this"}
+                      </Button>
+                    ) : p ? (
+                      <Button variant="secondary" size="sm" disabled>
+                        <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+                        {pct !== undefined ? `${pct}%` : p.status}
+                      </Button>
+                    ) : (
+                      <Button variant="secondary" size="sm" onClick={() => handlePull(m)}>
+                        <Download className="mr-1 h-4 w-4" /> Download
+                      </Button>
+                    )}
+                  </div>
+                </div>
+                {p && pct !== undefined && <ProgressBar value={pct} />}
+              </div>
+            );
+          })}
+        </div>
+      </CardContent>
+    </Card>
   );
 }

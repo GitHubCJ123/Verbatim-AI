@@ -18,8 +18,16 @@ import {
   getLocalWhisperTier,
   type WhisperTier,
 } from "./localWhisper";
+import {
+  OllamaProvider,
+  getCleanupProviderKind,
+  getOllamaHost,
+  getOllamaModel,
+} from "./ollama";
+import type { Mode } from "../../types/mode";
 
 export * from "./localWhisper";
+export * from "./ollama";
 
 const TRANSCRIBE_TIMEOUT_MS = 10 * 60 * 1000; // 10 min — covers long recordings; whisper auto-chunks anyway.
 const CLEANUP_TIMEOUT_MS = 10 * 60 * 1000; // 10 min — long transcripts can stream for a while.
@@ -188,26 +196,64 @@ export class SupabaseAIProvider implements AIProvider {
 }
 
 let cloudCache: SupabaseAIProvider | null = null;
-let localCache: LocalWhisperProvider | null = null;
-let localCacheTier: WhisperTier | null = null;
+const localWhisperByTier = new Map<WhisperTier, LocalWhisperProvider>();
+const ollamaByKey = new Map<string, OllamaProvider>();
 
 function getCloud(): SupabaseAIProvider {
   if (!cloudCache) cloudCache = new SupabaseAIProvider();
   return cloudCache;
 }
 
-export function getActiveProvider(): AIProvider | null {
-  const kind = getAiProviderKind();
+function transcribeProvider(mode?: Mode | null): AIProvider {
+  const kind = mode?.transcribeProviderOverride ?? getAiProviderKind();
   if (kind === "cloud") return getCloud();
-  const tier = getLocalWhisperTier();
-  if (!localCache || localCacheTier !== tier) {
-    localCache = new LocalWhisperProvider({
-      tier,
-      cleanupFallback: getCloud(),
-    });
-    localCacheTier = tier;
+  const tier = (mode?.whisperTierOverride ?? getLocalWhisperTier()) as WhisperTier;
+  let p = localWhisperByTier.get(tier);
+  if (!p) {
+    p = new LocalWhisperProvider({ tier, cleanupFallback: getCloud() });
+    localWhisperByTier.set(tier, p);
   }
-  return localCache;
+  return p;
+}
+
+function cleanupProvider(mode?: Mode | null): AIProvider {
+  const kind = mode?.cleanupProviderOverride ?? getCleanupProviderKind();
+  if (kind === "cloud") return getCloud();
+  const host = getOllamaHost();
+  const model = mode?.ollamaModelOverride ?? getOllamaModel();
+  const key = `${host}|${model}`;
+  let p = ollamaByKey.get(key);
+  if (!p) {
+    p = new OllamaProvider({ host, model });
+    ollamaByKey.set(key, p);
+  }
+  return p;
+}
+
+/**
+ * Returns a composite provider: transcribe-half and cleanup-half are
+ * picked independently from user settings, with optional per-Mode
+ * overrides. If the Mode has any override set, that always wins over
+ * the global setting.
+ */
+export function getActiveProvider(mode?: Mode | null): AIProvider | null {
+  const t = transcribeProvider(mode);
+  const c = cleanupProvider(mode);
+  return {
+    name: `${t.name} → ${c.name}`,
+    transcribe: (input) => t.transcribe(input),
+    cleanup: (input) => c.cleanup(input),
+    async health() {
+      const [ht, hc] = await Promise.all([t.health(), c.health()]);
+      return {
+        ok: ht.ok && hc.ok,
+        message:
+          ht.ok && hc.ok
+            ? "Both providers ready"
+            : `Transcribe: ${ht.message} · Cleanup: ${hc.message}`,
+      };
+    },
+  };
 }
 
 async function* parseSSEStream(body: ReadableStream<Uint8Array>): AsyncIterable<string> {

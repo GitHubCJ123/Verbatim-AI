@@ -78,6 +78,10 @@ interface RemoteMode {
   position: number;
   created_at: string;
   updated_at: string;
+  transcribe_provider: "cloud" | "local-whisper" | null;
+  whisper_tier: "tiny" | "base" | "small" | "turbo" | "large-v3" | null;
+  cleanup_provider: "cloud" | "local-ollama" | null;
+  ollama_model: string | null;
 }
 
 function rowToMode(r: RemoteMode): Mode {
@@ -98,6 +102,10 @@ function rowToMode(r: RemoteMode): Mode {
     position: r.position,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
+    transcribeProviderOverride: r.transcribe_provider ?? null,
+    whisperTierOverride: r.whisper_tier ?? null,
+    cleanupProviderOverride: r.cleanup_provider ?? null,
+    ollamaModelOverride: r.ollama_model ?? null,
   };
 }
 
@@ -120,6 +128,10 @@ function modeToRow(m: Mode, userId: string): RemoteMode {
     position: m.position,
     created_at: m.createdAt,
     updated_at: m.updatedAt,
+    transcribe_provider: m.transcribeProviderOverride,
+    whisper_tier: m.whisperTierOverride,
+    cleanup_provider: m.cleanupProviderOverride,
+    ollama_model: m.ollamaModelOverride,
   };
 }
 
@@ -232,6 +244,10 @@ export const useModes = create<ModesState>((set, get) => ({
       position: get().modes.length,
       createdAt: now,
       updatedAt: now,
+      transcribeProviderOverride: input.transcribeProviderOverride ?? null,
+      whisperTierOverride: input.whisperTierOverride ?? null,
+      cleanupProviderOverride: input.cleanupProviderOverride ?? null,
+      ollamaModelOverride: input.ollamaModelOverride ?? null,
     };
     if (isLocalMode()) {
       const next = [...get().modes, mode];

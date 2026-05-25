@@ -27,6 +27,10 @@ export function buildBuiltinModes(): Mode[] {
     language: "auto",
     createdAt: now,
     updatedAt: now,
+    transcribeProviderOverride: null,
+    whisperTierOverride: null,
+    cleanupProviderOverride: null,
+    ollamaModelOverride: null,
   } as const;
 
   return [

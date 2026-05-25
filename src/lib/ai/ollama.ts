@@ -223,24 +223,33 @@ export async function listOllamaModels(host?: string): Promise<OllamaModelInfo[]
   }));
 }
 
-export async function pingOllama(host?: string): Promise<boolean> {
+export type PingResult =
+  | { kind: "ok" }
+  | { kind: "forbidden"; status: number } // 403 etc. — origin block
+  | { kind: "http-error"; status: number }
+  | { kind: "unreachable"; message: string };
+
+export async function pingOllama(host?: string): Promise<PingResult> {
   const url = `${normalizeHost(host)}/api/tags`;
   console.info(`[ollama:ping] GET ${url}`);
   try {
     const res = await fetch(url, { method: "GET" });
     console.info(`[ollama:ping] ${url} -> HTTP ${res.status} ${res.statusText}`);
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      console.warn(`[ollama:ping] body (first 200): ${body.slice(0, 200)}`);
-    }
-    return res.ok;
+    if (res.ok) return { kind: "ok" };
+    if (res.status === 403) return { kind: "forbidden", status: res.status };
+    const body = await res.text().catch(() => "");
+    console.warn(`[ollama:ping] body (first 200): ${body.slice(0, 200)}`);
+    return { kind: "http-error", status: res.status };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    const stack = e instanceof Error ? e.stack : "";
     console.error(`[ollama:ping] fetch threw: ${msg}`);
-    if (stack) console.error(`[ollama:ping] stack: ${stack.split("\n").slice(0, 5).join(" | ")}`);
-    return false;
+    return { kind: "unreachable", message: msg };
   }
+}
+
+/** Backwards-compatible boolean wrapper. */
+export async function isOllamaReachable(host?: string): Promise<boolean> {
+  return (await pingOllama(host)).kind === "ok";
 }
 
 export interface PullProgress {

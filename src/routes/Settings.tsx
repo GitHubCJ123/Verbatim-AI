@@ -47,6 +47,7 @@ import {
   type CleanupProviderKind,
   type OllamaModelInfo,
   type SuggestedModel,
+  type PingResult,
 } from "../lib/ai";
 import { useTheme, type Theme } from "../lib/theme";
 import { osName, clipboardHistoryHint } from "../lib/os";
@@ -147,6 +148,27 @@ function HistoryDisabledSwitch() {
         setOff(!v);
       }}
     />
+  );
+}
+
+function VersionRow() {
+  const [version, setVersion] = useState<string>("");
+  useEffect(() => {
+    void (async () => {
+      try {
+        const { getVersion } = await import("@tauri-apps/api/app");
+        setVersion(await getVersion());
+      } catch {
+        setVersion("(unknown)");
+      }
+    })();
+  }, []);
+  return (
+    <SettingRow title="Version" description="The version of Verbatim AI currently running.">
+      <span className="rounded bg-bg-elevated px-2 py-1 font-mono text-xs text-text-secondary">
+        {version || "…"}
+      </span>
+    </SettingRow>
   );
 }
 
@@ -319,6 +341,7 @@ export default function Settings() {
               <SettingRow title="Theme" description={`Match ${osName()} or pick light/dark.`}>
                 <ThemeSelect />
               </SettingRow>
+              <VersionRow />
               <UpdateSettingRow />
             </CardContent>
           </Card>
@@ -743,15 +766,16 @@ function CleanupSection() {
   const [host, setHostState] = useState<string>(getOllamaHost());
   const [model, setModelState] = useState<string>(getOllamaModel());
   const [models, setModels] = useState<OllamaModelInfo[]>([]);
-  const [reachable, setReachable] = useState<boolean | null>(null);
+  const [ping, setPing] = useState<PingResult | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const reachable = ping?.kind === "ok";
 
   const refresh = async () => {
     setRefreshing(true);
     try {
-      const ok = await pingOllama(host);
-      setReachable(ok);
-      if (ok) {
+      const p = await pingOllama(host);
+      setPing(p);
+      if (p.kind === "ok") {
         const list = await listOllamaModels(host);
         setModels(list);
         // If the saved model isn't present, clear it so we don't silently use
@@ -764,7 +788,7 @@ function CleanupSection() {
         setModels([]);
       }
     } catch (e) {
-      setReachable(false);
+      setPing({ kind: "unreachable", message: e instanceof Error ? e.message : String(e) });
       setModels([]);
       toast.error("Couldn't talk to Ollama", {
         description: e instanceof Error ? e.message : String(e),
@@ -827,11 +851,15 @@ function CleanupSection() {
               title="Status"
               description="Whether Ollama is currently reachable at the configured host."
             >
-              {reachable === null ? (
+              {ping === null ? (
                 <span className="text-xs text-text-muted">—</span>
-              ) : reachable ? (
+              ) : ping.kind === "ok" ? (
                 <span className="inline-flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
                   <CheckCircle2 className="h-3.5 w-3.5" /> Connected
+                </span>
+              ) : ping.kind === "forbidden" ? (
+                <span className="inline-flex items-center gap-1 text-xs text-danger">
+                  Blocked (403)
                 </span>
               ) : (
                 <span className="inline-flex items-center gap-1 text-xs text-danger">
@@ -891,7 +919,19 @@ function CleanupSection() {
               )}
             </SettingRow>
 
-            {reachable === false && (
+            {ping?.kind === "forbidden" && (
+              <div className="mt-3 rounded-md border border-danger/30 bg-danger/5 p-3 text-xs text-text-secondary">
+                <div className="mb-1 font-medium text-danger">Ollama is rejecting requests from this app (HTTP 403).</div>
+                Ollama only allows requests from specific origins. Add Verbatim AI to the allowlist:
+                <ol className="mt-2 list-decimal space-y-1 pl-5">
+                  <li>Quit Ollama from the system tray.</li>
+                  <li>Open a terminal and run: <code className="text-text-primary">setx OLLAMA_ORIGINS "*"</code> (on macOS/Linux: <code className="text-text-primary">launchctl setenv OLLAMA_ORIGINS "*"</code>).</li>
+                  <li>Start Ollama again, then click the refresh icon.</li>
+                </ol>
+              </div>
+            )}
+
+            {ping?.kind === "unreachable" && (
               <div className="mt-3 rounded-md border border-border-subtle bg-bg-elevated/40 p-3 text-xs text-text-muted">
                 Couldn't reach Ollama at <code className="text-text-primary">{host}</code>.
                 Make sure it's installed and running. On {osName()} it should auto-start after install.

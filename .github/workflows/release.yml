@@ -215,6 +215,15 @@ jobs:
           version="${VERSION#v}"
           pub_date=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
           mkdir -p _updater
+
+          echo "=== bundle dirs ==="
+          find src-tauri/target -type d -name "bundle" 2>/dev/null || true
+          echo "=== nsis contents (windows only) ==="
+          ls -la src-tauri/target/release/bundle/nsis 2>/dev/null || echo "(no nsis dir)"
+          echo "=== macos contents (mac only) ==="
+          ls -la src-tauri/target/aarch64-apple-darwin/release/bundle/macos 2>/dev/null || echo "(no aarch64 dir)"
+          ls -la src-tauri/target/release/bundle/macos 2>/dev/null || echo "(no host-arch macos dir)"
+
           if [ -d "src-tauri/target/release/bundle/nsis" ]; then
             # Windows: updater consumes the `.nsis.zip`, not the raw
             # `.exe`. Tauri's updater downloads the zip, extracts it,

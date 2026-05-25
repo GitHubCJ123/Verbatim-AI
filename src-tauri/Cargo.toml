@@ -1,6 +1,6 @@
 [package]
 name = "verbatim-ai"
-version = "0.3.2"
+version = "0.3.3"
 description = "Verbatim AI — voice transcription for Windows"
 authors = ["Verbatim AI contributors"]
 edition = "2021"

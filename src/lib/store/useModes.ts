@@ -78,7 +78,7 @@ interface RemoteMode {
   position: number;
   created_at: string;
   updated_at: string;
-  transcribe_provider: "cloud" | "local-whisper" | null;
+  transcribe_provider: "cloud" | "local-whisper" | "local-parakeet" | null;
   whisper_tier: "tiny" | "base" | "small" | "turbo" | "large-v3" | null;
   cleanup_provider: "cloud" | "local-ollama" | null;
   ollama_model: string | null;

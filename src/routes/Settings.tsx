@@ -49,6 +49,14 @@ import {
   type OllamaModelInfo,
   type SuggestedModel,
   type PingResult,
+  PARAKEET_LANGUAGES,
+  getParakeetLanguage,
+  setParakeetLanguage,
+  isParakeetRuntimeInstalled,
+  installParakeetRuntime,
+  isParakeetModelInstalled,
+  downloadParakeetModel,
+  deleteParakeetModel,
 } from "../lib/ai";
 import { useTheme, type Theme } from "../lib/theme";
 import { osName, clipboardHistoryHint } from "../lib/os";
@@ -610,6 +618,7 @@ function ModelTab() {
               <SelectContent>
                 <SelectItem value="cloud">Cloud (Azure Whisper)</SelectItem>
                 <SelectItem value="local-whisper">Local Whisper</SelectItem>
+                <SelectItem value="local-parakeet">Parakeet TDT v3 (NVIDIA)</SelectItem>
               </SelectContent>
             </Select>
           </SettingRow>
@@ -748,6 +757,8 @@ function ModelTab() {
         </Card>
       )}
 
+      {kind === "local-parakeet" && <ParakeetSection />}
+
       <CleanupSection />
     </div>
   );
@@ -761,6 +772,222 @@ function formatBytes(b: number): string {
   if (b >= 1024 * 1024 * 1024) return `${(b / 1024 / 1024 / 1024).toFixed(1)} GB`;
   if (b >= 1024 * 1024) return `${(b / 1024 / 1024).toFixed(0)} MB`;
   return `${b} B`;
+}
+
+// --------------------------------------------------------------------------
+// Parakeet TDT v3 section (on-device, multilingual, sherpa-onnx)
+// --------------------------------------------------------------------------
+
+function ParakeetSection() {
+  const [runtimeInstalled, setRuntimeInstalled] = useState<boolean>(false);
+  const [modelInstalled, setModelInstalled] = useState<boolean>(false);
+  const [modelSize, setModelSize] = useState<number>(0);
+  const [installingRuntime, setInstallingRuntime] =
+    useState<{ downloaded: number; total: number } | null>(null);
+  const [downloading, setDownloading] =
+    useState<{ downloaded: number; total: number } | null>(null);
+  const [language, setLanguageState] = useState<string>(getParakeetLanguage());
+
+  const refresh = async () => {
+    try {
+      const [rt, model] = await Promise.all([
+        isParakeetRuntimeInstalled(),
+        isParakeetModelInstalled(),
+      ]);
+      setRuntimeInstalled(rt);
+      setModelInstalled(model.installed);
+      setModelSize(model.sizeBytes);
+    } catch (e) {
+      toast.error("Couldn't read Parakeet state", {
+        description: e instanceof Error ? e.message : String(e),
+      });
+    }
+  };
+
+  useEffect(() => {
+    void refresh();
+  }, []);
+
+  useEffect(() => {
+    const offRtProg = listen<{ downloaded: number; total: number }>(
+      "parakeet:runtime:progress",
+      (e) => setInstallingRuntime({ downloaded: e.payload.downloaded, total: e.payload.total }),
+    );
+    const offRtDone = listen<string>("parakeet:runtime:complete", () => {
+      setInstallingRuntime(null);
+      void refresh();
+    });
+    const offDlProg = listen<{ downloaded: number; total: number }>(
+      "parakeet:download:progress",
+      (e) => setDownloading({ downloaded: e.payload.downloaded, total: e.payload.total }),
+    );
+    const offDlDone = listen<string>("parakeet:download:complete", () => {
+      setDownloading(null);
+      void refresh();
+    });
+    return () => {
+      void offRtProg.then((fn) => fn());
+      void offRtDone.then((fn) => fn());
+      void offDlProg.then((fn) => fn());
+      void offDlDone.then((fn) => fn());
+    };
+  }, []);
+
+  const handleInstallRuntime = async () => {
+    setInstallingRuntime({ downloaded: 0, total: 0 });
+    try {
+      await installParakeetRuntime();
+      toast.success("Sherpa-onnx runtime installed");
+    } catch (e) {
+      toast.error("Couldn't install runtime", {
+        description: e instanceof Error ? e.message : String(e),
+      });
+      setInstallingRuntime(null);
+    }
+  };
+
+  const handleDownloadModel = async () => {
+    setDownloading({ downloaded: 0, total: 0 });
+    try {
+      await downloadParakeetModel();
+      toast.success("Parakeet v3 model downloaded");
+    } catch (e) {
+      toast.error("Download failed", {
+        description: e instanceof Error ? e.message : String(e),
+      });
+      setDownloading(null);
+    }
+  };
+
+  const handleDeleteModel = async () => {
+    try {
+      await deleteParakeetModel();
+      toast.success("Parakeet model removed");
+      void refresh();
+    } catch (e) {
+      toast.error("Couldn't remove model", {
+        description: e instanceof Error ? e.message : String(e),
+      });
+    }
+  };
+
+  const handleLanguageChange = (code: string) => {
+    setParakeetLanguage(code);
+    setLanguageState(code);
+  };
+
+  const rtPct =
+    installingRuntime && installingRuntime.total > 0
+      ? Math.round((installingRuntime.downloaded / installingRuntime.total) * 100)
+      : undefined;
+  const dlPct =
+    downloading && downloading.total > 0
+      ? Math.round((downloading.downloaded / downloading.total) * 100)
+      : undefined;
+
+  return (
+    <Card>
+      <CardContent className="p-5 pt-5">
+        <div className="mb-3 text-sm font-medium">Parakeet TDT v3 (NVIDIA)</div>
+        <div className="mb-4 text-xs text-text-muted">
+          On-device multilingual transcription via the sherpa-onnx runtime. 25 European languages including English,
+          French, German, Spanish, Italian, Portuguese, Polish, Russian, Ukrainian. Runs on CPU — no GPU required.
+          Available on Windows x64 and Apple Silicon Macs.
+        </div>
+
+        {/* Runtime */}
+        <div className="mb-3 flex items-center justify-between rounded-md border border-border-subtle p-3">
+          <div className="flex flex-col gap-0.5">
+            <div className="text-sm">
+              Runtime: {runtimeInstalled ? (
+                <span className="inline-flex items-center gap-1 text-green-600 dark:text-green-400">
+                  <CheckCircle2 className="h-4 w-4" /> Installed
+                </span>
+              ) : (
+                <span className="text-text-muted">Not installed</span>
+              )}
+            </div>
+            <div className="text-xs text-text-muted">sherpa-onnx v1.13.2 · CPU build (~50 MB)</div>
+          </div>
+          {runtimeInstalled ? (
+            <Button variant="ghost" size="sm" onClick={handleInstallRuntime} title="Reinstall">
+              Reinstall
+            </Button>
+          ) : installingRuntime ? (
+            <Button variant="secondary" size="sm" disabled>
+              <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+              {rtPct !== undefined ? `${rtPct}%` : "Starting…"}
+            </Button>
+          ) : (
+            <Button variant="primary" size="sm" onClick={handleInstallRuntime}>
+              <Download className="mr-1 h-4 w-4" /> Install runtime
+            </Button>
+          )}
+        </div>
+        {installingRuntime && rtPct !== undefined && (
+          <div className="pb-3"><ProgressBar value={rtPct} /></div>
+        )}
+
+        {/* Model */}
+        <div className="mb-3 flex items-center justify-between rounded-md border border-border-subtle p-3">
+          <div className="flex flex-col gap-0.5">
+            <div className="text-sm">
+              Model: {modelInstalled ? (
+                <span className="inline-flex items-center gap-1 text-green-600 dark:text-green-400">
+                  <CheckCircle2 className="h-4 w-4" /> Installed{modelSize > 0 ? ` · ${formatBytes(modelSize)}` : ""}
+                </span>
+              ) : (
+                <span className="text-text-muted">Not installed</span>
+              )}
+            </div>
+            <div className="text-xs text-text-muted">
+              parakeet-tdt-0.6b-v3 int8 · ~640 MB · 25 European languages
+            </div>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            {modelInstalled ? (
+              <Button variant="ghost" size="sm" onClick={handleDeleteModel} title="Remove model">
+                <Trash2 className="h-4 w-4" />
+              </Button>
+            ) : downloading ? (
+              <Button variant="secondary" size="sm" disabled>
+                <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+                {dlPct !== undefined ? `${dlPct}%` : "Starting…"}
+              </Button>
+            ) : (
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={handleDownloadModel}
+                disabled={!runtimeInstalled}
+                title={!runtimeInstalled ? "Install the runtime first" : undefined}
+              >
+                <Download className="mr-1 h-4 w-4" /> Download model
+              </Button>
+            )}
+          </div>
+        </div>
+        {downloading && dlPct !== undefined && (
+          <div className="pb-3"><ProgressBar value={dlPct} /></div>
+        )}
+
+        {/* Language */}
+        <SettingRow
+          title="Language"
+          description="Pick a specific language for best accuracy, or let the model auto-detect."
+        >
+          <Select value={language} onValueChange={handleLanguageChange}>
+            <SelectTrigger className="w-56"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {PARAKEET_LANGUAGES.map((l) => (
+                <SelectItem key={l.code} value={l.code}>{l.label}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </SettingRow>
+      </CardContent>
+    </Card>
+  );
 }
 
 function CleanupSection() {

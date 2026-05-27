@@ -9,7 +9,7 @@ export type OutputStyle = "paste" | "review";
 /** Override fields that let a Mode pin its own AI providers / models.
  * Null on any of these means "inherit the global setting from
  * Settings → AI model". When set, the Mode always wins over the global. */
-export type TranscribeProviderKind = "cloud" | "local-whisper";
+export type TranscribeProviderKind = "cloud" | "local-whisper" | "local-parakeet";
 export type WhisperTierKind = "tiny" | "base" | "small" | "turbo" | "large-v3";
 export type CleanupProviderKind = "cloud" | "local-ollama";
 

@@ -6,6 +6,7 @@
  * cleanup function for now (Phase 2: local LLM via Ollama/llama.cpp).
  */
 import { invoke } from "@tauri-apps/api/core";
+import { decodeToMonoF32_16k } from "./audioDecode";
 import type {
   AIProvider,
   CleanupInput,
@@ -100,12 +101,12 @@ export function installWhisperRuntime(): Promise<void> {
 const LS_AI_PROVIDER = "sw.ai.provider";
 const LS_LOCAL_WHISPER_TIER = "sw.ai.localWhisperTier";
 
-export type AiProviderKind = "cloud" | "local-whisper";
+export type AiProviderKind = "cloud" | "local-whisper" | "local-parakeet";
 
 export function getAiProviderKind(): AiProviderKind {
-  return localStorage.getItem(LS_AI_PROVIDER) === "local-whisper"
-    ? "local-whisper"
-    : "cloud";
+  const v = localStorage.getItem(LS_AI_PROVIDER);
+  if (v === "local-whisper" || v === "local-parakeet") return v;
+  return "cloud";
 }
 
 export function setAiProviderKind(v: AiProviderKind): void {
@@ -130,25 +131,7 @@ export function setLocalWhisperTier(v: WhisperTier): void {
 }
 
 // Decode arbitrary audio Blob → 16 kHz mono Float32 PCM.
-async function decodeToMonoF32_16k(blob: Blob): Promise<Float32Array> {
-  const arrayBuf = await blob.arrayBuffer();
-  const tmpCtx = new AudioContext();
-  let decoded: AudioBuffer;
-  try {
-    decoded = await tmpCtx.decodeAudioData(arrayBuf.slice(0));
-  } finally {
-    await tmpCtx.close();
-  }
-  const targetSampleRate = 16000;
-  const length = Math.max(1, Math.ceil(decoded.duration * targetSampleRate));
-  const off = new OfflineAudioContext(1, length, targetSampleRate);
-  const src = off.createBufferSource();
-  src.buffer = decoded;
-  src.connect(off.destination);
-  src.start(0);
-  const rendered = await off.startRendering();
-  return rendered.getChannelData(0).slice();
-}
+// (moved to ./audioDecode.ts so the Parakeet provider can reuse it)
 
 export interface LocalWhisperConfig {
   tier: WhisperTier;

@@ -24,10 +24,12 @@ import {
   getOllamaHost,
   getOllamaModel,
 } from "./ollama";
+import { ParakeetProvider, getParakeetLanguage } from "./parakeet";
 import type { Mode } from "../../types/mode";
 
 export * from "./localWhisper";
 export * from "./ollama";
+export * from "./parakeet";
 
 const TRANSCRIBE_TIMEOUT_MS = 10 * 60 * 1000; // 10 min — covers long recordings; whisper auto-chunks anyway.
 const CLEANUP_TIMEOUT_MS = 10 * 60 * 1000; // 10 min — long transcripts can stream for a while.
@@ -198,6 +200,8 @@ export class SupabaseAIProvider implements AIProvider {
 let cloudCache: SupabaseAIProvider | null = null;
 const localWhisperByTier = new Map<WhisperTier, LocalWhisperProvider>();
 const ollamaByKey = new Map<string, OllamaProvider>();
+let parakeetCache: ParakeetProvider | null = null;
+let parakeetCacheLang: string | null = null;
 
 function getCloud(): SupabaseAIProvider {
   if (!cloudCache) cloudCache = new SupabaseAIProvider();
@@ -207,6 +211,17 @@ function getCloud(): SupabaseAIProvider {
 function transcribeProvider(mode?: Mode | null): AIProvider {
   const kind = mode?.transcribeProviderOverride ?? getAiProviderKind();
   if (kind === "cloud") return getCloud();
+  if (kind === "local-parakeet") {
+    const language = getParakeetLanguage();
+    if (!parakeetCache || parakeetCacheLang !== language) {
+      parakeetCache = new ParakeetProvider({
+        language,
+        cleanupFallback: getCloud(),
+      });
+      parakeetCacheLang = language;
+    }
+    return parakeetCache;
+  }
   const tier = (mode?.whisperTierOverride ?? getLocalWhisperTier()) as WhisperTier;
   let p = localWhisperByTier.get(tier);
   if (!p) {

@@ -9,6 +9,10 @@ use commands::{
         delete_local_model, download_local_model, install_whisper_runtime,
         is_whisper_runtime_installed, list_local_models, transcribe_local,
     },
+    parakeet::{
+        delete_parakeet_model, download_parakeet_model, install_parakeet_runtime,
+        is_parakeet_model_installed, is_parakeet_runtime_installed, transcribe_parakeet,
+    },
     paste::{capture_target_window, clear_target_window, paste_to_target, TargetWindowState},
     process_list::list_running_apps,
     relay::relay_event,
@@ -67,6 +71,12 @@ pub fn run() {
             transcribe_local,
             is_whisper_runtime_installed,
             install_whisper_runtime,
+            is_parakeet_runtime_installed,
+            install_parakeet_runtime,
+            is_parakeet_model_installed,
+            download_parakeet_model,
+            delete_parakeet_model,
+            transcribe_parakeet,
             open_devtools,
             open_main_devtools,
         ])

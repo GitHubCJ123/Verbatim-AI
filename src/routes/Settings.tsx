@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { listen } from "@tauri-apps/api/event";
 import { Download, Trash2, CheckCircle2, Loader2, RefreshCw, ExternalLink } from "lucide-react";
 import { toast } from "../components/ui/Toast";
@@ -271,6 +272,7 @@ function UpdateSettingRow() {
 }
 
 export default function Settings() {
+  const navigate = useNavigate();
   const [hotkey, setHotkey] = useState(() => loadHotkeyConfig());
   const [autostart, setAutostartState] = useState(false);
   const [notifyOnSuccess, setNotifyState] = useState(() => loadPreferences().notifyOnSuccess);
@@ -455,7 +457,7 @@ export default function Settings() {
                   size="sm"
                   onClick={() => {
                     useOnboarding.getState().reset();
-                    window.location.reload();
+                    navigate("/onboarding", { replace: true });
                   }}
                 >
                   Restart

@@ -15,6 +15,18 @@ import {
   AlertTriangle,
   Sparkles,
   Loader2,
+  Mail,
+  MessageSquare,
+  Code as CodeIcon,
+  NotebookPen,
+  Languages,
+  BookText,
+  History as HistoryIcon,
+  Bell,
+  Palette,
+  Power,
+  Plus,
+  X,
 } from "lucide-react";
 import { Button } from "../../components/ui/Button";
 import { Input } from "../../components/ui/Input";
@@ -22,6 +34,13 @@ import { Kbd } from "../../components/ui/Kbd";
 import { Switch } from "../../components/ui/Switch";
 import { Badge } from "../../components/ui/Badge";
 import { Card, CardContent } from "../../components/ui/Card";
+import {
+  Select,
+  SelectTrigger,
+  SelectValue,
+  SelectContent,
+  SelectItem,
+} from "../../components/ui/Select";
 import { HotkeyRecorder } from "../../components/settings/HotkeyRecorder";
 import {
   applyOnboarding,
@@ -36,18 +55,35 @@ import { cn } from "../../lib/utils";
 import { useAuth } from "../../lib/store/useAuth";
 import { isLocalMode } from "../../lib/appMode";
 import { toast } from "../../components/ui/Toast";
+import { useVocabulary } from "../../lib/store/useModes";
+import {
+  loadOverlayPosition,
+  setOverlayPosition,
+  type OverlayPosition,
+  isHistoryDisabled,
+  setHistoryDisabled,
+  setNotifyOnSuccess,
+  loadPreferences,
+  isAutostartEnabled,
+  setAutostart,
+} from "../../lib/preferences";
+import { useTheme, type Theme } from "../../lib/theme";
 
-const TOTAL_STEPS = 8;
+const TOTAL_STEPS = 12;
 
 const HUE_PER_STEP = [
-  "168, 85, 247",   // violet
-  "34, 211, 238",   // cyan
-  "52, 211, 153",   // emerald
-  "251, 191, 36",   // amber
-  "244, 114, 182",  // pink
-  "139, 92, 246",   // indigo
-  "59, 130, 246",   // blue
-  "16, 185, 129",   // green
+  "168, 85, 247",   // 0 welcome — violet
+  "34, 211, 238",   // 1 mic — cyan
+  "52, 211, 153",   // 2 sign-in — emerald
+  "217, 70, 239",   // 3 modes — fuchsia
+  "251, 191, 36",   // 4 hotkey — amber
+  "244, 114, 182",  // 5 apps pick — pink
+  "139, 92, 246",   // 6 tones — indigo
+  "234, 179, 8",    // 7 vocab — yellow
+  "59, 130, 246",   // 8 history — blue
+  "168, 162, 158",  // 9 prefs — stone
+  "236, 72, 153",   // 10 generate — rose
+  "16, 185, 129",   // 11 done — green
 ];
 
 export default function Onboarding() {
@@ -106,11 +142,15 @@ function StepBody({ step }: { step: number }) {
     case 0: return <Welcome />;
     case 1: return <Permissions />;
     case 2: return <SignInStep />;
-    case 3: return <HotkeyStep />;
-    case 4: return <AppsPick />;
-    case 5: return <ToneEach />;
-    case 6: return <Generate />;
-    case 7: return <TestRecording />;
+    case 3: return <ModesIntro />;
+    case 4: return <HotkeyStep />;
+    case 5: return <AppsPick />;
+    case 6: return <ToneEach />;
+    case 7: return <VocabStep />;
+    case 8: return <HistoryStep />;
+    case 9: return <PreferencesStep />;
+    case 10: return <Generate />;
+    case 11: return <TestRecording />;
     default: return null;
   }
 }
@@ -347,11 +387,13 @@ function HotkeyStep() {
   const ptt = useOnboarding((s) => s.pushToTalk);
   const setHotkeyState = useOnboarding((s) => s.setHotkey);
   const setPushToTalk = useOnboarding((s) => s.setPushToTalk);
+  const [pos, setPos] = useState<OverlayPosition>(loadOverlayPosition());
 
   const commit = async () => {
     try {
       await applyHotkey(hotkey);
       saveHotkeyConfig({ spec: hotkey, pushToTalk: ptt });
+      setOverlayPosition(pos);
       next();
     } catch (e) {
       toast.error("Couldn't register that shortcut", {
@@ -381,6 +423,23 @@ function HotkeyStep() {
               <div className="text-xs text-text-muted">Hold to record. Off = tap to toggle.</div>
             </div>
             <Switch checked={ptt} onCheckedChange={setPushToTalk} />
+          </div>
+          <div className="flex items-center justify-between rounded-md border border-border-subtle bg-bg-elevated px-4 py-3">
+            <div>
+              <div className="text-sm font-medium">Recording pill position</div>
+              <div className="text-xs text-text-muted">Where the little overlay sits while you talk.</div>
+            </div>
+            <Select value={pos} onValueChange={(v) => setPos(v as OverlayPosition)}>
+              <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="bottom-center">Bottom center</SelectItem>
+                <SelectItem value="top-center">Top center</SelectItem>
+                <SelectItem value="bottom-right">Bottom right</SelectItem>
+                <SelectItem value="top-right">Top right</SelectItem>
+                <SelectItem value="bottom-left">Bottom left</SelectItem>
+                <SelectItem value="top-left">Top left</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
         </CardContent>
       </Card>
@@ -437,6 +496,9 @@ function AppsPick() {
           );
         })}
       </div>
+      <p className="mt-3 text-center text-xs text-text-muted">
+        Don't see one? Add any app later from the Apps page.
+      </p>
       <NavRow
         onBack={back}
         onPrimary={next}
@@ -622,6 +684,324 @@ function TestRecording() {
           navigate("/", { replace: true });
         }}
       />
+    </div>
+  );
+}
+
+// ─── Step: Modes intro ───────────────────────────────────────────────────
+
+const DEFAULT_MODES: Array<{ name: string; description: string; Icon: typeof Mail }> = [
+  { name: "Default", description: "Universal cleanup — fixes grammar, removes fillers, keeps your voice.", Icon: Sparkles },
+  { name: "Formal Email", description: "Professional tone, greeting, sign-off, full sentences.", Icon: Mail },
+  { name: "Slack Message", description: "Casual, contractions OK, light emoji where it fits.", Icon: MessageSquare },
+  { name: "Code Comment", description: "Concise, imperative mood, no fluff.", Icon: CodeIcon },
+  { name: "Notes", description: "Bullet-friendly brain-dumps, all facts preserved.", Icon: NotebookPen },
+  { name: "Translate → English", description: "Speak any language, get clean English back.", Icon: Languages },
+];
+
+function ModesIntro() {
+  const back = useOnboarding((s) => s.back);
+  const next = useOnboarding((s) => s.next);
+  return (
+    <div>
+      <StepHeading
+        title="Meet Modes"
+        subtitle="A Mode is a recipe for turning your raw speech into polished text. Pick one and Verbatim AI rewrites in that style — formal, casual, code, notes, anything."
+      />
+      <div className="mt-6 grid max-h-[380px] grid-cols-2 gap-2 overflow-y-auto pr-1">
+        {DEFAULT_MODES.map(({ name, description, Icon }) => (
+          <div
+            key={name}
+            className="flex items-start gap-3 rounded-md border border-border-subtle bg-bg-elevated px-3 py-3"
+          >
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-accent-solid/15 text-accent-solid">
+              <Icon className="h-4 w-4" />
+            </span>
+            <div className="min-w-0">
+              <div className="text-sm font-medium">{name}</div>
+              <div className="text-xs text-text-muted">{description}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+      <p className="mt-4 text-center text-xs text-text-muted">
+        You can edit these or build your own from the Modes page later.
+      </p>
+      <NavRow onBack={back} onPrimary={next} />
+    </div>
+  );
+}
+
+// ─── Step: Vocabulary ────────────────────────────────────────────────────
+
+const SUGGESTED_VOCAB: Array<{ term: string; replacement: string | null; notes: string }> = [
+  { term: "verbatim", replacement: "Verbatim AI", notes: "Product name" },
+  { term: "github", replacement: "GitHub", notes: "Casing" },
+  { term: "ios", replacement: "iOS", notes: "Casing" },
+  { term: "api", replacement: "API", notes: "Acronym" },
+  { term: "Kubernetes", replacement: null, notes: "Spelling only" },
+];
+
+function VocabStep() {
+  const back = useOnboarding((s) => s.back);
+  const next = useOnboarding((s) => s.next);
+  const terms = useVocabulary((s) => s.terms);
+  const add = useVocabulary((s) => s.add);
+  const remove = useVocabulary((s) => s.remove);
+  const [draft, setDraft] = useState({ term: "", replacement: "" });
+
+  const has = (term: string) =>
+    terms.some((t) => t.term.toLowerCase() === term.toLowerCase());
+
+  const addSuggested = async (s: typeof SUGGESTED_VOCAB[number]) => {
+    if (has(s.term)) return;
+    await add({ term: s.term, replacement: s.replacement, notes: s.notes });
+  };
+
+  const addDraft = async () => {
+    const t = draft.term.trim();
+    if (!t) return;
+    await add({ term: t, replacement: draft.replacement.trim() || null });
+    setDraft({ term: "", replacement: "" });
+  };
+
+  return (
+    <div>
+      <StepHeading
+        title="Vocabulary"
+        subtitle="Teach Verbatim AI words it keeps mishearing or words you want spelled a specific way — names, acronyms, brands. Leave the replacement blank to just lock in the spelling."
+      />
+      <Card className="mt-6">
+        <CardContent className="flex flex-col gap-3 p-4">
+          <div className="text-xs font-medium text-text-secondary">Quick adds</div>
+          <div className="flex flex-wrap gap-2">
+            {SUGGESTED_VOCAB.map((s) => {
+              const added = has(s.term);
+              return (
+                <button
+                  key={s.term}
+                  type="button"
+                  onClick={() => void addSuggested(s)}
+                  disabled={added}
+                  className={cn(
+                    "flex items-center gap-1.5 rounded-pill border px-3 py-1 text-xs transition-all",
+                    added
+                      ? "border-success/50 bg-success/10 text-success"
+                      : "border-border-subtle bg-bg-elevated text-text-secondary hover:border-accent-solid/60 hover:text-text-primary",
+                  )}
+                >
+                  {added ? <Check className="h-3 w-3" strokeWidth={3} /> : <Plus className="h-3 w-3" />}
+                  <span className="font-mono">{s.term}</span>
+                  {s.replacement ? (
+                    <>
+                      <span className="text-text-muted">→</span>
+                      <span className="font-mono">{s.replacement}</span>
+                    </>
+                  ) : (
+                    <span className="text-text-muted">(spelling)</span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </CardContent>
+      </Card>
+      <Card className="mt-3">
+        <CardContent className="flex flex-col gap-3 p-4">
+          <div className="text-xs font-medium text-text-secondary">Add your own</div>
+          <div className="flex items-center gap-2">
+            <Input
+              placeholder="Heard as…"
+              value={draft.term}
+              onChange={(e) => setDraft((d) => ({ ...d, term: e.target.value }))}
+              onKeyDown={(e) => e.key === "Enter" && void addDraft()}
+            />
+            <span className="text-text-muted">→</span>
+            <Input
+              placeholder="Replace with… (optional)"
+              value={draft.replacement}
+              onChange={(e) => setDraft((d) => ({ ...d, replacement: e.target.value }))}
+              onKeyDown={(e) => e.key === "Enter" && void addDraft()}
+            />
+            <Button variant="secondary" size="sm" onClick={() => void addDraft()} disabled={!draft.term.trim()}>
+              <Plus className="h-3.5 w-3.5" /> Add
+            </Button>
+          </div>
+          {terms.length > 0 && (
+            <div className="flex max-h-32 flex-wrap gap-1.5 overflow-y-auto pt-1">
+              {terms.map((t) => (
+                <span
+                  key={t.id}
+                  className="flex items-center gap-1 rounded-pill border border-border-subtle bg-bg-elevated px-2 py-0.5 text-[11px]"
+                >
+                  <span className="font-mono">{t.term}</span>
+                  {t.replacement && (
+                    <>
+                      <span className="text-text-muted">→</span>
+                      <span className="font-mono">{t.replacement}</span>
+                    </>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => void remove(t.id)}
+                    className="ml-0.5 text-text-muted hover:text-danger"
+                  >
+                    <X className="h-2.5 w-2.5" />
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+      <NavRow
+        onBack={back}
+        onPrimary={next}
+        secondaryLabel="Skip"
+        onSecondary={next}
+      />
+    </div>
+  );
+}
+
+// ─── Step: History ───────────────────────────────────────────────────────
+
+function HistoryStep() {
+  const back = useOnboarding((s) => s.back);
+  const next = useOnboarding((s) => s.next);
+  const [save, setSave] = useState(!isHistoryDisabled());
+
+  useEffect(() => {
+    setHistoryDisabled(!save);
+  }, [save]);
+
+  return (
+    <div>
+      <StepHeading
+        title="Transcript history"
+        subtitle="Every dictation is kept on the History page. Search past transcripts, copy them again, or re-run them through a different Mode."
+      />
+      <Card className="mt-6">
+        <CardContent className="flex items-start gap-3 p-5">
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-accent-solid/15 text-accent-solid">
+            <HistoryIcon className="h-4 w-4" />
+          </span>
+          <div className="text-xs leading-relaxed text-text-secondary">
+            Good for finding "that thing I dictated yesterday," reusing common
+            messages, or pasting an old transcript into a different app. We
+            never store the raw audio — only the cleaned-up text.
+          </div>
+        </CardContent>
+      </Card>
+      <Card className="mt-3">
+        <CardContent className="flex items-center justify-between p-5">
+          <div>
+            <div className="text-sm font-medium">Save transcript history</div>
+            <div className="text-xs text-text-muted">
+              Off = nothing is stored. You'll still see the result once, then it's gone.
+            </div>
+          </div>
+          <Switch checked={save} onCheckedChange={setSave} />
+        </CardContent>
+      </Card>
+      <NavRow onBack={back} onPrimary={next} />
+    </div>
+  );
+}
+
+// ─── Step: Preferences ──────────────────────────────────────────────────
+
+function PreferencesStep() {
+  const back = useOnboarding((s) => s.back);
+  const next = useOnboarding((s) => s.next);
+  const theme = useTheme((s) => s.theme);
+  const setTheme = useTheme((s) => s.set);
+  const [notify, setNotify] = useState(loadPreferences().notifyOnSuccess);
+  const [autostart, setAutostartState] = useState(false);
+
+  useEffect(() => {
+    void isAutostartEnabled().then(setAutostartState);
+  }, []);
+
+  useEffect(() => {
+    setNotifyOnSuccess(notify);
+  }, [notify]);
+
+  const toggleAutostart = async (v: boolean) => {
+    try {
+      await setAutostart(v);
+      setAutostartState(v);
+    } catch (e) {
+      toast.error("Couldn't change startup setting", {
+        description: e instanceof Error ? e.message : String(e),
+      });
+    }
+  };
+
+  return (
+    <div>
+      <StepHeading
+        title="A few preferences"
+        subtitle="You can change all of these later from Settings."
+      />
+      <Card className="mt-6">
+        <CardContent className="flex flex-col gap-1 p-2">
+          <PrefRow
+            Icon={Bell}
+            title="Transcription notifications"
+            description="Pop a desktop notification when a transcript is ready."
+          >
+            <Switch checked={notify} onCheckedChange={setNotify} />
+          </PrefRow>
+          <PrefRow
+            Icon={Power}
+            title="Launch at startup"
+            description={`Open Verbatim AI when ${osName()} boots so the hotkey is always live.`}
+          >
+            <Switch checked={autostart} onCheckedChange={(v) => void toggleAutostart(v)} />
+          </PrefRow>
+          <PrefRow
+            Icon={Palette}
+            title="Theme"
+            description="Match your system or pick a side."
+          >
+            <Select value={theme} onValueChange={(v) => setTheme(v as Theme)}>
+              <SelectTrigger className="w-32"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="dark">Dark</SelectItem>
+                <SelectItem value="light">Light</SelectItem>
+                <SelectItem value="system">Match system</SelectItem>
+              </SelectContent>
+            </Select>
+          </PrefRow>
+        </CardContent>
+      </Card>
+      <NavRow onBack={back} onPrimary={next} />
+    </div>
+  );
+}
+
+function PrefRow({
+  Icon,
+  title,
+  description,
+  children,
+}: {
+  Icon: typeof Bell;
+  title: string;
+  description: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="flex items-center gap-4 border-b border-border-subtle px-3 py-3 last:border-b-0">
+      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-bg-elevated text-text-secondary">
+        <Icon className="h-4 w-4" />
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="text-sm font-medium">{title}</div>
+        <div className="text-xs text-text-muted">{description}</div>
+      </div>
+      <div className="shrink-0">{children}</div>
     </div>
   );
 }

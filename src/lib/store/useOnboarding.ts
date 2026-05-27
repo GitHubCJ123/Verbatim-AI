@@ -93,7 +93,7 @@ for (const a of COMMON_APPS) {
   defaultTones[a.exe] = a.defaultTone;
 }
 
-const TOTAL_STEPS = 12;
+const TOTAL_STEPS = 13;
 
 export const useOnboarding = create<OnboardingState>((set, get) => {
   const initial = loadProgress();

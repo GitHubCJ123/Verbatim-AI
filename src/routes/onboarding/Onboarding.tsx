@@ -68,22 +68,54 @@ import {
   setAutostart,
 } from "../../lib/preferences";
 import { useTheme, type Theme } from "../../lib/theme";
+import {
+  getAiProviderKind,
+  setAiProviderKind,
+  getLocalWhisperTier,
+  setLocalWhisperTier,
+  listLocalModels,
+  downloadLocalModel,
+  isWhisperRuntimeInstalled,
+  installWhisperRuntime,
+  WHISPER_TIERS,
+  type AiProviderKind,
+  type LocalModelInfo,
+  type WhisperTier,
+  getCleanupProviderKind,
+  setCleanupProviderKind,
+  type CleanupProviderKind,
+  getOllamaHost,
+  setOllamaHost,
+  getOllamaModel,
+  setOllamaModel,
+  listOllamaModels,
+  pingOllama,
+  type OllamaModelInfo,
+  isParakeetRuntimeInstalled,
+  installParakeetRuntime,
+  isParakeetModelInstalled,
+  downloadParakeetModel,
+} from "../../lib/ai";
+import { listen } from "@tauri-apps/api/event";
+import { Cloud, Cpu, ShieldCheck, Download, CheckCircle2, Wand2, ExternalLink, MessageCircle, Smile, GraduationCap, List, Hash, Briefcase, ClipboardList } from "lucide-react";
+import { ProgressBar } from "../../components/ui/ProgressBar";
 
-const TOTAL_STEPS = 12;
+const TOTAL_STEPS = 13;
 
 const HUE_PER_STEP = [
-  "168, 85, 247",   // 0 welcome — violet
-  "34, 211, 238",   // 1 mic — cyan
-  "52, 211, 153",   // 2 sign-in — emerald
-  "217, 70, 239",   // 3 modes — fuchsia
-  "251, 191, 36",   // 4 hotkey — amber
-  "244, 114, 182",  // 5 apps pick — pink
-  "139, 92, 246",   // 6 tones — indigo
-  "234, 179, 8",    // 7 vocab — yellow
-  "59, 130, 246",   // 8 history — blue
-  "168, 162, 158",  // 9 prefs — stone
-  "236, 72, 153",   // 10 generate — rose
-  "16, 185, 129",   // 11 done — green
+  "168, 85, 247",   // 0 welcome
+  "34, 211, 238",   // 1 mic
+  "52, 211, 153",   // 2 sign-in
+  "56, 189, 248",   // 3 AI model — sky
+  "217, 70, 239",   // 4 modes — fuchsia
+  "251, 191, 36",   // 5 hotkey — amber
+  "244, 114, 182",  // 6 apps pick — pink
+  "139, 92, 246",   // 7 tones — indigo
+  "234, 179, 8",    // 8 vocab — yellow
+  "59, 130, 246",   // 9 history — blue
+  "168, 162, 158",  // 10 prefs — stone
+  "236, 72, 153",   // 11 generate — rose
+  "16, 185, 129",   // 12 done — green
 ];
 
 export default function Onboarding() {
@@ -98,7 +130,7 @@ export default function Onboarding() {
       }}
     >
       <ProgressDots />
-      <div className="relative flex w-full flex-1 items-center justify-center">
+      <div className="relative flex w-full flex-1 justify-center overflow-y-auto">
         <AnimatePresence mode="wait">
           <motion.div
             key={step}
@@ -106,7 +138,7 @@ export default function Onboarding() {
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -12 }}
             transition={{ duration: 0.25, ease: [0.4, 0, 0.2, 1] }}
-            className="mx-auto w-full max-w-2xl px-8"
+            className="mx-auto my-auto w-full max-w-3xl px-8 py-10"
           >
             <StepBody step={step} />
           </motion.div>
@@ -142,15 +174,16 @@ function StepBody({ step }: { step: number }) {
     case 0: return <Welcome />;
     case 1: return <Permissions />;
     case 2: return <SignInStep />;
-    case 3: return <ModesIntro />;
-    case 4: return <HotkeyStep />;
-    case 5: return <AppsPick />;
-    case 6: return <ToneEach />;
-    case 7: return <VocabStep />;
-    case 8: return <HistoryStep />;
-    case 9: return <PreferencesStep />;
-    case 10: return <Generate />;
-    case 11: return <TestRecording />;
+    case 3: return <AIStep />;
+    case 4: return <ModesIntro />;
+    case 5: return <HotkeyStep />;
+    case 6: return <AppsPick />;
+    case 7: return <ToneEach />;
+    case 8: return <VocabStep />;
+    case 9: return <HistoryStep />;
+    case 10: return <PreferencesStep />;
+    case 11: return <Generate />;
+    case 12: return <TestRecording />;
     default: return null;
   }
 }
@@ -688,14 +721,640 @@ function TestRecording() {
   );
 }
 
+// ─── Step: AI model ──────────────────────────────────────────────────────
+
+interface ProviderOption {
+  kind: AiProviderKind;
+  title: string;
+  subtitle: string;
+  Icon: typeof Cloud;
+  bullets: string[];
+}
+
+const PROVIDER_OPTIONS: ProviderOption[] = [
+  {
+    kind: "cloud",
+    title: "Cloud (recommended)",
+    subtitle: "Azure Whisper · zero setup",
+    Icon: Cloud,
+    bullets: [
+      "Fast, accurate, no download",
+      "Audio is processed then immediately discarded",
+      "Needs internet",
+    ],
+  },
+  {
+    kind: "local-whisper",
+    title: "Local Whisper",
+    subtitle: "On-device · whisper.cpp",
+    Icon: Cpu,
+    bullets: [
+      "Audio never leaves your machine",
+      "Works fully offline once downloaded",
+      "Quality scales with model size and your CPU/GPU",
+    ],
+  },
+  {
+    kind: "local-parakeet",
+    title: "Parakeet TDT v3",
+    subtitle: "On-device · NVIDIA · multilingual",
+    Icon: Cpu,
+    bullets: [
+      "Audio never leaves your machine",
+      "Excellent multilingual accuracy",
+      "Best on a recent NVIDIA GPU",
+    ],
+  },
+];
+
+function AIStep() {
+  const back = useOnboarding((s) => s.back);
+  const next = useOnboarding((s) => s.next);
+  const [kind, setKind] = useState<AiProviderKind>(getAiProviderKind());
+  const [cleanup, setCleanup] = useState<CleanupProviderKind>(getCleanupProviderKind());
+
+  const choose = (k: AiProviderKind) => {
+    setAiProviderKind(k);
+    setKind(k);
+  };
+
+  const chooseCleanup = (k: CleanupProviderKind) => {
+    setCleanupProviderKind(k);
+    setCleanup(k);
+  };
+
+  return (
+    <div>
+      <StepHeading
+        title="Pick your AI"
+        subtitle="Verbatim AI uses two models: one to transcribe your speech, one to polish the text. Both can run in the cloud or fully on this machine."
+      />
+      <Card className="mt-6">
+        <CardContent className="flex items-start gap-3 p-4">
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-accent-solid/15 text-accent-solid">
+            <ShieldCheck className="h-4 w-4" />
+          </span>
+          <div className="text-xs leading-relaxed text-text-secondary">
+            <span className="font-medium text-text-primary">Privacy:</span> cloud
+            mode sends audio to our Azure endpoint just long enough to transcribe
+            — we never store the raw recording. Local mode keeps everything on
+            your computer, even when you're offline.
+          </div>
+        </CardContent>
+      </Card>
+
+      <div className="mt-4 text-xs font-medium uppercase tracking-wide text-text-muted">
+        Transcription
+      </div>
+      <div className="mt-2 flex flex-col gap-2">
+        {PROVIDER_OPTIONS.map((opt) => {
+          const selected = kind === opt.kind;
+          return (
+            <button
+              key={opt.kind}
+              type="button"
+              onClick={() => choose(opt.kind)}
+              className={cn(
+                "flex items-start gap-3 rounded-md border px-4 py-3 text-left transition-all",
+                selected
+                  ? "border-accent-solid/60 bg-accent-solid/10"
+                  : "border-border-subtle bg-bg-elevated hover:border-border-strong",
+              )}
+            >
+              <span
+                className={cn(
+                  "flex h-9 w-9 shrink-0 items-center justify-center rounded-md",
+                  selected ? "bg-accent-solid/20 text-accent-solid" : "bg-bg-base text-text-secondary",
+                )}
+              >
+                <opt.Icon className="h-4 w-4" />
+              </span>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  <div className="text-sm font-medium">{opt.title}</div>
+                  <div className="text-[11px] text-text-muted">{opt.subtitle}</div>
+                </div>
+                <ul className="mt-1 flex flex-col gap-0.5 text-[11px] text-text-muted">
+                  {opt.bullets.map((b) => (
+                    <li key={b}>• {b}</li>
+                  ))}
+                </ul>
+              </div>
+              <span
+                className={cn(
+                  "mt-1 flex h-4 w-4 shrink-0 items-center justify-center rounded-pill border",
+                  selected ? "border-transparent bg-accent-solid text-white" : "border-border-strong",
+                )}
+              >
+                {selected && <Check className="h-3 w-3" strokeWidth={3} />}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
+      {kind === "local-whisper" && <LocalWhisperInstaller />}
+      {kind === "local-parakeet" && <LocalParakeetInstaller />}
+
+      <div className="mt-5 text-xs font-medium uppercase tracking-wide text-text-muted">
+        Cleanup (tone polish)
+      </div>
+      <Card className="mt-2">
+        <CardContent className="flex items-start gap-3 p-4">
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-accent-solid/15 text-accent-solid">
+            <Wand2 className="h-4 w-4" />
+          </span>
+          <div className="text-xs leading-relaxed text-text-secondary">
+            After transcription, a language model rewrites the raw text using
+            the active Mode — fixing grammar, removing fillers, and shaping the
+            tone. Cloud uses Azure GPT and is fastest. Local uses your own
+            Ollama install so the polish step also stays on your machine.
+          </div>
+        </CardContent>
+      </Card>
+      <Card className="mt-2">
+        <CardContent className="flex items-center justify-between gap-3 p-4">
+          <div className="min-w-0">
+            <div className="text-sm font-medium">Where polish runs</div>
+            <div className="text-xs text-text-muted">
+              {cleanup === "cloud"
+                ? "Azure GPT — fastest, no setup."
+                : "Local Ollama on this machine."}
+            </div>
+          </div>
+          <Select value={cleanup} onValueChange={(v) => chooseCleanup(v as CleanupProviderKind)}>
+            <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="cloud">Cloud (Azure)</SelectItem>
+              <SelectItem value="local-ollama">Local Ollama</SelectItem>
+            </SelectContent>
+          </Select>
+        </CardContent>
+      </Card>
+
+      {cleanup === "local-ollama" && <OllamaConfig />}
+
+      <NavRow onBack={back} onPrimary={next} />
+    </div>
+  );
+}
+
+function OllamaConfig() {
+  const [host, setHost] = useState(getOllamaHost());
+  const [model, setModel] = useState(getOllamaModel());
+  const [models, setModels] = useState<OllamaModelInfo[]>([]);
+  const [status, setStatus] = useState<"idle" | "ok" | "unreachable" | "forbidden" | "http-error">("idle");
+  const [checking, setChecking] = useState(false);
+
+  const check = async (h: string) => {
+    setChecking(true);
+    const ping = await pingOllama(h);
+    setStatus(ping.kind === "ok" ? "ok" : ping.kind);
+    if (ping.kind === "ok") {
+      try {
+        const m = await listOllamaModels(h);
+        setModels(m);
+        if (!model && m.length > 0) {
+          setModel(m[0].name);
+          setOllamaModel(m[0].name);
+        }
+      } catch {
+        /* ignore */
+      }
+    } else {
+      setModels([]);
+    }
+    setChecking(false);
+  };
+
+  useEffect(() => {
+    void check(host);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const commitHost = (v: string) => {
+    setHost(v);
+    setOllamaHost(v);
+  };
+
+  const commitModel = (v: string) => {
+    setModel(v);
+    setOllamaModel(v);
+  };
+
+  return (
+    <Card className="mt-2">
+      <CardContent className="flex flex-col gap-3 p-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="text-sm font-medium">Ollama setup</div>
+            <div className="text-xs text-text-muted">
+              Install Ollama from ollama.com, then{" "}
+              <span className="font-mono text-text-secondary">ollama pull qwen3.5:4b</span>{" "}
+              (or any other model).
+            </div>
+          </div>
+          <a
+            href="https://ollama.com/download"
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1 text-xs text-accent-solid hover:underline"
+          >
+            ollama.com <ExternalLink className="h-3 w-3" />
+          </a>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <Input
+            value={host}
+            onChange={(e) => commitHost(e.target.value)}
+            placeholder="http://localhost:11434"
+            className="font-mono text-xs"
+          />
+          <Button variant="secondary" size="sm" onClick={() => void check(host)} disabled={checking}>
+            {checking && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+            Test
+          </Button>
+        </div>
+
+        <div className="flex items-center justify-between rounded-md border border-border-subtle bg-bg-elevated px-3 py-2">
+          <div className="text-xs">
+            {status === "ok" && (
+              <span className="inline-flex items-center gap-1 text-success">
+                <CheckCircle2 className="h-3.5 w-3.5" /> Reachable · {models.length} model{models.length === 1 ? "" : "s"} installed
+              </span>
+            )}
+            {status === "unreachable" && (
+              <span className="inline-flex items-center gap-1 text-danger">
+                <AlertTriangle className="h-3.5 w-3.5" /> Can't reach Ollama — is it running? Troubleshoot in Settings → AI.
+              </span>
+            )}
+            {status === "forbidden" && (
+              <span className="inline-flex items-center gap-1 text-danger">
+                <AlertTriangle className="h-3.5 w-3.5" /> Ollama rejected the origin (set OLLAMA_ORIGINS=*). More help in Settings → AI.
+              </span>
+            )}
+            {status === "http-error" && (
+              <span className="inline-flex items-center gap-1 text-danger">
+                <AlertTriangle className="h-3.5 w-3.5" /> Ollama responded with an error. Check details in Settings → AI.
+              </span>
+            )}
+            {status === "idle" && <span className="text-text-muted">Checking…</span>}
+          </div>
+        </div>
+
+        {models.length > 0 ? (
+          <div>
+            <div className="mb-1 text-xs font-medium text-text-secondary">Model</div>
+            <Select value={model} onValueChange={commitModel}>
+              <SelectTrigger><SelectValue placeholder="Pick an installed model" /></SelectTrigger>
+              <SelectContent>
+                {models.map((m) => (
+                  <SelectItem key={m.name} value={m.name}>
+                    {m.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        ) : status === "ok" ? (
+          <div className="rounded-md border border-border-subtle bg-bg-elevated px-3 py-2 text-xs text-text-muted">
+            No models installed yet. In a terminal:{" "}
+            <span className="font-mono text-text-secondary">ollama pull qwen3.5:4b</span>
+          </div>
+        ) : null}
+
+        <div className="text-[11px] text-text-muted">
+          You can pull more models and tweak prompts later from Settings → AI.
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function LocalWhisperInstaller() {
+  const [tier, setTier] = useState<WhisperTier>(getLocalWhisperTier());
+  const [models, setModels] = useState<LocalModelInfo[]>([]);
+  const [runtimeInstalled, setRuntimeInstalled] = useState(false);
+  const [rtProgress, setRtProgress] = useState<{ downloaded: number; total: number } | null>(null);
+  const [dlProgress, setDlProgress] = useState<{ downloaded: number; total: number } | null>(null);
+
+  const refresh = async () => {
+    try {
+      const [m, rt] = await Promise.all([listLocalModels(), isWhisperRuntimeInstalled()]);
+      setModels(m);
+      setRuntimeInstalled(rt);
+    } catch {
+      /* ignore */
+    }
+  };
+
+  useEffect(() => {
+    void refresh();
+    const offRtP = listen<{ downloaded: number; total: number }>(
+      "local-whisper:runtime:progress",
+      (e) => setRtProgress(e.payload),
+    );
+    const offRtD = listen<string>("local-whisper:runtime:complete", () => {
+      setRtProgress(null);
+      void refresh();
+    });
+    const offDlP = listen<{ tier: WhisperTier; downloaded: number; total: number }>(
+      "local-whisper:download:progress",
+      (e) => {
+        if (e.payload.tier === tier) {
+          setDlProgress({ downloaded: e.payload.downloaded, total: e.payload.total });
+        }
+      },
+    );
+    const offDlD = listen<string>("local-whisper:download:complete", () => {
+      setDlProgress(null);
+      void refresh();
+    });
+    return () => {
+      void offRtP.then((f) => f());
+      void offRtD.then((f) => f());
+      void offDlP.then((f) => f());
+      void offDlD.then((f) => f());
+    };
+  }, [tier]);
+
+  const installed = !!models.find((m) => m.tier === tier)?.installed;
+
+  const installRuntime = async () => {
+    setRtProgress({ downloaded: 0, total: 0 });
+    try {
+      await installWhisperRuntime();
+      toast.success("Runtime installed");
+    } catch (e) {
+      toast.error("Couldn't install runtime", { description: e instanceof Error ? e.message : String(e) });
+      setRtProgress(null);
+    }
+  };
+
+  const downloadModel = async () => {
+    setDlProgress({ downloaded: 0, total: 0 });
+    try {
+      await downloadLocalModel(tier);
+      toast.success(`Downloaded ${tier}`);
+    } catch (e) {
+      toast.error("Download failed", { description: e instanceof Error ? e.message : String(e) });
+      setDlProgress(null);
+    }
+  };
+
+  const pickTier = (t: WhisperTier) => {
+    setLocalWhisperTier(t);
+    setTier(t);
+  };
+
+  return (
+    <Card className="mt-3">
+      <CardContent className="flex flex-col gap-4 p-4">
+        <div>
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <div className="text-sm font-medium">whisper.cpp runtime</div>
+              <div className="text-xs text-text-muted">
+                Tiny native binary (~5 MB) that runs the model on your hardware.
+              </div>
+            </div>
+            {runtimeInstalled ? (
+              <Badge variant="success" className="inline-flex items-center gap-1">
+                <CheckCircle2 className="h-3 w-3" /> Installed
+              </Badge>
+            ) : rtProgress ? (
+              <Button variant="secondary" size="sm" disabled>
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                {rtProgress.total > 0 ? `${Math.round((rtProgress.downloaded / rtProgress.total) * 100)}%` : "Starting…"}
+              </Button>
+            ) : (
+              <Button variant="primary" size="sm" onClick={() => void installRuntime()}>
+                <Download className="h-3.5 w-3.5" /> Install
+              </Button>
+            )}
+          </div>
+          {rtProgress && rtProgress.total > 0 && (
+            <div className="pt-2">
+              <ProgressBar value={Math.round((rtProgress.downloaded / rtProgress.total) * 100)} />
+            </div>
+          )}
+        </div>
+
+        <div className="border-t border-border-subtle pt-3">
+          <div className="text-sm font-medium">Model</div>
+          <div className="text-xs text-text-muted">Bigger = more accurate, slower. Download once, use forever.</div>
+          <div className="mt-3 grid grid-cols-2 gap-1.5">
+            {WHISPER_TIERS.map((meta) => {
+              const isInstalled = !!models.find((m) => m.tier === meta.tier)?.installed;
+              const selected = tier === meta.tier;
+              return (
+                <button
+                  key={meta.tier}
+                  type="button"
+                  onClick={() => pickTier(meta.tier)}
+                  className={cn(
+                    "flex items-center justify-between rounded-md border px-3 py-2 text-left text-xs transition-all",
+                    selected
+                      ? "border-accent-solid/60 bg-accent-solid/10"
+                      : "border-border-subtle bg-bg-elevated hover:border-border-strong",
+                  )}
+                >
+                  <div>
+                    <div className="text-[12px] font-medium">{meta.label}</div>
+                    <div className="text-[10px] text-text-muted">
+                      {meta.approxSizeMB >= 1024
+                        ? `${(meta.approxSizeMB / 1024).toFixed(1)} GB`
+                        : `${meta.approxSizeMB} MB`}
+                    </div>
+                  </div>
+                  {isInstalled && <Check className="h-3 w-3 text-success" strokeWidth={3} />}
+                </button>
+              );
+            })}
+          </div>
+          <div className="mt-3 flex items-center justify-between gap-3 rounded-md border border-border-subtle bg-bg-elevated px-3 py-2">
+            <div className="min-w-0 text-xs">
+              <div className="font-medium">{WHISPER_TIERS.find((t) => t.tier === tier)?.blurb}</div>
+              <div className="text-text-muted">Best for: {WHISPER_TIERS.find((t) => t.tier === tier)?.recommendedFor}</div>
+            </div>
+            {installed ? (
+              <Badge variant="success" className="inline-flex items-center gap-1">
+                <CheckCircle2 className="h-3 w-3" /> Ready
+              </Badge>
+            ) : dlProgress ? (
+              <Button variant="secondary" size="sm" disabled>
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                {dlProgress.total > 0 ? `${Math.round((dlProgress.downloaded / dlProgress.total) * 100)}%` : "Starting…"}
+              </Button>
+            ) : (
+              <Button variant="primary" size="sm" onClick={() => void downloadModel()} disabled={!runtimeInstalled}>
+                <Download className="h-3.5 w-3.5" /> Download
+              </Button>
+            )}
+          </div>
+          {dlProgress && dlProgress.total > 0 && (
+            <div className="pt-2">
+              <ProgressBar value={Math.round((dlProgress.downloaded / dlProgress.total) * 100)} />
+            </div>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function LocalParakeetInstaller() {
+  const [runtimeInstalled, setRuntimeInstalled] = useState(false);
+  const [modelInstalled, setModelInstalled] = useState(false);
+  const [rtProgress, setRtProgress] = useState<{ downloaded: number; total: number } | null>(null);
+  const [dlProgress, setDlProgress] = useState<{ downloaded: number; total: number } | null>(null);
+
+  const refresh = async () => {
+    try {
+      const [rt, m] = await Promise.all([
+        isParakeetRuntimeInstalled(),
+        isParakeetModelInstalled(),
+      ]);
+      setRuntimeInstalled(rt);
+      setModelInstalled(m.installed);
+    } catch {
+      /* ignore */
+    }
+  };
+
+  useEffect(() => {
+    void refresh();
+    const offRtP = listen<{ downloaded: number; total: number }>(
+      "local-parakeet:runtime:progress",
+      (e) => setRtProgress(e.payload),
+    );
+    const offRtD = listen<string>("local-parakeet:runtime:complete", () => {
+      setRtProgress(null);
+      void refresh();
+    });
+    const offDlP = listen<{ downloaded: number; total: number }>(
+      "local-parakeet:download:progress",
+      (e) => setDlProgress(e.payload),
+    );
+    const offDlD = listen<string>("local-parakeet:download:complete", () => {
+      setDlProgress(null);
+      void refresh();
+    });
+    return () => {
+      void offRtP.then((f) => f());
+      void offRtD.then((f) => f());
+      void offDlP.then((f) => f());
+      void offDlD.then((f) => f());
+    };
+  }, []);
+
+  const installRuntime = async () => {
+    setRtProgress({ downloaded: 0, total: 0 });
+    try {
+      await installParakeetRuntime();
+      toast.success("Sherpa-onnx runtime installed");
+    } catch (e) {
+      toast.error("Couldn't install runtime", { description: e instanceof Error ? e.message : String(e) });
+      setRtProgress(null);
+    }
+  };
+
+  const downloadModel = async () => {
+    setDlProgress({ downloaded: 0, total: 0 });
+    try {
+      await downloadParakeetModel();
+      toast.success("Parakeet model downloaded");
+    } catch (e) {
+      toast.error("Download failed", { description: e instanceof Error ? e.message : String(e) });
+      setDlProgress(null);
+    }
+  };
+
+  return (
+    <Card className="mt-3">
+      <CardContent className="flex flex-col gap-3 p-4">
+        <InstallRow
+          title="Sherpa-onnx runtime"
+          subtitle="Native binary that runs Parakeet on your GPU."
+          installed={runtimeInstalled}
+          progress={rtProgress}
+          onInstall={installRuntime}
+        />
+        <InstallRow
+          title="Parakeet TDT v3 model"
+          subtitle="~1.4 GB · multilingual transducer."
+          installed={modelInstalled}
+          progress={dlProgress}
+          onInstall={downloadModel}
+          disabled={!runtimeInstalled}
+        />
+      </CardContent>
+    </Card>
+  );
+}
+
+function InstallRow({
+  title,
+  subtitle,
+  installed,
+  progress,
+  onInstall,
+  disabled,
+}: {
+  title: string;
+  subtitle: string;
+  installed: boolean;
+  progress: { downloaded: number; total: number } | null;
+  onInstall: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <div>
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-sm font-medium">{title}</div>
+          <div className="text-xs text-text-muted">{subtitle}</div>
+        </div>
+        {installed ? (
+          <Badge variant="success" className="inline-flex items-center gap-1">
+            <CheckCircle2 className="h-3 w-3" /> Installed
+          </Badge>
+        ) : progress ? (
+          <Button variant="secondary" size="sm" disabled>
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            {progress.total > 0 ? `${Math.round((progress.downloaded / progress.total) * 100)}%` : "Starting…"}
+          </Button>
+        ) : (
+          <Button variant="primary" size="sm" onClick={onInstall} disabled={disabled}>
+            <Download className="h-3.5 w-3.5" /> Install
+          </Button>
+        )}
+      </div>
+      {progress && progress.total > 0 && (
+        <div className="pt-2">
+          <ProgressBar value={Math.round((progress.downloaded / progress.total) * 100)} />
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Step: Modes intro ───────────────────────────────────────────────────
 
 const DEFAULT_MODES: Array<{ name: string; description: string; Icon: typeof Mail }> = [
-  { name: "Default", description: "Universal cleanup — fixes grammar, removes fillers, keeps your voice.", Icon: Sparkles },
-  { name: "Formal Email", description: "Professional tone, greeting, sign-off, full sentences.", Icon: Mail },
-  { name: "Slack Message", description: "Casual, contractions OK, light emoji where it fits.", Icon: MessageSquare },
-  { name: "Code Comment", description: "Concise, imperative mood, no fluff.", Icon: CodeIcon },
-  { name: "Notes", description: "Bullet-friendly brain-dumps, all facts preserved.", Icon: NotebookPen },
+  { name: "Default", description: "Light cleanup — fixes fillers and grammar, preserves tone.", Icon: Sparkles },
+  { name: "Casual", description: "Clear, friendly sentences. No formalities.", Icon: MessageCircle },
+  { name: "Very Casual", description: "Texting energy — lowercase, minimal punctuation.", Icon: Smile },
+  { name: "Formal", description: "Professional prose. Polished but not email-shaped.", Icon: GraduationCap },
+  { name: "Formal Email", description: "Greeting, body, sign-off — the full shape.", Icon: Mail },
+  { name: "Slack Message", description: "Short, casual, optional emoji.", Icon: MessageSquare },
+  { name: "Code Comment", description: "Imperative, concise, ~80 char wrap.", Icon: CodeIcon },
+  { name: "Notes", description: "Brain-dump friendly. Bullets where they help.", Icon: NotebookPen },
+  { name: "Bullet Points", description: "Clean bulleted list, one idea per bullet.", Icon: List },
+  { name: "Tweet / X Post", description: "Punchy, under 280 chars, no hashtag spam.", Icon: Hash },
+  { name: "LinkedIn Post", description: "Professional but warm. Short paragraphs.", Icon: Briefcase },
+  { name: "Meeting Note", description: "Decisions + action items, stripped of filler.", Icon: ClipboardList },
   { name: "Translate → English", description: "Speak any language, get clean English back.", Icon: Languages },
 ];
 

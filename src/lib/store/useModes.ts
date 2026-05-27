@@ -191,6 +191,16 @@ export const useModes = create<ModesState>((set, get) => ({
         if (modes.length === 0) {
           modes = buildBuiltinModes();
           saveModesCache(modes);
+        } else {
+          // Backfill any newly-added built-ins (matched by name).
+          const haveNames = new Set(modes.map((m) => m.name));
+          const missing = buildBuiltinModes().filter((m) => !haveNames.has(m.name));
+          if (missing.length > 0) {
+            const maxPos = modes.reduce((p, m) => Math.max(p, m.position), -1);
+            const repositioned = missing.map((m, i) => ({ ...m, position: maxPos + 1 + i }));
+            modes = [...modes, ...repositioned];
+            saveModesCache(modes);
+          }
         }
         const stored = localStorage.getItem(LS_DEFAULT_MODE);
         const defId = modes.some((m) => m.id === stored)

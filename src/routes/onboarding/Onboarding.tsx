@@ -20,7 +20,6 @@ import {
   Code as CodeIcon,
   NotebookPen,
   Languages,
-  BookText,
   History as HistoryIcon,
   Bell,
   Palette,

@@ -11,7 +11,8 @@ use commands::{
     },
     parakeet::{
         delete_parakeet_model, download_parakeet_model, install_parakeet_runtime,
-        is_parakeet_model_installed, is_parakeet_runtime_installed, transcribe_parakeet,
+        is_parakeet_model_installed, is_parakeet_runtime_installed, list_parakeet_models,
+        transcribe_parakeet,
     },
     paste::{capture_target_window, clear_target_window, paste_to_target, TargetWindowState},
     process_list::list_running_apps,
@@ -74,6 +75,7 @@ pub fn run() {
             is_parakeet_runtime_installed,
             install_parakeet_runtime,
             is_parakeet_model_installed,
+            list_parakeet_models,
             download_parakeet_model,
             delete_parakeet_model,
             transcribe_parakeet,

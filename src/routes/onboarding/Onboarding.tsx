@@ -92,8 +92,12 @@ import {
   type OllamaModelInfo,
   isParakeetRuntimeInstalled,
   installParakeetRuntime,
-  isParakeetModelInstalled,
+  listParakeetModels,
   downloadParakeetModel,
+  getParakeetVariant,
+  setParakeetVariant,
+  PARAKEET_VARIANTS,
+  type ParakeetVariant,
 } from "../../lib/ai";
 import { listen } from "@tauri-apps/api/event";
 import { Cloud, Cpu, ShieldCheck, Download, CheckCircle2, Wand2, ExternalLink, MessageCircle, Smile, GraduationCap, List, Hash, Briefcase, ClipboardList } from "lucide-react";
@@ -755,13 +759,13 @@ const PROVIDER_OPTIONS: ProviderOption[] = [
   },
   {
     kind: "local-parakeet",
-    title: "Parakeet TDT v3",
-    subtitle: "On-device · NVIDIA · multilingual",
+    title: "Parakeet TDT",
+    subtitle: "On-device · NVIDIA",
     Icon: Cpu,
     bullets: [
       "Audio never leaves your machine",
-      "Excellent multilingual accuracy",
-      "Best on a recent NVIDIA GPU",
+      "Pick v2 (English) or v3 (25 European languages)",
+      "Runs on CPU — no GPU required",
     ],
   },
 ];
@@ -1205,7 +1209,8 @@ function LocalWhisperInstaller() {
 
 function LocalParakeetInstaller() {
   const [runtimeInstalled, setRuntimeInstalled] = useState(false);
-  const [modelInstalled, setModelInstalled] = useState(false);
+  const [models, setModels] = useState<Array<{ variant: ParakeetVariant; installed: boolean }>>([]);
+  const [variant, setVariantState] = useState<ParakeetVariant>(getParakeetVariant());
   const [rtProgress, setRtProgress] = useState<{ downloaded: number; total: number } | null>(null);
   const [dlProgress, setDlProgress] = useState<{ downloaded: number; total: number } | null>(null);
 
@@ -1213,10 +1218,10 @@ function LocalParakeetInstaller() {
     try {
       const [rt, m] = await Promise.all([
         isParakeetRuntimeInstalled(),
-        isParakeetModelInstalled(),
+        listParakeetModels(),
       ]);
       setRuntimeInstalled(rt);
-      setModelInstalled(m.installed);
+      setModels(m.map((x) => ({ variant: x.variant, installed: x.installed })));
     } catch {
       /* ignore */
     }
@@ -1225,18 +1230,18 @@ function LocalParakeetInstaller() {
   useEffect(() => {
     void refresh();
     const offRtP = listen<{ downloaded: number; total: number }>(
-      "local-parakeet:runtime:progress",
+      "parakeet:runtime:progress",
       (e) => setRtProgress(e.payload),
     );
-    const offRtD = listen<string>("local-parakeet:runtime:complete", () => {
+    const offRtD = listen<string>("parakeet:runtime:complete", () => {
       setRtProgress(null);
       void refresh();
     });
     const offDlP = listen<{ downloaded: number; total: number }>(
-      "local-parakeet:download:progress",
+      "parakeet:download:progress",
       (e) => setDlProgress(e.payload),
     );
-    const offDlD = listen<string>("local-parakeet:download:complete", () => {
+    const offDlD = listen<string>("parakeet:download:complete", () => {
       setDlProgress(null);
       void refresh();
     });
@@ -1259,30 +1264,61 @@ function LocalParakeetInstaller() {
     }
   };
 
+  const changeVariant = (v: ParakeetVariant) => {
+    setParakeetVariant(v);
+    setVariantState(v);
+  };
+
   const downloadModel = async () => {
     setDlProgress({ downloaded: 0, total: 0 });
     try {
-      await downloadParakeetModel();
-      toast.success("Parakeet model downloaded");
+      await downloadParakeetModel(variant);
+      toast.success(`Parakeet ${variant} model downloaded`);
     } catch (e) {
       toast.error("Download failed", { description: e instanceof Error ? e.message : String(e) });
       setDlProgress(null);
     }
   };
 
+  const selectedMeta = PARAKEET_VARIANTS.find((v) => v.variant === variant);
+  const modelInstalled = !!models.find((m) => m.variant === variant)?.installed;
+
   return (
     <Card className="mt-3">
       <CardContent className="flex flex-col gap-3 p-4">
         <InstallRow
           title="Sherpa-onnx runtime"
-          subtitle="Native binary that runs Parakeet on your GPU."
+          subtitle="Native binary that runs Parakeet on your machine (~50 MB, CPU)."
           installed={runtimeInstalled}
           progress={rtProgress}
           onInstall={installRuntime}
         />
+        <div className="flex flex-col gap-2">
+          <div className="text-sm font-medium">Model variant</div>
+          <div className="flex gap-2">
+            {PARAKEET_VARIANTS.map((meta) => {
+              const isActive = variant === meta.variant;
+              return (
+                <button
+                  key={meta.variant}
+                  type="button"
+                  onClick={() => changeVariant(meta.variant)}
+                  className={`flex-1 rounded-md border p-2 text-left text-xs transition ${
+                    isActive
+                      ? "border-accent bg-accent/5"
+                      : "border-border-subtle hover:border-border"
+                  }`}
+                >
+                  <div className="text-sm font-medium">{meta.label}</div>
+                  <div className="text-text-muted">{meta.blurb}</div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
         <InstallRow
-          title="Parakeet TDT v3 model"
-          subtitle="~1.4 GB · multilingual transducer."
+          title={`Parakeet ${variant} model`}
+          subtitle={`~${selectedMeta?.approxSizeMB ?? 640} MB · ${selectedMeta?.recommendedFor ?? ""}`}
           installed={modelInstalled}
           progress={dlProgress}
           onInstall={downloadModel}

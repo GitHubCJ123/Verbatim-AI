@@ -23,7 +23,45 @@ use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 
 const SHERPA_ONNX_VERSION: &str = "v1.13.2";
-const MODEL_TAG: &str = "v3";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParakeetVariant {
+    V2English,
+    V3Multilingual,
+}
+
+impl ParakeetVariant {
+    fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "v2" => Some(Self::V2English),
+            "v3" => Some(Self::V3Multilingual),
+            _ => None,
+        }
+    }
+    fn tag(&self) -> &'static str {
+        match self {
+            Self::V2English => "v2",
+            Self::V3Multilingual => "v3",
+        }
+    }
+    fn model_archive_url(&self) -> &'static str {
+        match self {
+            Self::V2English => {
+                "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8.tar.bz2"
+            }
+            Self::V3Multilingual => {
+                "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2"
+            }
+        }
+    }
+    fn all() -> [Self; 2] {
+        [Self::V2English, Self::V3Multilingual]
+    }
+}
+
+fn parse_variant(s: &str) -> Result<ParakeetVariant, String> {
+    ParakeetVariant::from_str(s).ok_or_else(|| format!("unknown parakeet variant: {s}"))
+}
 
 fn app_data(app: &AppHandle) -> Result<PathBuf, String> {
     app.path().app_data_dir().map_err(|e| e.to_string())
@@ -35,8 +73,8 @@ fn bin_dir(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(dir)
 }
 
-fn models_dir(app: &AppHandle) -> Result<PathBuf, String> {
-    let dir = app_data(app)?.join("parakeet-models").join(MODEL_TAG);
+fn models_dir(app: &AppHandle, variant: ParakeetVariant) -> Result<PathBuf, String> {
+    let dir = app_data(app)?.join("parakeet-models").join(variant.tag());
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     Ok(dir)
 }
@@ -112,11 +150,7 @@ fn runtime_archive_url() -> Result<&'static str, String> {
     }
 }
 
-fn model_archive_url() -> &'static str {
-    // Stable URL on the `asr-models` tag — k2-fsa hosts converted ONNX
-    // bundles here as a permanent model registry.
-    "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2"
-}
+
 
 #[derive(Serialize, Clone)]
 struct Progress {
@@ -174,8 +208,35 @@ fn extract_tar_bz2(archive: &Path, dest: &Path) -> Result<(), String> {
     let f = std::fs::File::open(archive).map_err(|e| e.to_string())?;
     let bz = bzip2::read::BzDecoder::new(f);
     let mut ar = tar::Archive::new(bz);
-    ar.set_preserve_permissions(true);
-    ar.unpack(dest).map_err(|e| e.to_string())?;
+    // On Windows the tar crate fails to set Unix ownership/perms on extracted
+    // files; on macOS we re-apply exec bits after extraction anyway.
+    ar.set_preserve_permissions(false);
+    ar.set_preserve_mtime(false);
+    ar.set_unpack_xattrs(false);
+    ar.set_overwrite(true);
+    std::fs::create_dir_all(dest).map_err(|e| e.to_string())?;
+    for entry in ar.entries().map_err(|e| e.to_string())? {
+        let mut entry = entry.map_err(|e| e.to_string())?;
+        let rel = match entry.path() {
+            Ok(p) => p.into_owned(),
+            Err(_) => continue,
+        };
+        // Skip anything that tries to escape via `..`.
+        if rel.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+            continue;
+        }
+        let out = dest.join(&rel);
+        if entry.header().entry_type().is_dir() {
+            std::fs::create_dir_all(&out).map_err(|e| e.to_string())?;
+            continue;
+        }
+        if let Some(parent) = out.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        // Unpack data only; ignore metadata that may fail on Windows.
+        let mut writer = std::fs::File::create(&out).map_err(|e| e.to_string())?;
+        std::io::copy(&mut entry, &mut writer).map_err(|e| e.to_string())?;
+    }
     Ok(())
 }
 
@@ -263,13 +324,43 @@ fn model_files() -> [&'static str; 4] {
 
 #[derive(Serialize)]
 pub struct ParakeetModelInfo {
+    variant: String,
     installed: bool,
     size_bytes: u64,
 }
 
 #[tauri::command]
-pub async fn is_parakeet_model_installed(app: AppHandle) -> Result<ParakeetModelInfo, String> {
-    let dir = models_dir(&app)?;
+pub async fn list_parakeet_models(app: AppHandle) -> Result<Vec<ParakeetModelInfo>, String> {
+    let mut out = Vec::new();
+    for v in ParakeetVariant::all() {
+        let dir = models_dir(&app, v)?;
+        let mut total: u64 = 0;
+        let mut all_present = true;
+        for f in model_files() {
+            match std::fs::metadata(dir.join(f)) {
+                Ok(m) => total += m.len(),
+                Err(_) => {
+                    all_present = false;
+                    break;
+                }
+            }
+        }
+        out.push(ParakeetModelInfo {
+            variant: v.tag().to_string(),
+            installed: all_present,
+            size_bytes: if all_present { total } else { 0 },
+        });
+    }
+    Ok(out)
+}
+
+#[tauri::command]
+pub async fn is_parakeet_model_installed(
+    app: AppHandle,
+    variant: String,
+) -> Result<ParakeetModelInfo, String> {
+    let v = parse_variant(&variant)?;
+    let dir = models_dir(&app, v)?;
     let mut total: u64 = 0;
     let mut all_present = true;
     for f in model_files() {
@@ -282,21 +373,23 @@ pub async fn is_parakeet_model_installed(app: AppHandle) -> Result<ParakeetModel
         }
     }
     Ok(ParakeetModelInfo {
+        variant: v.tag().to_string(),
         installed: all_present,
         size_bytes: if all_present { total } else { 0 },
     })
 }
 
 #[tauri::command]
-pub async fn download_parakeet_model(app: AppHandle) -> Result<(), String> {
-    let dir = models_dir(&app)?;
+pub async fn download_parakeet_model(app: AppHandle, variant: String) -> Result<(), String> {
+    let v = parse_variant(&variant)?;
+    let dir = models_dir(&app, v)?;
     // If already complete, emit and return.
     if model_files().iter().all(|f| dir.join(f).exists()) {
-        let _ = app.emit("parakeet:download:complete", MODEL_TAG);
+        let _ = app.emit("parakeet:download:complete", v.tag());
         return Ok(());
     }
 
-    let url = model_archive_url();
+    let url = v.model_archive_url();
     let tmp_archive = dir.join("parakeet-model.partial.tar.bz2");
     stream_download(&app, url, &tmp_archive, "parakeet:download:progress").await?;
 
@@ -350,13 +443,14 @@ pub async fn download_parakeet_model(app: AppHandle) -> Result<(), String> {
 
     let _ = std::fs::remove_dir_all(&staging);
     let _ = fs::remove_file(&tmp_archive).await;
-    let _ = app.emit("parakeet:download:complete", MODEL_TAG);
+    let _ = app.emit("parakeet:download:complete", v.tag());
     Ok(())
 }
 
 #[tauri::command]
-pub async fn delete_parakeet_model(app: AppHandle) -> Result<(), String> {
-    let dir = models_dir(&app)?;
+pub async fn delete_parakeet_model(app: AppHandle, variant: String) -> Result<(), String> {
+    let v = parse_variant(&variant)?;
+    let dir = models_dir(&app, v)?;
     for f in model_files() {
         let p = dir.join(f);
         if p.exists() {
@@ -372,9 +466,11 @@ pub async fn delete_parakeet_model(app: AppHandle) -> Result<(), String> {
 
 #[derive(Deserialize)]
 pub struct TranscribeArgs {
+    /// Variant tag: "v2" or "v3".
+    pub variant: String,
     /// 16 kHz mono Float32 PCM samples.
     pub pcm: Vec<f32>,
-    /// Reserved for future use; v3 model auto-detects language.
+    /// Reserved for future use; model auto-detects language.
     pub language: Option<String>,
 }
 
@@ -423,11 +519,13 @@ pub async fn transcribe_parakeet(
     app: AppHandle,
     args: TranscribeArgs,
 ) -> Result<TranscribeOutput, String> {
-    let dir = models_dir(&app)?;
+    let v = parse_variant(&args.variant)?;
+    let dir = models_dir(&app, v)?;
     for fname in model_files() {
         if !dir.join(fname).exists() {
             return Err(format!(
-                "Parakeet model file '{}' is missing. Download the model from Settings → AI model.",
+                "Parakeet {} model file '{}' is missing. Download it from Settings → AI model.",
+                v.tag(),
                 fname
             ));
         }

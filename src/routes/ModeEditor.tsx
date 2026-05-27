@@ -531,7 +531,7 @@ function AiOverridesSection({
                 <SelectItem value={INHERIT}>Use global default</SelectItem>
                 <SelectItem value="cloud">Cloud (Azure Whisper)</SelectItem>
                 <SelectItem value="local-whisper">Local Whisper</SelectItem>
-                <SelectItem value="local-parakeet">Parakeet TDT v3</SelectItem>
+                <SelectItem value="local-parakeet">Parakeet TDT</SelectItem>
               </SelectContent>
             </Select>
           </Row>

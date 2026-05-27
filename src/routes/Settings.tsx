@@ -52,9 +52,14 @@ import {
   PARAKEET_LANGUAGES,
   getParakeetLanguage,
   setParakeetLanguage,
+  PARAKEET_VARIANTS,
+  getParakeetVariant,
+  setParakeetVariant,
+  type ParakeetVariant,
+  type ParakeetModelInfo,
   isParakeetRuntimeInstalled,
   installParakeetRuntime,
-  isParakeetModelInstalled,
+  listParakeetModels,
   downloadParakeetModel,
   deleteParakeetModel,
 } from "../lib/ai";
@@ -618,7 +623,7 @@ function ModelTab() {
               <SelectContent>
                 <SelectItem value="cloud">Cloud (Azure Whisper)</SelectItem>
                 <SelectItem value="local-whisper">Local Whisper</SelectItem>
-                <SelectItem value="local-parakeet">Parakeet TDT v3 (NVIDIA)</SelectItem>
+                <SelectItem value="local-parakeet">Parakeet TDT (NVIDIA)</SelectItem>
               </SelectContent>
             </Select>
           </SettingRow>
@@ -780,23 +785,24 @@ function formatBytes(b: number): string {
 
 function ParakeetSection() {
   const [runtimeInstalled, setRuntimeInstalled] = useState<boolean>(false);
-  const [modelInstalled, setModelInstalled] = useState<boolean>(false);
-  const [modelSize, setModelSize] = useState<number>(0);
+  const [models, setModels] = useState<ParakeetModelInfo[]>([]);
+  const [selectedVariant, setSelectedVariant] =
+    useState<ParakeetVariant>(getParakeetVariant());
   const [installingRuntime, setInstallingRuntime] =
     useState<{ downloaded: number; total: number } | null>(null);
-  const [downloading, setDownloading] =
-    useState<{ downloaded: number; total: number } | null>(null);
+  const [downloading, setDownloading] = useState<
+    Record<ParakeetVariant, { downloaded: number; total: number } | undefined>
+  >({} as Record<ParakeetVariant, { downloaded: number; total: number } | undefined>);
   const [language, setLanguageState] = useState<string>(getParakeetLanguage());
 
   const refresh = async () => {
     try {
-      const [rt, model] = await Promise.all([
+      const [rt, m] = await Promise.all([
         isParakeetRuntimeInstalled(),
-        isParakeetModelInstalled(),
+        listParakeetModels(),
       ]);
       setRuntimeInstalled(rt);
-      setModelInstalled(model.installed);
-      setModelSize(model.sizeBytes);
+      setModels(m);
     } catch (e) {
       toast.error("Couldn't read Parakeet state", {
         description: e instanceof Error ? e.message : String(e),
@@ -819,10 +825,19 @@ function ParakeetSection() {
     });
     const offDlProg = listen<{ downloaded: number; total: number }>(
       "parakeet:download:progress",
-      (e) => setDownloading({ downloaded: e.payload.downloaded, total: e.payload.total }),
+      (e) => {
+        // Sherpa-onnx doesn't tag progress with the variant, but only one
+        // download runs at a time. Apply to whichever variant is in-flight.
+        setDownloading((d) => {
+          const inflight = (Object.keys(d) as ParakeetVariant[]).find((k) => d[k] !== undefined);
+          if (!inflight) return d;
+          return { ...d, [inflight]: { downloaded: e.payload.downloaded, total: e.payload.total } };
+        });
+      },
     );
-    const offDlDone = listen<string>("parakeet:download:complete", () => {
-      setDownloading(null);
+    const offDlDone = listen<string>("parakeet:download:complete", (e) => {
+      const v = (e.payload === "v2" ? "v2" : "v3") as ParakeetVariant;
+      setDownloading((d) => ({ ...d, [v]: undefined }));
       void refresh();
     });
     return () => {
@@ -846,23 +861,28 @@ function ParakeetSection() {
     }
   };
 
-  const handleDownloadModel = async () => {
-    setDownloading({ downloaded: 0, total: 0 });
+  const handleVariantChange = (v: ParakeetVariant) => {
+    setParakeetVariant(v);
+    setSelectedVariant(v);
+  };
+
+  const handleDownload = async (v: ParakeetVariant) => {
+    setDownloading((d) => ({ ...d, [v]: { downloaded: 0, total: 0 } }));
     try {
-      await downloadParakeetModel();
-      toast.success("Parakeet v3 model downloaded");
+      await downloadParakeetModel(v);
+      toast.success(`Parakeet ${v} model downloaded`);
     } catch (e) {
       toast.error("Download failed", {
         description: e instanceof Error ? e.message : String(e),
       });
-      setDownloading(null);
+      setDownloading((d) => ({ ...d, [v]: undefined }));
     }
   };
 
-  const handleDeleteModel = async () => {
+  const handleDelete = async (v: ParakeetVariant) => {
     try {
-      await deleteParakeetModel();
-      toast.success("Parakeet model removed");
+      await deleteParakeetModel(v);
+      toast.success(`Parakeet ${v} model removed`);
       void refresh();
     } catch (e) {
       toast.error("Couldn't remove model", {
@@ -880,19 +900,14 @@ function ParakeetSection() {
     installingRuntime && installingRuntime.total > 0
       ? Math.round((installingRuntime.downloaded / installingRuntime.total) * 100)
       : undefined;
-  const dlPct =
-    downloading && downloading.total > 0
-      ? Math.round((downloading.downloaded / downloading.total) * 100)
-      : undefined;
 
   return (
     <Card>
       <CardContent className="p-5 pt-5">
-        <div className="mb-3 text-sm font-medium">Parakeet TDT v3 (NVIDIA)</div>
+        <div className="mb-3 text-sm font-medium">Parakeet TDT (NVIDIA)</div>
         <div className="mb-4 text-xs text-text-muted">
-          On-device multilingual transcription via the sherpa-onnx runtime. 25 European languages including English,
-          French, German, Spanish, Italian, Portuguese, Polish, Russian, Ukrainian. Runs on CPU — no GPU required.
-          Available on Windows x64 and Apple Silicon Macs.
+          On-device transcription via the sherpa-onnx runtime. Pick a model variant — v2 for English-only with the
+          best WER, or v3 for 25 European languages. Runs on CPU. Windows x64 and Apple Silicon only.
         </div>
 
         {/* Runtime */}
@@ -928,63 +943,101 @@ function ParakeetSection() {
           <div className="pb-3"><ProgressBar value={rtPct} /></div>
         )}
 
-        {/* Model */}
-        <div className="mb-3 flex items-center justify-between rounded-md border border-border-subtle p-3">
-          <div className="flex flex-col gap-0.5">
-            <div className="text-sm">
-              Model: {modelInstalled ? (
-                <span className="inline-flex items-center gap-1 text-green-600 dark:text-green-400">
-                  <CheckCircle2 className="h-4 w-4" /> Installed{modelSize > 0 ? ` · ${formatBytes(modelSize)}` : ""}
-                </span>
-              ) : (
-                <span className="text-text-muted">Not installed</span>
-              )}
-            </div>
-            <div className="text-xs text-text-muted">
-              parakeet-tdt-0.6b-v3 int8 · ~640 MB · 25 European languages
-            </div>
-          </div>
-          <div className="flex shrink-0 items-center gap-2">
-            {modelInstalled ? (
-              <Button variant="ghost" size="sm" onClick={handleDeleteModel} title="Remove model">
-                <Trash2 className="h-4 w-4" />
-              </Button>
-            ) : downloading ? (
-              <Button variant="secondary" size="sm" disabled>
-                <Loader2 className="mr-1 h-4 w-4 animate-spin" />
-                {dlPct !== undefined ? `${dlPct}%` : "Starting…"}
-              </Button>
-            ) : (
-              <Button
-                variant="primary"
-                size="sm"
-                onClick={handleDownloadModel}
-                disabled={!runtimeInstalled}
-                title={!runtimeInstalled ? "Install the runtime first" : undefined}
-              >
-                <Download className="mr-1 h-4 w-4" /> Download model
-              </Button>
-            )}
-          </div>
+        {/* Model variants */}
+        <div className="mb-3 text-sm font-medium">Models</div>
+        <div className="mb-4 text-xs text-text-muted">
+          Pick the variant that fits your needs. Both can be installed; the selected one is used for new recordings.
         </div>
-        {downloading && dlPct !== undefined && (
-          <div className="pb-3"><ProgressBar value={dlPct} /></div>
-        )}
+        <div className="flex flex-col gap-2">
+          {PARAKEET_VARIANTS.map((meta) => {
+            const info = models.find((m) => m.variant === meta.variant);
+            const installed = !!info?.installed;
+            const isSelected = selectedVariant === meta.variant;
+            const dl = downloading[meta.variant];
+            const dlPct =
+              dl && dl.total > 0 ? Math.round((dl.downloaded / dl.total) * 100) : undefined;
+            return (
+              <div
+                key={meta.variant}
+                className={`flex flex-col gap-2 rounded-md border p-3 ${
+                  isSelected ? "border-accent bg-accent/5" : "border-border-subtle"
+                }`}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex flex-col gap-0.5">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium">{meta.label}</span>
+                      <span className="text-xs text-text-muted">·</span>
+                      <span className="text-xs text-text-muted">~{meta.approxSizeMB} MB</span>
+                      {installed && (
+                        <span className="inline-flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
+                          <CheckCircle2 className="h-3.5 w-3.5" /> installed
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-xs text-text-muted">{meta.blurb}</div>
+                    <div className="text-xs text-text-muted">Best for: {meta.recommendedFor}</div>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2">
+                    {installed ? (
+                      <>
+                        <Button
+                          variant={isSelected ? "primary" : "secondary"}
+                          size="sm"
+                          onClick={() => handleVariantChange(meta.variant)}
+                          disabled={isSelected}
+                        >
+                          {isSelected ? "In use" : "Use this"}
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleDelete(meta.variant)}
+                          title="Remove model file"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </>
+                    ) : dl ? (
+                      <Button variant="secondary" size="sm" disabled>
+                        <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+                        {dlPct !== undefined ? `${dlPct}%` : "Starting…"}
+                      </Button>
+                    ) : (
+                      <Button
+                        variant="primary"
+                        size="sm"
+                        onClick={() => handleDownload(meta.variant)}
+                        disabled={!runtimeInstalled}
+                        title={!runtimeInstalled ? "Install the runtime first" : undefined}
+                      >
+                        <Download className="mr-1 h-4 w-4" /> Download
+                      </Button>
+                    )}
+                  </div>
+                </div>
+                {dl && dlPct !== undefined && <ProgressBar value={dlPct} />}
+              </div>
+            );
+          })}
+        </div>
 
         {/* Language */}
-        <SettingRow
-          title="Language"
-          description="Pick a specific language for best accuracy, or let the model auto-detect."
-        >
-          <Select value={language} onValueChange={handleLanguageChange}>
-            <SelectTrigger className="w-56"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              {PARAKEET_LANGUAGES.map((l) => (
-                <SelectItem key={l.code} value={l.code}>{l.label}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </SettingRow>
+        <div className="pt-3">
+          <SettingRow
+            title="Language"
+            description="Pick a specific language for best accuracy, or let the model auto-detect. (v2 is English-only regardless.)"
+          >
+            <Select value={language} onValueChange={handleLanguageChange}>
+              <SelectTrigger className="w-56"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {PARAKEET_LANGUAGES.map((l) => (
+                  <SelectItem key={l.code} value={l.code}>{l.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </SettingRow>
+        </div>
       </CardContent>
     </Card>
   );

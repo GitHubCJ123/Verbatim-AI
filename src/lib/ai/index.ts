@@ -24,7 +24,7 @@ import {
   getOllamaHost,
   getOllamaModel,
 } from "./ollama";
-import { ParakeetProvider, getParakeetLanguage } from "./parakeet";
+import { ParakeetProvider, getParakeetLanguage, getParakeetVariant, type ParakeetVariant } from "./parakeet";
 import type { Mode } from "../../types/mode";
 
 export * from "./localWhisper";
@@ -200,8 +200,7 @@ export class SupabaseAIProvider implements AIProvider {
 let cloudCache: SupabaseAIProvider | null = null;
 const localWhisperByTier = new Map<WhisperTier, LocalWhisperProvider>();
 const ollamaByKey = new Map<string, OllamaProvider>();
-let parakeetCache: ParakeetProvider | null = null;
-let parakeetCacheLang: string | null = null;
+const parakeetByKey = new Map<string, ParakeetProvider>();
 
 function getCloud(): SupabaseAIProvider {
   if (!cloudCache) cloudCache = new SupabaseAIProvider();
@@ -212,15 +211,19 @@ function transcribeProvider(mode?: Mode | null): AIProvider {
   const kind = mode?.transcribeProviderOverride ?? getAiProviderKind();
   if (kind === "cloud") return getCloud();
   if (kind === "local-parakeet") {
+    const variant: ParakeetVariant = getParakeetVariant();
     const language = getParakeetLanguage();
-    if (!parakeetCache || parakeetCacheLang !== language) {
-      parakeetCache = new ParakeetProvider({
+    const key = `${variant}|${language}`;
+    let p = parakeetByKey.get(key);
+    if (!p) {
+      p = new ParakeetProvider({
+        variant,
         language,
         cleanupFallback: getCloud(),
       });
-      parakeetCacheLang = language;
+      parakeetByKey.set(key, p);
     }
-    return parakeetCache;
+    return p;
   }
   const tier = (mode?.whisperTierOverride ?? getLocalWhisperTier()) as WhisperTier;
   let p = localWhisperByTier.get(tier);

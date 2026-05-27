@@ -15,6 +15,42 @@ import type {
 } from "./AIProvider";
 
 const LS_PARAKEET_LANGUAGE = "sw.ai.parakeetLanguage";
+const LS_PARAKEET_VARIANT = "sw.ai.parakeetVariant";
+
+export type ParakeetVariant = "v2" | "v3";
+
+export interface ParakeetVariantMeta {
+  variant: ParakeetVariant;
+  label: string;
+  approxSizeMB: number;
+  blurb: string;
+  recommendedFor: string;
+}
+
+export const PARAKEET_VARIANTS: ParakeetVariantMeta[] = [
+  {
+    variant: "v2",
+    label: "v2 — English",
+    approxSizeMB: 640,
+    blurb: "English-only. Slightly better English WER than v3 (~6.0%). Use this if you only speak English.",
+    recommendedFor: "English speakers, max accuracy",
+  },
+  {
+    variant: "v3",
+    label: "v3 — Multilingual",
+    approxSizeMB: 640,
+    blurb: "25 European languages including English, French, German, Spanish, Italian, Russian. Auto-detects.",
+    recommendedFor: "Multilingual use, default",
+  },
+];
+
+export function getParakeetVariant(): ParakeetVariant {
+  const v = localStorage.getItem(LS_PARAKEET_VARIANT);
+  return v === "v2" ? "v2" : "v3";
+}
+export function setParakeetVariant(v: ParakeetVariant): void {
+  localStorage.setItem(LS_PARAKEET_VARIANT, v);
+}
 
 /** 25 European languages supported by Parakeet TDT v3, plus auto-detect. */
 export interface ParakeetLanguage {
@@ -59,6 +95,7 @@ export function setParakeetLanguage(code: string): void {
 }
 
 export interface ParakeetModelInfo {
+  variant: ParakeetVariant;
   installed: boolean;
   sizeBytes: number;
 }
@@ -71,30 +108,51 @@ export function installParakeetRuntime(): Promise<void> {
   return invoke("install_parakeet_runtime");
 }
 
-export async function isParakeetModelInstalled(): Promise<ParakeetModelInfo> {
-  const raw = await invoke<{ installed: boolean; size_bytes: number }>(
+export async function listParakeetModels(): Promise<ParakeetModelInfo[]> {
+  const raw = await invoke<
+    Array<{ variant: string; installed: boolean; size_bytes: number }>
+  >("list_parakeet_models");
+  return raw.map((r) => ({
+    variant: (r.variant === "v2" ? "v2" : "v3") as ParakeetVariant,
+    installed: r.installed,
+    sizeBytes: r.size_bytes,
+  }));
+}
+
+export async function isParakeetModelInstalled(
+  variant: ParakeetVariant,
+): Promise<ParakeetModelInfo> {
+  const raw = await invoke<{ variant: string; installed: boolean; size_bytes: number }>(
     "is_parakeet_model_installed",
+    { variant },
   );
-  return { installed: raw.installed, sizeBytes: raw.size_bytes };
+  return {
+    variant: (raw.variant === "v2" ? "v2" : "v3") as ParakeetVariant,
+    installed: raw.installed,
+    sizeBytes: raw.size_bytes,
+  };
 }
 
-export function downloadParakeetModel(): Promise<void> {
-  return invoke("download_parakeet_model");
+export function downloadParakeetModel(variant: ParakeetVariant): Promise<void> {
+  return invoke("download_parakeet_model", { variant });
 }
 
-export function deleteParakeetModel(): Promise<void> {
-  return invoke("delete_parakeet_model");
+export function deleteParakeetModel(variant: ParakeetVariant): Promise<void> {
+  return invoke("delete_parakeet_model", { variant });
 }
 
 export interface ParakeetConfig {
+  variant: ParakeetVariant;
   language: string;
   /** Provider used for the cleanup step (Parakeet itself doesn't clean up). */
   cleanupFallback: AIProvider;
 }
 
 export class ParakeetProvider implements AIProvider {
-  readonly name = "Parakeet TDT v3";
-  constructor(private cfg: ParakeetConfig) {}
+  readonly name: string;
+  constructor(private cfg: ParakeetConfig) {
+    this.name = `Parakeet TDT ${cfg.variant}`;
+  }
 
   async transcribe(input: TranscribeInput): Promise<TranscribeResult> {
     const samples = await decodeToMonoF32_16k(input.audio);
@@ -106,6 +164,7 @@ export class ParakeetProvider implements AIProvider {
       duration_ms: number;
     }>("transcribe_parakeet", {
       args: {
+        variant: this.cfg.variant,
         pcm: Array.from(samples),
         language: language === "auto" ? null : language,
       },
@@ -126,14 +185,14 @@ export class ParakeetProvider implements AIProvider {
     try {
       const [rt, model] = await Promise.all([
         isParakeetRuntimeInstalled(),
-        isParakeetModelInstalled(),
+        isParakeetModelInstalled(this.cfg.variant),
       ]);
       if (!rt) return { ok: false, message: "Sherpa-onnx runtime not installed." };
       if (!model.installed)
-        return { ok: false, message: "Parakeet v3 model not downloaded." };
+        return { ok: false, message: `Parakeet ${this.cfg.variant} model not downloaded.` };
       return {
         ok: true,
-        message: `Parakeet TDT v3 ready (${(model.sizeBytes / 1024 / 1024).toFixed(0)} MB)`,
+        message: `Parakeet TDT ${this.cfg.variant} ready (${(model.sizeBytes / 1024 / 1024).toFixed(0)} MB)`,
       };
     } catch (e) {
       return { ok: false, message: e instanceof Error ? e.message : String(e) };

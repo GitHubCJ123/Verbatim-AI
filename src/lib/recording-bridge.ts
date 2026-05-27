@@ -6,7 +6,7 @@
  * audio capture happens *inside* the overlay window in Phase 2; later
  * phases may move it to Rust if we need lower-level control.
  */
-import { emit } from "@tauri-apps/api/event";
+import { emit, listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { Window, currentMonitor } from "@tauri-apps/api/window";
 import { PhysicalPosition, PhysicalSize } from "@tauri-apps/api/dpi";
@@ -16,6 +16,31 @@ const OVERLAY_LABEL = "overlay";
 
 const OVERLAY_PILL_SIZE = { width: 420, height: 96 };
 const OVERLAY_REVIEW_SIZE = { width: 520, height: 360 };
+
+// Tauri events are fire-and-forget — if the overlay's React listener
+// isn't mounted yet when `recording:start` is emitted, the event is
+// silently dropped and the overlay stays idle. The overlay emits
+// `overlay:ready` from its mount effect; we cache the first one and
+// gate `startRecording` on it.
+let overlayReady = false;
+let overlayReadyResolve: (() => void) | null = null;
+const overlayReadyPromise = new Promise<void>((resolve) => {
+  overlayReadyResolve = resolve;
+});
+listen("overlay:ready", () => {
+  overlayReady = true;
+  overlayReadyResolve?.();
+}).catch(() => {
+  /* ignore */
+});
+
+async function waitForOverlayReady(timeoutMs = 3000): Promise<void> {
+  if (overlayReady) return;
+  await Promise.race([
+    overlayReadyPromise,
+    new Promise<void>((resolve) => setTimeout(resolve, timeoutMs)),
+  ]);
+}
 
 async function getOverlay(): Promise<Window | null> {
   try {
@@ -47,6 +72,7 @@ export async function startRecording(modeName = "Default", modeId: string | null
     /* best-effort */
   }
   await overlay.show();
+  await waitForOverlayReady();
   await emit("recording:start", { modeName, modeId });
 }
 

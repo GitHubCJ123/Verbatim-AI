@@ -9,6 +9,7 @@
  */
 import { useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
+import { emit } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { RecordingPill } from "../components/recording/RecordingPill";
@@ -277,6 +278,9 @@ export default function Overlay() {
       controllerRef.current = null;
       void reset();
     });
+    // Tell the main window we're alive so it doesn't drop a
+    // recording:start emitted before our listeners attached.
+    void emit("overlay:ready");
     return () => {
       void offStart.then((u) => u());
       void offStop.then((u) => u());

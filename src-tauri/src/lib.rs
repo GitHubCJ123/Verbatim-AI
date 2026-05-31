@@ -37,7 +37,23 @@ pub fn run() {
         std::env::set_var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", merged);
     }
 
-    tauri::Builder::default()
+    let mut builder = tauri::Builder::default();
+
+    // Single-instance: if the app is already running, the new launch's
+    // callback fires in the existing process — focus its window instead of
+    // opening a second window. Must be registered before other plugins.
+    #[cfg(desktop)]
+    {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+            }
+        }));
+    }
+
+    builder
         .manage(HotkeyState::default())
         .manage(TargetWindowState::default())
         .plugin(tauri_plugin_opener::init())

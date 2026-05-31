@@ -160,7 +160,9 @@ function MicrophoneSelect() {
       try {
         const all = await navigator.mediaDevices.enumerateDevices();
         if (!cancelled) {
-          setDevices(all.filter((d) => d.kind === "audioinput" && d.deviceId !== "default"));
+          setDevices(
+            all.filter((d) => d.kind === "audioinput" && d.deviceId && d.deviceId !== "default"),
+          );
         }
       } catch {
         /* enumerateDevices unsupported — leave list empty */

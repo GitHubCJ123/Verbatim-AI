@@ -67,6 +67,7 @@ export async function startRecording(opts: AudioControllerOptions = {}): Promise
   } catch (err) {
     if (opts.deviceId) {
       try {
+        console.warn("Selected microphone was unavailable; falling back to system default.", err);
         stream = await navigator.mediaDevices.getUserMedia({
           audio: buildAudioConstraints(),
         });

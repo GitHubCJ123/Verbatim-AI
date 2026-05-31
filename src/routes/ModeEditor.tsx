@@ -28,6 +28,7 @@ import {
 } from "../lib/ai";
 import { estimateTokens } from "../lib/ai/promptBuilder";
 import { startRecording, type AudioController } from "../lib/audio";
+import { getMicDeviceId } from "../lib/preferences";
 import { Waveform } from "../components/recording/Waveform";
 import type {
   Mode,
@@ -288,6 +289,7 @@ function TestColumn({ draft }: { draft: Mode }) {
     setCleaned("");
     try {
       controllerRef.current = await startRecording({
+        deviceId: getMicDeviceId() || undefined,
         onError: (e) => {
           setError(e.message);
           setState("error");

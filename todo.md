@@ -12,20 +12,7 @@
 
 ---
 
-## 2. Allow deleting unused AI models in Settings
-**Problem:** Downloaded models (cleanup, transcription — e.g. Ollama, Whisper, Parakeet) consume storage even when unused, with no way to remove them.
-
-**Goal:** In Settings, next to each AI model (alongside the download control), add a delete action so users can remove models they don't use and reclaim disk space.
-
-**Acceptance criteria:**
-- Each model row shows a delete option when the model is installed.
-- Deleting removes the model files from disk and frees space.
-- UI reflects the model as "not downloaded" after deletion.
-- Confirm before deleting to prevent accidental removal. Use an in-app confirmation dialog — not a native/localhost browser prompt.
-
----
-
-## 3. Eliminate transcription start delay
+## 2. Eliminate transcription start delay
 **Problem:** After pressing the transcription hotkey, there is a ~1 second delay before recording/transcription actually begins, which annoys users even though the voice animation already appears.
 
 **Goal:** Begin recording and transcribing the instant the hotkey is pressed — no perceptible delay.
@@ -37,7 +24,7 @@
 
 ---
 
-## 4. Support single-key hold-to-talk hotkey on macOS
+## 3. Support single-key hold-to-talk hotkey on macOS
 **Problem:** On macOS users want a simpler trigger than a key combination.
 
 **Goal:** Allow configuring transcription to a single key that works as press-and-hold (hold the key to record, release to stop).

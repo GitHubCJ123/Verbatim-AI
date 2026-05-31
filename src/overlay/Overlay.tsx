@@ -24,7 +24,7 @@ import {
   resizeOverlayToReview,
 } from "../lib/recording-bridge";
 import { pasteCleanedText, copyCleanedText, clearCapturedTarget } from "../lib/output";
-import { isAiImproveDisabled } from "../lib/preferences";
+import { isAiImproveDisabled, getMicDeviceId } from "../lib/preferences";
 import type { Mode } from "../types/mode";
 
 type View = "pill" | "review";
@@ -71,6 +71,7 @@ export default function Overlay() {
       const w = getCurrentWindow();
       await w.show();
       controllerRef.current = await startRecording({
+        deviceId: getMicDeviceId() || undefined,
         onError: (e) => {
           setError(e.message);
           setState("error");

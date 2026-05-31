@@ -80,6 +80,8 @@ import {
   setClipboardRestore,
   isHistoryDisabled,
   setHistoryDisabled,
+  getMicDeviceId,
+  setMicDeviceId,
 } from "../lib/preferences";
 
 interface RowProps {
@@ -134,6 +136,61 @@ function OverlayPositionSelect() {
         <SelectItem value="top-right">Top right</SelectItem>
         <SelectItem value="bottom-left">Bottom left</SelectItem>
         <SelectItem value="top-left">Top left</SelectItem>
+      </SelectContent>
+    </Select>
+  );
+}
+
+function MicrophoneSelect() {
+  const [deviceId, setDeviceId] = useState<string>(getMicDeviceId());
+  const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = async () => {
+      try {
+        // Labels are only populated once mic permission is granted.
+        // Onboarding already requests it, but request again here so the
+        // dropdown shows readable names even on a fresh profile.
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        stream.getTracks().forEach((t) => t.stop());
+      } catch {
+        /* permission denied — we'll still list devices without labels */
+      }
+      try {
+        const all = await navigator.mediaDevices.enumerateDevices();
+        if (!cancelled) {
+          setDevices(all.filter((d) => d.kind === "audioinput" && d.deviceId !== "default"));
+        }
+      } catch {
+        /* enumerateDevices unsupported — leave list empty */
+      }
+    };
+    void refresh();
+    navigator.mediaDevices?.addEventListener("devicechange", refresh);
+    return () => {
+      cancelled = true;
+      navigator.mediaDevices?.removeEventListener("devicechange", refresh);
+    };
+  }, []);
+
+  return (
+    <Select
+      value={deviceId || "default"}
+      onValueChange={(next) => {
+        const id = next === "default" ? "" : next;
+        setMicDeviceId(id);
+        setDeviceId(id);
+      }}
+    >
+      <SelectTrigger className="w-56"><SelectValue /></SelectTrigger>
+      <SelectContent>
+        <SelectItem value="default">System default</SelectItem>
+        {devices.map((d, i) => (
+          <SelectItem key={d.deviceId} value={d.deviceId}>
+            {d.label || `Microphone ${i + 1}`}
+          </SelectItem>
+        ))}
       </SelectContent>
     </Select>
   );
@@ -371,6 +428,9 @@ export default function Settings() {
             <CardContent className="p-5 pt-5">
               <SettingRow title="Global hotkey" description="Hold to dictate from anywhere.">
                 <HotkeyRecorder value={hotkey.spec} onChange={handleHotkeyChange} />
+              </SettingRow>
+              <SettingRow title="Microphone" description="Input device used for recording.">
+                <MicrophoneSelect />
               </SettingRow>
               <SettingRow title="Push-to-talk" description="Hold to record. Off = tap to toggle.">
                 <Switch

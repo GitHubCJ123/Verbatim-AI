@@ -8,7 +8,14 @@
  */
 import { emit, listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
-import { Window, currentMonitor } from "@tauri-apps/api/window";
+import {
+  Window,
+  availableMonitors,
+  currentMonitor,
+  cursorPosition,
+  monitorFromPoint,
+  type Monitor,
+} from "@tauri-apps/api/window";
 import { PhysicalPosition, PhysicalSize } from "@tauri-apps/api/dpi";
 import { loadOverlayPosition } from "./preferences";
 
@@ -54,6 +61,7 @@ async function getOverlay(): Promise<Window | null> {
 export async function startRecording(modeName = "Default", modeId: string | null = null) {
   const overlay = await getOverlay();
   if (!overlay) return;
+  const targetMonitor = await getCursorMonitor();
 
   // Capture the foreground window *before* showing the overlay, so we
   // can paste back into it. The overlay has `focus: false` so showing
@@ -67,7 +75,7 @@ export async function startRecording(modeName = "Default", modeId: string | null
 
   try {
     await overlay.setSize(new PhysicalSize(OVERLAY_PILL_SIZE.width, OVERLAY_PILL_SIZE.height));
-    await positionOverlay(overlay);
+    await positionOverlay(overlay, targetMonitor);
   } catch {
     /* best-effort */
   }
@@ -87,23 +95,45 @@ export async function cancelRecording() {
 export async function resizeOverlayToReview() {
   const overlay = await getOverlay();
   if (!overlay) return;
+  const monitor = await currentMonitor();
   await overlay.setSize(
     new PhysicalSize(OVERLAY_REVIEW_SIZE.width, OVERLAY_REVIEW_SIZE.height),
   );
-  await positionOverlay(overlay);
+  await positionOverlay(overlay, monitor);
 }
 
 export async function resizeOverlayToPill() {
   const overlay = await getOverlay();
   if (!overlay) return;
+  const monitor = await currentMonitor();
   await overlay.setSize(
     new PhysicalSize(OVERLAY_PILL_SIZE.width, OVERLAY_PILL_SIZE.height),
   );
-  await positionOverlay(overlay);
+  await positionOverlay(overlay, monitor);
 }
 
-async function positionOverlay(overlay: Window) {
-  const monitor = await currentMonitor();
+async function getCursorMonitor(): Promise<Monitor | null> {
+  try {
+    const cursor = await cursorPosition();
+    const monitor = await monitorFromPoint(cursor.x, cursor.y);
+    if (monitor) return monitor;
+
+    const monitors = await availableMonitors();
+    return monitors.find((m) => {
+      const left = m.position.x;
+      const top = m.position.y;
+      const right = left + m.size.width;
+      const bottom = top + m.size.height;
+      return cursor.x >= left && cursor.x < right && cursor.y >= top && cursor.y < bottom;
+    }) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function positionOverlay(overlay: Window, preferredMonitor: Monitor | null) {
+  let monitor = preferredMonitor;
+  if (!monitor) monitor = await currentMonitor();
   if (!monitor) return;
   const overlaySize = await overlay.outerSize();
   const pos = loadOverlayPosition();

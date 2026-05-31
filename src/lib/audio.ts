@@ -49,21 +49,37 @@ function pickMimeType(): string {
 
 export async function startRecording(opts: AudioControllerOptions = {}): Promise<AudioController> {
   let stream: MediaStream;
+  const buildAudioConstraints = (deviceId?: string): MediaTrackConstraints => {
+    const audio: MediaTrackConstraints = {
+      channelCount: { ideal: 1 },
+      sampleRate: { ideal: 16000 },
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true,
+    };
+    if (deviceId) audio.deviceId = { exact: deviceId };
+    return audio;
+  };
   try {
     stream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        deviceId: opts.deviceId,
-        channelCount: 1,
-        sampleRate: 16000,
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
-      },
+      audio: buildAudioConstraints(opts.deviceId),
     });
   } catch (err) {
-    const e = err instanceof Error ? err : new Error(String(err));
-    opts.onError?.(e);
-    throw e;
+    if (opts.deviceId) {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: buildAudioConstraints(),
+        });
+      } catch {
+        const e = err instanceof Error ? err : new Error(String(err));
+        opts.onError?.(e);
+        throw e;
+      }
+    } else {
+      const e = err instanceof Error ? err : new Error(String(err));
+      opts.onError?.(e);
+      throw e;
+    }
   }
 
   const audioCtx = new AudioContext();

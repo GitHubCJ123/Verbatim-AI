@@ -11,6 +11,7 @@ import { sendNotification, isPermissionGranted, requestPermission } from "@tauri
 
 const LS_NOTIFY = "sw.notify.success";
 const LS_OVERLAY_POSITION = "sw.overlay.position";
+const LS_MIC_DEVICE = "sw.mic.deviceId";
 const LS_HOTKEY_PAUSED = "sw.hotkey.paused";
 const LS_CLIPBOARD_RESTORE = "sw.clipboard.restore";
 const LS_TELEMETRY = "sw.telemetry.enabled";
@@ -58,6 +59,22 @@ export function loadOverlayPosition(): OverlayPosition {
 
 export function setOverlayPosition(v: OverlayPosition): void {
   localStorage.setItem(LS_OVERLAY_POSITION, v);
+}
+
+/**
+ * Preferred microphone deviceId. Empty string means "system default" —
+ * we omit the constraint so the browser picks the default device.
+ * Stored in localStorage, which is shared across the main and overlay
+ * windows (same webview origin), so the overlay can read it at capture
+ * time.
+ */
+export function getMicDeviceId(): string {
+  return localStorage.getItem(LS_MIC_DEVICE) || "";
+}
+
+export function setMicDeviceId(v: string): void {
+  if (v) localStorage.setItem(LS_MIC_DEVICE, v);
+  else localStorage.removeItem(LS_MIC_DEVICE);
 }
 
 export function isHotkeyPaused(): boolean {

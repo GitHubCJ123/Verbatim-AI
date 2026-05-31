@@ -12,7 +12,7 @@ import { Input } from "../components/ui/Input";
 import { ProgressBar } from "../components/ui/ProgressBar";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "../components/ui/Select";
 import { HotkeyRecorder } from "../components/settings/HotkeyRecorder";
-import { applyHotkey, loadHotkeyConfig, saveHotkeyConfig } from "../lib/hotkey";
+import { applyHotkey, isMacSingleKeySpec, loadHotkeyConfig, saveHotkeyConfig } from "../lib/hotkey";
 import {
   isAutostartEnabled,
   loadPreferences,
@@ -348,6 +348,7 @@ export default function Settings() {
   const [hotkey, setHotkey] = useState(() => loadHotkeyConfig());
   const [autostart, setAutostartState] = useState(false);
   const [notifyOnSuccess, setNotifyState] = useState(() => loadPreferences().notifyOnSuccess);
+  const singleKeyHoldToTalk = isMacSingleKeySpec(hotkey.spec);
 
   useEffect(() => {
     saveHotkeyConfig(hotkey);
@@ -360,7 +361,7 @@ export default function Settings() {
   const handleHotkeyChange = async (spec: string) => {
     try {
       await applyHotkey(spec);
-      setHotkey((h) => ({ ...h, spec }));
+      setHotkey((h) => ({ ...h, spec, pushToTalk: h.pushToTalk || isMacSingleKeySpec(spec) }));
       toast.success("Hotkey updated", { description: `Now using ${spec}` });
     } catch (e) {
       toast.error("Couldn't register that shortcut", {
@@ -434,9 +435,17 @@ export default function Settings() {
               <SettingRow title="Microphone" description="Input device used for recording.">
                 <MicrophoneSelect />
               </SettingRow>
-              <SettingRow title="Push-to-talk" description="Hold to record. Off = tap to toggle.">
+              <SettingRow
+                title="Push-to-talk"
+                description={
+                  singleKeyHoldToTalk
+                    ? "Single-key macOS shortcuts always record while held."
+                    : "Hold to record. Off = tap to toggle."
+                }
+              >
                 <Switch
-                  checked={hotkey.pushToTalk}
+                  checked={singleKeyHoldToTalk || hotkey.pushToTalk}
+                  disabled={singleKeyHoldToTalk}
                   onCheckedChange={(checked) =>
                     setHotkey((h) => ({ ...h, pushToTalk: checked }))
                   }

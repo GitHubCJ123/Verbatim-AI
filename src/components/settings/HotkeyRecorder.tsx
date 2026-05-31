@@ -6,7 +6,7 @@
  * Build-up UX: modifiers appear in the field as soon as you press them.
  * Press a non-modifier next to commit. Click again to start over.
  */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Kbd } from "../ui/Kbd";
 import { Button } from "../ui/Button";
 import { cn } from "../../lib/utils";
@@ -68,6 +68,7 @@ export function HotkeyRecorder({ value, onChange }: HotkeyRecorderProps) {
   // Pending modifiers accumulated as the user presses keys.
   const [pendingMods, setPendingMods] = useState<string[]>([]);
   const [committed, setCommitted] = useState<string | null>(null);
+  const committedRef = useRef<string | null>(null);
 
   const handleKey = useCallback(
     (e: KeyboardEvent) => {
@@ -79,6 +80,7 @@ export function HotkeyRecorder({ value, onChange }: HotkeyRecorderProps) {
         setRecording(false);
         setPendingMods([]);
         setCommitted(null);
+        committedRef.current = null;
         return;
       }
 
@@ -89,7 +91,8 @@ export function HotkeyRecorder({ value, onChange }: HotkeyRecorderProps) {
         return;
       }
 
-      // Non-modifier — commit if we have at least one modifier.
+      // Non-modifier — commit if we have at least one modifier. On macOS,
+      // single-key press-and-hold is allowed for push-to-talk.
       const mainKey = mainKeyFromEvent(e);
       if (!mainKey) return;
 
@@ -102,11 +105,12 @@ export function HotkeyRecorder({ value, onChange }: HotkeyRecorderProps) {
         if (e.metaKey) all.add("Super");
         if (e.shiftKey) all.add("Shift");
         if (e.altKey) all.add("Alt");
-        if (all.size === 0) {
-          // No modifier — not a valid global shortcut. Keep recording.
+        if (all.size === 0 && !IS_MAC) {
+          // No modifier — not a valid global shortcut on non-macOS. Keep recording.
           return accumulated;
         }
-        const spec = [...all, mainKey].join("+");
+        const spec = all.size === 0 ? mainKey : [...all, mainKey].join("+");
+        committedRef.current = spec;
         setCommitted(spec);
         setRecording(false);
         onChange(spec);
@@ -123,10 +127,10 @@ export function HotkeyRecorder({ value, onChange }: HotkeyRecorderProps) {
       window.removeEventListener("keydown", handleKey, true);
       // Re-register whatever the user committed (or fall back to what
       // they had before they opened the recorder).
-      const spec = committed ?? value;
+      const spec = committedRef.current ?? value;
       if (spec) void applyHotkey(spec).catch(() => {});
     };
-  }, [recording, handleKey, committed, value]);
+  }, [recording, handleKey, value]);
 
   const displayed = committed ?? value;
   const tokens = recording && pendingMods.length > 0 ? pendingMods : parts(displayed);
@@ -145,6 +149,7 @@ export function HotkeyRecorder({ value, onChange }: HotkeyRecorderProps) {
           }
           setPendingMods([]);
           setCommitted(null);
+          committedRef.current = null;
           setRecording(true);
         }}
         className={cn(
@@ -156,7 +161,9 @@ export function HotkeyRecorder({ value, onChange }: HotkeyRecorderProps) {
       >
         {tokens.length === 0 ? (
           recording ? (
-            <span className="text-xs text-text-secondary">Press your shortcut…</span>
+            <span className="text-xs text-text-secondary">
+              {IS_MAC ? "Press a key or shortcut…" : "Press your shortcut…"}
+            </span>
           ) : (
             <span className="text-xs text-text-muted">No shortcut</span>
           )
@@ -178,6 +185,7 @@ export function HotkeyRecorder({ value, onChange }: HotkeyRecorderProps) {
           onClick={() => {
             setRecording(false);
             setPendingMods([]);
+            committedRef.current = null;
           }}
         >
           Cancel

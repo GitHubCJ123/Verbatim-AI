@@ -20,7 +20,7 @@ import { isOnboardingComplete } from "./store/useOnboarding";
 const LS_HOTKEY = "sw.hotkey.spec";
 const LS_PTT = "sw.hotkey.ptt";
 // On macOS ⌘+Space is Spotlight — pick something the user can use out of the box.
-const IS_MAC =
+export const IS_MAC =
   typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
 const DEFAULT_SPEC = IS_MAC ? "Control+Shift+Space" : "CommandOrControl+Space";
 
@@ -45,6 +45,18 @@ export function loadHotkeyConfig(): HotkeyConfig {
 export function saveHotkeyConfig(cfg: HotkeyConfig) {
   localStorage.setItem(LS_HOTKEY, cfg.spec);
   localStorage.setItem(LS_PTT, cfg.pushToTalk ? "1" : "0");
+}
+
+export function isSingleKeySpec(spec: string): boolean {
+  return spec.split("+").map((p) => p.trim()).filter(Boolean).length === 1;
+}
+
+export function isMacSingleKeySpec(spec: string): boolean {
+  return IS_MAC && isSingleKeySpec(spec);
+}
+
+export function usesHoldToTalk(cfg: HotkeyConfig): boolean {
+  return cfg.pushToTalk || isMacSingleKeySpec(cfg.spec);
 }
 
 export async function applyHotkey(spec: string): Promise<void> {
@@ -74,6 +86,7 @@ export async function installHotkeyListeners(): Promise<UnlistenFn> {
 
   // Toggle mode tracks "are we currently recording?" across taps.
   let toggleRecording = false;
+  let holdToTalkRecording = false;
 
   const offDown = await listen("hotkey:down", async () => {
     if (isHotkeyPaused()) return;
@@ -92,8 +105,15 @@ export async function installHotkeyListeners(): Promise<UnlistenFn> {
       );
     }
 
-    if (cfg.pushToTalk) {
-      await startRecording(mode.name, mode.id);
+    if (usesHoldToTalk(cfg)) {
+      if (holdToTalkRecording) return;
+      holdToTalkRecording = true;
+      try {
+        await startRecording(mode.name, mode.id);
+      } catch (e) {
+        holdToTalkRecording = false;
+        throw e;
+      }
     } else {
       if (toggleRecording) {
         toggleRecording = false;
@@ -108,7 +128,8 @@ export async function installHotkeyListeners(): Promise<UnlistenFn> {
   const offUp = await listen("hotkey:up", async () => {
     if (isHotkeyPaused()) return;
     const cfg = loadHotkeyConfig();
-    if (cfg.pushToTalk) {
+    if (usesHoldToTalk(cfg) && holdToTalkRecording) {
+      holdToTalkRecording = false;
       await stopRecording();
     }
   });

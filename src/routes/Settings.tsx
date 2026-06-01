@@ -15,9 +15,7 @@ import { HotkeyRecorder } from "../components/settings/HotkeyRecorder";
 import { applyHotkey, isMacSingleKeySpec, loadHotkeyConfig, saveHotkeyConfig } from "../lib/hotkey";
 import {
   isAutostartEnabled,
-  loadPreferences,
   setAutostart,
-  setNotifyOnSuccess,
 } from "../lib/preferences";
 import { useOnboarding } from "../lib/store/useOnboarding";
 import {
@@ -347,7 +345,6 @@ export default function Settings() {
   const navigate = useNavigate();
   const [hotkey, setHotkey] = useState(() => loadHotkeyConfig());
   const [autostart, setAutostartState] = useState(false);
-  const [notifyOnSuccess, setNotifyState] = useState(() => loadPreferences().notifyOnSuccess);
   const singleKeyHoldToTalk = isMacSingleKeySpec(hotkey.spec);
 
   useEffect(() => {
@@ -401,18 +398,6 @@ export default function Settings() {
                   }}
                 />
               </SettingRow>
-              <SettingRow
-                title="Notify on transcribe"
-                description="Show a system notification after each successful transcription."
-              >
-                <Switch
-                  checked={notifyOnSuccess}
-                  onCheckedChange={(v) => {
-                    setNotifyOnSuccess(v);
-                    setNotifyState(v);
-                  }}
-                />
-              </SettingRow>
               <SettingRow title="Theme" description={`Match ${osName()} or pick light/dark.`}>
                 <ThemeSelect />
               </SettingRow>
@@ -450,9 +435,6 @@ export default function Settings() {
                     setHotkey((h) => ({ ...h, pushToTalk: checked }))
                   }
                 />
-              </SettingRow>
-              <SettingRow title="Noise suppression" description="Filter background noise during recording.">
-                <Switch defaultChecked />
               </SettingRow>
             </CardContent>
           </Card>

@@ -61,8 +61,6 @@ import {
   type OverlayPosition,
   isHistoryDisabled,
   setHistoryDisabled,
-  setNotifyOnSuccess,
-  loadPreferences,
   isAutostartEnabled,
   setAutostart,
 } from "../../lib/preferences";
@@ -1610,16 +1608,11 @@ function PreferencesStep() {
   const next = useOnboarding((s) => s.next);
   const theme = useTheme((s) => s.theme);
   const setTheme = useTheme((s) => s.set);
-  const [notify, setNotify] = useState(loadPreferences().notifyOnSuccess);
   const [autostart, setAutostartState] = useState(false);
 
   useEffect(() => {
     void isAutostartEnabled().then(setAutostartState);
   }, []);
-
-  useEffect(() => {
-    setNotifyOnSuccess(notify);
-  }, [notify]);
 
   const toggleAutostart = async (v: boolean) => {
     try {
@@ -1640,13 +1633,6 @@ function PreferencesStep() {
       />
       <Card className="mt-6">
         <CardContent className="flex flex-col gap-1 p-2">
-          <PrefRow
-            Icon={Bell}
-            title="Transcription notifications"
-            description="Pop a desktop notification when a transcript is ready."
-          >
-            <Switch checked={notify} onCheckedChange={setNotify} />
-          </PrefRow>
           <PrefRow
             Icon={Power}
             title="Launch at startup"

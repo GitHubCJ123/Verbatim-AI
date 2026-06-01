@@ -23,7 +23,6 @@
     "clipboard-manager:allow-write-text",
     "clipboard-manager:allow-read-text",
     "autostart:default",
-    "notification:default",
     "updater:default",
     "process:default",
     "core:app:allow-version",

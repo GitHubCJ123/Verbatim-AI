@@ -12,7 +12,7 @@ import { addTranscription, type OutputAction } from "./lib/history";
 import { useAuth } from "./lib/store/useAuth";
 import { startRecording as bridgeStart, stopRecording as bridgeStop } from "./lib/recording-bridge";
 import { resolveModeAtPress } from "./lib/modeResolver";
-import { loadPreferences, notify, isHotkeyPaused, setHotkeyPaused, isHistoryDisabled } from "./lib/preferences";
+import { isHotkeyPaused, setHotkeyPaused, isHistoryDisabled } from "./lib/preferences";
 
 // Install global hotkey event listeners as soon as the app boots.
 void installHotkeyListeners();
@@ -111,9 +111,6 @@ void listen<PendingResult>("recording:result", async (e) => {
     description: e.payload.cleaned.slice(0, 240),
     duration: 6000,
   });
-  if (loadPreferences().notifyOnSuccess) {
-    void notify("Transcribed", e.payload.cleaned.slice(0, 240));
-  }
   // For auto-paste, persist immediately with action 'pasted' (review
   // mode waits for the user to commit).
   if (e.payload.outputStyle === "paste") {

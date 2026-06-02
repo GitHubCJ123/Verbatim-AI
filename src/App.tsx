@@ -12,7 +12,7 @@ import Account from "./routes/Account";
 import Onboarding from "./routes/onboarding/Onboarding";
 import AuthGate from "./routes/AuthGate";
 import ModePicker from "./routes/ModePicker";
-import { isOnboardingComplete } from "./lib/store/useOnboarding";
+import { hasExistingConfig } from "./lib/store/useOnboarding";
 import { isSupabaseConfigured } from "./lib/supabase";
 import { useAuth } from "./lib/store/useAuth";
 import { hydrateAll, clearAllCaches } from "./lib/store/useModes";
@@ -60,7 +60,7 @@ const router = createMemoryRouter(
       path: "/migrate",
       element: (
         <MigrationPicker
-          onDone={() => router.navigate(isOnboardingComplete() ? "/" : "/onboarding", { replace: true })}
+          onDone={() => router.navigate(hasExistingConfig() ? "/" : "/onboarding", { replace: true })}
         />
       ),
     },
@@ -127,7 +127,7 @@ export default function App() {
           setHydrationError(e instanceof Error ? e.message : String(e));
         }
         if (!cancelled) {
-          router.navigate(isOnboardingComplete() ? "/" : "/onboarding", { replace: true });
+          router.navigate(hasExistingConfig() ? "/" : "/onboarding", { replace: true });
           setPhase("ready");
         }
         return;
@@ -153,7 +153,7 @@ export default function App() {
             } catch (e) {
               setHydrationError(e instanceof Error ? e.message : String(e));
             }
-            router.navigate(isOnboardingComplete() ? "/" : "/onboarding", { replace: true });
+            router.navigate(hasExistingConfig() ? "/" : "/onboarding", { replace: true });
           })();
         }
         if (!state.user && prev.user) {
@@ -185,7 +185,7 @@ export default function App() {
           setHydrationError(e instanceof Error ? e.message : String(e));
         }
         if (!cancelled) {
-          router.navigate(isOnboardingComplete() ? "/" : "/onboarding", { replace: true });
+          router.navigate(hasExistingConfig() ? "/" : "/onboarding", { replace: true });
         }
       } else if (!cancelled) {
         // Cloud mode, signed out — go to auth gate.

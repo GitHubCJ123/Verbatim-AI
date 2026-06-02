@@ -7,9 +7,10 @@
  *   - one app_mapping per picked app pointing at its tone's Mode
  */
 import { create } from "zustand";
-import { useModes } from "./useModes";
+import { useModes, loadModes } from "./useModes";
 import { useAppMappings } from "./useAppMappings";
 import { useAuth } from "./useAuth";
+import { getCurrentVersion, setLastSeenVersion } from "../whatsNew";
 
 function progressKey() {
   const uid = useAuth.getState().user?.id ?? "anon";
@@ -67,7 +68,7 @@ interface OnboardingState {
   setHotkey: (s: string) => void;
   setPushToTalk: (v: boolean) => void;
   setMicPermission: (v: "granted" | "denied") => void;
-  finish: () => void;
+  finish: () => Promise<void>;
   reset: () => void;
 }
 
@@ -121,9 +122,18 @@ export const useOnboarding = create<OnboardingState>((set, get) => {
     setHotkey: (s) => set({ hotkey: s }),
     setPushToTalk: (v) => set({ pushToTalk: v }),
     setMicPermission: (v) => set({ micPermission: v }),
-    finish: () => {
+    finish: async () => {
       saveProgress(TOTAL_STEPS - 1, true);
       set({ completed: true });
+      // A user finishing onboarding is, by definition, current — mark the
+      // running version as seen so they don't get a "What's New" recap of
+      // features they never missed. Awaited by callers before they enter
+      // the app shell so the WhatsNewModal sees the seeded version.
+      try {
+        setLastSeenVersion(await getCurrentVersion());
+      } catch {
+        // Best-effort; worst case the modal shows once.
+      }
     },
     reset: () => {
       localStorage.removeItem(progressKey());
@@ -134,6 +144,19 @@ export const useOnboarding = create<OnboardingState>((set, get) => {
 
 export function isOnboardingComplete(): boolean {
   return loadProgress().completed;
+}
+
+/**
+ * Whether the user already has a usable config and should skip onboarding.
+ * True when onboarding was completed OR Modes already exist (e.g. an
+ * upgrade, or a config created/synced outside the onboarding flow).
+ */
+export function hasExistingConfig(): boolean {
+  if (isOnboardingComplete()) return true;
+  // Built-in Modes are auto-seeded on first launch (locally and via the
+  // Supabase trigger), so they don't prove a real user config. A
+  // user-created/customized Mode does.
+  return loadModes().some((m) => !m.isBuiltin);
 }
 
 // ─── Auto-generation ────────────────────────────────────────────────────
@@ -226,6 +249,6 @@ export async function applyOnboarding(): Promise<{ modesCreated: number; mapping
     mappingsCreated += 1;
   }
 
-  state.finish();
+  await state.finish();
   return { modesCreated, mappingsCreated };
 }

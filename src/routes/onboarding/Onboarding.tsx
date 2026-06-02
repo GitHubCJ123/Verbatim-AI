@@ -261,8 +261,8 @@ function Welcome() {
         <Button
           variant="ghost"
           size="lg"
-          onClick={() => {
-            finish();
+          onClick={async () => {
+            await finish();
             navigate("/", { replace: true });
           }}
         >
@@ -713,8 +713,8 @@ function TestRecording() {
       <NavRow
         onBack={back}
         primaryLabel="Open Verbatim AI"
-        onPrimary={() => {
-          finish();
+        onPrimary={async () => {
+          await finish();
           navigate("/", { replace: true });
         }}
       />

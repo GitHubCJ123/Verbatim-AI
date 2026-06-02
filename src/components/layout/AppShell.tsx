@@ -2,6 +2,7 @@ import { motion } from "framer-motion";
 import { Outlet, useLocation } from "react-router-dom";
 import { Sidebar } from "./Sidebar";
 import { TopBar } from "./TopBar";
+import { WhatsNewModal } from "./WhatsNewModal";
 import { TooltipProvider } from "../ui/Tooltip";
 
 export function AppShell() {
@@ -9,6 +10,7 @@ export function AppShell() {
 
   return (
     <TooltipProvider delayDuration={200}>
+      <WhatsNewModal />
       <div className="flex h-screen w-screen overflow-hidden bg-bg-base text-text-primary">
         <Sidebar />
         <div className="flex flex-1 flex-col">

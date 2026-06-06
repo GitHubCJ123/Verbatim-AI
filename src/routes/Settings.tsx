@@ -76,6 +76,8 @@ import {
   type OverlayPosition,
   isClipboardRestoreEnabled,
   setClipboardRestore,
+  isInsertOnlyEnabled,
+  setInsertOnly,
   isHistoryDisabled,
   setHistoryDisabled,
   getMicDeviceId,
@@ -203,6 +205,19 @@ function ClipboardRestoreSwitch() {
       checked={on}
       onCheckedChange={(v) => {
         setClipboardRestore(v);
+        setOn(v);
+      }}
+    />
+  );
+}
+
+function InsertOnlySwitch() {
+  const [on, setOn] = useState(isInsertOnlyEnabled());
+  return (
+    <Switch
+      checked={on}
+      onCheckedChange={(v) => {
+        setInsertOnly(v);
         setOn(v);
       }}
     />
@@ -414,7 +429,7 @@ export default function Settings() {
         <TabsContent value="recording">
           <Card>
             <CardContent className="p-5 pt-5">
-              <SettingRow title="Global hotkey" description="Hold to dictate from anywhere.">
+              <SettingRow title="Global hotkey" description="Hold to dictate from anywhere. Use a shortcut or a single function key (e.g. F6). The raw Fn key can't be captured as a global shortcut on most systems — pick a function key instead.">
                 <HotkeyRecorder value={hotkey.spec} onChange={handleHotkeyChange} />
               </SettingRow>
               <SettingRow title="Microphone" description="Input device used for recording.">
@@ -451,6 +466,12 @@ export default function Settings() {
                 description={`When on, Verbatim AI remembers whatever you had on the clipboard before dictating, pastes the cleaned text, then puts your original content back ~1 second later. Off by default — ${clipboardHistoryHint()}`}
               >
                 <ClipboardRestoreSwitch />
+              </SettingRow>
+              <SettingRow
+                title="Insert only — don't copy to clipboard"
+                description="When on, the transcription is pasted into the focused app but is not left on your clipboard afterwards. Off by default, so the cleaned text is also copied as usual."
+              >
+                <InsertOnlySwitch />
               </SettingRow>
             </CardContent>
           </Card>

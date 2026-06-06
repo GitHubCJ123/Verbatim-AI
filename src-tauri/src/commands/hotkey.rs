@@ -46,6 +46,8 @@ pub fn set_hotkey<R: Runtime>(
     spec: String,
 ) -> Result<(), String> {
     let manager = app.global_shortcut();
+    // `spec` may be a multi-key combo ("CommandOrControl+Space") or a single
+    // key such as a function key ("F6"); both parse and register the same way.
     let parsed = Shortcut::from_str(&spec).map_err(|e| format!("Invalid shortcut: {e}"))?;
 
     // Idempotent: if the same shortcut is already current, no-op.

@@ -4,7 +4,7 @@
  */
 import { invoke } from "@tauri-apps/api/core";
 import { writeText, readText } from "@tauri-apps/plugin-clipboard-manager";
-import { isClipboardRestoreEnabled } from "./preferences";
+import { isClipboardRestoreEnabled, isInsertOnlyEnabled } from "./preferences";
 
 const CLIPBOARD_RESTORE_DELAY_MS = 1000;
 
@@ -14,11 +14,18 @@ const CLIPBOARD_RESTORE_DELAY_MS = 1000;
  *
  * If clipboard-restore is enabled, snapshots the user's clipboard
  * before writing and restores it ~1s after paste.
+ *
+ * If insert-only is enabled, the transcription is pasted but never left on
+ * the clipboard: after a successful paste we restore the prior clipboard
+ * contents, or clear the clipboard when there were none. When there is no
+ * paste target we keep the text on the clipboard as a manual-paste fallback.
  */
 export async function pasteCleanedText(text: string): Promise<boolean> {
+  const insertOnly = isInsertOnlyEnabled();
   const restore = isClipboardRestoreEnabled();
+  // Snapshot the clipboard if we may need to put something back afterwards.
   let prev: string | null = null;
-  if (restore) {
+  if (insertOnly || restore) {
     try {
       prev = await readText();
     } catch {
@@ -28,7 +35,13 @@ export async function pasteCleanedText(text: string): Promise<boolean> {
   await writeText(text);
   try {
     const ok = await invoke<boolean>("paste_to_target");
-    if (restore && prev !== null) {
+    if (ok && insertOnly) {
+      // Never leave the transcription on the clipboard. Restore the prior
+      // contents, or clear it when there was nothing before.
+      setTimeout(() => {
+        void writeText(prev ?? "").catch(() => {});
+      }, CLIPBOARD_RESTORE_DELAY_MS);
+    } else if (restore && prev !== null) {
       setTimeout(() => {
         void writeText(prev!).catch(() => {});
       }, CLIPBOARD_RESTORE_DELAY_MS);

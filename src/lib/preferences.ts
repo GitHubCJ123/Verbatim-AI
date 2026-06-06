@@ -12,6 +12,7 @@ const LS_OVERLAY_POSITION = "sw.overlay.position";
 const LS_MIC_DEVICE = "sw.mic.deviceId";
 const LS_HOTKEY_PAUSED = "sw.hotkey.paused";
 const LS_CLIPBOARD_RESTORE = "sw.clipboard.restore";
+const LS_INSERT_ONLY = "sw.output.insertOnly";
 const LS_TELEMETRY = "sw.telemetry.enabled";
 const LS_AI_DISABLED = "sw.ai.disabled";
 const LS_HISTORY_DISABLED = "sw.history.disabled";
@@ -100,6 +101,19 @@ export function isClipboardRestoreEnabled(): boolean {
 
 export function setClipboardRestore(v: boolean): void {
   localStorage.setItem(LS_CLIPBOARD_RESTORE, v ? "1" : "0");
+}
+
+/**
+ * Insert-only output. When on, the cleaned transcription is pasted into the
+ * focused app but is NOT left on the system clipboard afterwards. Off by
+ * default so existing users keep today's copy + paste behavior.
+ */
+export function isInsertOnlyEnabled(): boolean {
+  return localStorage.getItem(LS_INSERT_ONLY) === "1";
+}
+
+export function setInsertOnly(v: boolean): void {
+  localStorage.setItem(LS_INSERT_ONLY, v ? "1" : "0");
 }
 
 export function isTelemetryEnabled(): boolean {

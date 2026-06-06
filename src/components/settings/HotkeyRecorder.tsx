@@ -63,6 +63,13 @@ function mainKeyFromEvent(e: KeyboardEvent): string | null {
   return null;
 }
 
+// Function keys (F1–F24) are safe to bind on their own: unlike a bare
+// letter or digit they don't collide with ordinary typing, so we allow
+// them as single-key global shortcuts on every platform.
+function isFunctionKey(key: string): boolean {
+  return /^F(?:[1-9]|1[0-9]|2[0-4])$/.test(key);
+}
+
 export function HotkeyRecorder({ value, onChange }: HotkeyRecorderProps) {
   const [recording, setRecording] = useState(false);
   // Pending modifiers accumulated as the user presses keys.
@@ -105,8 +112,10 @@ export function HotkeyRecorder({ value, onChange }: HotkeyRecorderProps) {
         if (e.metaKey) all.add("Super");
         if (e.shiftKey) all.add("Shift");
         if (e.altKey) all.add("Alt");
-        if (all.size === 0 && !IS_MAC) {
-          // No modifier — not a valid global shortcut on non-macOS. Keep recording.
+        if (all.size === 0 && !IS_MAC && !isFunctionKey(mainKey)) {
+          // No modifier — only function keys (e.g. F6) are safe as a
+          // standalone global shortcut on non-macOS. Keep recording for
+          // any other bare key so we don't hijack ordinary typing.
           return accumulated;
         }
         const spec = all.size === 0 ? mainKey : [...all, mainKey].join("+");
@@ -162,7 +171,7 @@ export function HotkeyRecorder({ value, onChange }: HotkeyRecorderProps) {
         {tokens.length === 0 ? (
           recording ? (
             <span className="text-xs text-text-secondary">
-              {IS_MAC ? "Press a key or shortcut…" : "Press your shortcut…"}
+              {IS_MAC ? "Press a key or shortcut…" : "Press a shortcut or function key…"}
             </span>
           ) : (
             <span className="text-xs text-text-muted">No shortcut</span>

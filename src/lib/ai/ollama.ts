@@ -57,12 +57,12 @@ const LS_CLEANUP_PROVIDER = "sw.ai.cleanupProvider";
 const LS_OLLAMA_HOST = "sw.ai.ollamaHost";
 const LS_OLLAMA_MODEL = "sw.ai.ollamaModel";
 
-export type CleanupProviderKind = "cloud" | "local-ollama";
+export type CleanupProviderKind = "cloud" | "local-ollama" | "local-llamacpp";
 
 export function getCleanupProviderKind(): CleanupProviderKind {
-  return localStorage.getItem(LS_CLEANUP_PROVIDER) === "local-ollama"
-    ? "local-ollama"
-    : "cloud";
+  const v = localStorage.getItem(LS_CLEANUP_PROVIDER);
+  if (v === "local-ollama" || v === "local-llamacpp") return v;
+  return "cloud";
 }
 export function setCleanupProviderKind(v: CleanupProviderKind): void {
   localStorage.setItem(LS_CLEANUP_PROVIDER, v);

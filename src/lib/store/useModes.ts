@@ -80,7 +80,7 @@ interface RemoteMode {
   updated_at: string;
   transcribe_provider: "cloud" | "local-whisper" | "local-parakeet" | null;
   whisper_tier: "tiny" | "base" | "small" | "turbo" | "large-v3" | null;
-  cleanup_provider: "cloud" | "local-ollama" | null;
+  cleanup_provider: "cloud" | "local-ollama" | "local-llamacpp" | null;
   ollama_model: string | null;
 }
 

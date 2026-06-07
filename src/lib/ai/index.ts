@@ -24,11 +24,19 @@ import {
   getOllamaHost,
   getOllamaModel,
 } from "./ollama";
+import {
+  LlamaCppProvider,
+  getLlamaCppBaseUrl,
+  getLlamaCppModel,
+  getLlamaCppApiKey,
+} from "./llamacpp";
+import { parseOpenAISSEStream } from "./openaiCompat";
 import { ParakeetProvider, getParakeetLanguage, getParakeetVariant, type ParakeetVariant } from "./parakeet";
 import type { Mode } from "../../types/mode";
 
 export * from "./localWhisper";
 export * from "./ollama";
+export * from "./llamacpp";
 export * from "./parakeet";
 
 const TRANSCRIBE_TIMEOUT_MS = 10 * 60 * 1000; // 10 min — covers long recordings; whisper auto-chunks anyway.
@@ -167,7 +175,7 @@ export class SupabaseAIProvider implements AIProvider {
       throw new Error(`${res.status}: ${errBody || res.statusText}`);
     }
 
-    yield* parseSSEStream(res.body);
+    yield* parseOpenAISSEStream(res.body);
   }
 
   async health(): Promise<ProviderHealth> {
@@ -200,6 +208,7 @@ export class SupabaseAIProvider implements AIProvider {
 let cloudCache: SupabaseAIProvider | null = null;
 const localWhisperByTier = new Map<WhisperTier, LocalWhisperProvider>();
 const ollamaByKey = new Map<string, OllamaProvider>();
+const llamacppByKey = new Map<string, LlamaCppProvider>();
 const parakeetByKey = new Map<string, ParakeetProvider>();
 
 function getCloud(): SupabaseAIProvider {
@@ -237,6 +246,18 @@ function transcribeProvider(mode?: Mode | null): AIProvider {
 function cleanupProvider(mode?: Mode | null): AIProvider {
   const kind = mode?.cleanupProviderOverride ?? getCleanupProviderKind();
   if (kind === "cloud") return getCloud();
+  if (kind === "local-llamacpp") {
+    const baseUrl = getLlamaCppBaseUrl();
+    const model = getLlamaCppModel();
+    const apiKey = getLlamaCppApiKey();
+    const key = `${baseUrl}|${model}|${apiKey}`;
+    let p = llamacppByKey.get(key);
+    if (!p) {
+      p = new LlamaCppProvider({ baseUrl, model, apiKey });
+      llamacppByKey.set(key, p);
+    }
+    return p;
+  }
   const host = getOllamaHost();
   const model = mode?.ollamaModelOverride ?? getOllamaModel();
   const key = `${host}|${model}`;
@@ -272,33 +293,4 @@ export function getActiveProvider(mode?: Mode | null): AIProvider | null {
       };
     },
   };
-}
-
-async function* parseSSEStream(body: ReadableStream<Uint8Array>): AsyncIterable<string> {
-  const reader = body.getReader();
-  const decoder = new TextDecoder("utf-8");
-  let buffer = "";
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-
-    let idx;
-    while ((idx = buffer.indexOf("\n")) >= 0) {
-      const line = buffer.slice(0, idx).trim();
-      buffer = buffer.slice(idx + 1);
-      if (!line.startsWith("data:")) continue;
-      const payload = line.slice(5).trim();
-      if (payload === "[DONE]") return;
-      try {
-        const json = JSON.parse(payload) as {
-          choices?: Array<{ delta?: { content?: string } }>;
-        };
-        const delta = json.choices?.[0]?.delta?.content;
-        if (delta) yield delta;
-      } catch {
-        // ignore keep-alives / malformed lines
-      }
-    }
-  }
 }

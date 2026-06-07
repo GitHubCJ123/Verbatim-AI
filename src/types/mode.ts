@@ -11,7 +11,7 @@ export type OutputStyle = "paste" | "review";
  * Settings → AI model". When set, the Mode always wins over the global. */
 export type TranscribeProviderKind = "cloud" | "local-whisper" | "local-parakeet";
 export type WhisperTierKind = "tiny" | "base" | "small" | "turbo" | "large-v3";
-export type CleanupProviderKind = "cloud" | "local-ollama";
+export type CleanupProviderKind = "cloud" | "local-ollama" | "local-llamacpp";
 
 export interface Mode {
   id: string;

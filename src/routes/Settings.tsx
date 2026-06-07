@@ -47,6 +47,16 @@ import {
   type OllamaModelInfo,
   type SuggestedModel,
   type PingResult,
+  getLlamaCppBaseUrl,
+  setLlamaCppBaseUrl,
+  getLlamaCppModel,
+  setLlamaCppModel,
+  getLlamaCppApiKey,
+  setLlamaCppApiKey,
+  pingLlamaCpp,
+  listLlamaCppModels,
+  DEFAULT_LLAMACPP_BASE_URL,
+  type LlamaCppModelInfo,
   PARAKEET_LANGUAGES,
   getParakeetLanguage,
   setParakeetLanguage,
@@ -1141,9 +1151,13 @@ function CleanupSection() {
   const handleKind = (next: CleanupProviderKind) => {
     setCleanupProviderKind(next);
     setKind(next);
-    toast.success(
-      next === "cloud" ? "Cleanup: using cloud" : "Cleanup: using local Ollama",
-    );
+    const label =
+      next === "cloud"
+        ? "cloud"
+        : next === "local-llamacpp"
+          ? "local llama.cpp"
+          : "local Ollama";
+    toast.success(`Cleanup: using ${label}`);
   };
 
   return (
@@ -1159,6 +1173,7 @@ function CleanupSection() {
               <SelectContent>
                 <SelectItem value="cloud">Cloud (Azure GPT)</SelectItem>
                 <SelectItem value="local-ollama">Local (Ollama)</SelectItem>
+                <SelectItem value="local-llamacpp">Local (llama.cpp)</SelectItem>
               </SelectContent>
             </Select>
           </SettingRow>
@@ -1288,7 +1303,163 @@ function CleanupSection() {
           }}
         />
       )}
+
+      {kind === "local-llamacpp" && <LlamaCppSection />}
     </>
+  );
+}
+
+function LlamaCppSection() {
+  const [baseUrl, setBaseUrlState] = useState<string>(getLlamaCppBaseUrl());
+  const [model, setModelState] = useState<string>(getLlamaCppModel());
+  const [apiKey, setApiKeyState] = useState<string>(getLlamaCppApiKey());
+  const [ping, setPing] = useState<PingResult | null>(null);
+  const [models, setModels] = useState<LlamaCppModelInfo[]>([]);
+  const [testing, setTesting] = useState(false);
+
+  const test = async () => {
+    setTesting(true);
+    try {
+      const p = await pingLlamaCpp(baseUrl, apiKey);
+      setPing(p);
+      if (p.kind === "ok") {
+        try {
+          setModels(await listLlamaCppModels(baseUrl, apiKey));
+        } catch {
+          setModels([]);
+        }
+        toast.success("Connected to llama-server");
+      } else {
+        setModels([]);
+        toast.error("Couldn't reach llama-server", {
+          description:
+            p.kind === "forbidden"
+              ? `Rejected with HTTP ${p.status}. Check the API key.`
+              : p.kind === "http-error"
+                ? `Server returned HTTP ${p.status}.`
+                : p.message,
+        });
+      }
+    } catch (e) {
+      setPing({ kind: "unreachable", message: e instanceof Error ? e.message : String(e) });
+      setModels([]);
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  useEffect(() => {
+    void test();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return (
+    <Card>
+      <CardContent className="p-5 pt-5">
+        <div className="mb-3 text-sm font-medium">llama.cpp (llama-server)</div>
+        <div className="mb-4 text-xs text-text-muted">
+          Verbatim AI talks to a local{" "}
+          <a
+            href="https://github.com/ggml-org/llama.cpp"
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1 text-accent-start hover:underline"
+          >
+            llama-server <ExternalLink className="h-3 w-3" />
+          </a>{" "}
+          over its OpenAI-compatible API. Start it with a plain GGUF model, e.g.{" "}
+          <code className="text-text-primary">llama-server -m model.gguf -c 4096 --port 8080</code>.
+        </div>
+
+        <SettingRow
+          title="Status"
+          description="Result of the last Test connection to llama-server."
+        >
+          {ping === null ? (
+            <span className="text-xs text-text-muted">—</span>
+          ) : ping.kind === "ok" ? (
+            <span className="inline-flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
+              <CheckCircle2 className="h-3.5 w-3.5" /> Connected
+            </span>
+          ) : ping.kind === "forbidden" ? (
+            <span className="inline-flex items-center gap-1 text-xs text-danger">
+              Rejected ({ping.status})
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-1 text-xs text-danger">
+              Not reachable
+            </span>
+          )}
+        </SettingRow>
+
+        <SettingRow
+          title="Base URL"
+          description="Where llama-server listens. Plain http:// must be localhost / 127.0.0.1; use https:// for a remote server."
+        >
+          <Input
+            className="w-64"
+            value={baseUrl}
+            onChange={(e) => {
+              setBaseUrlState(e.target.value);
+              setLlamaCppBaseUrl(e.target.value);
+            }}
+            placeholder={DEFAULT_LLAMACPP_BASE_URL}
+          />
+        </SettingRow>
+
+        <SettingRow
+          title="Model (optional)"
+          description="Leave blank to use whichever GGUF llama-server has loaded."
+        >
+          <Input
+            className="w-64"
+            value={model}
+            onChange={(e) => {
+              setModelState(e.target.value);
+              setLlamaCppModel(e.target.value);
+            }}
+            placeholder="(server default)"
+          />
+        </SettingRow>
+
+        <SettingRow
+          title="API key (optional)"
+          description="Sent as a Bearer token if you started llama-server with --api-key."
+        >
+          <Input
+            className="w-64"
+            type="password"
+            value={apiKey}
+            onChange={(e) => {
+              setApiKeyState(e.target.value);
+              setLlamaCppApiKey(e.target.value);
+            }}
+            placeholder="(none)"
+          />
+        </SettingRow>
+
+        <div className="mt-4 flex items-center gap-3">
+          <Button variant="secondary" size="sm" onClick={test} disabled={testing}>
+            {testing ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : null}
+            Test connection
+          </Button>
+          {models.length > 0 && (
+            <span className="text-xs text-text-muted">
+              Detected: {models.map((m) => m.id).join(", ")}
+            </span>
+          )}
+        </div>
+
+        {ping?.kind === "unreachable" && (
+          <div className="mt-3 rounded-md border border-border-subtle bg-bg-elevated/40 p-3 text-xs text-text-muted">
+            Couldn't reach llama-server at <code className="text-text-primary">{baseUrl}</code>.
+            Start it with{" "}
+            <code className="text-text-primary">llama-server -m model.gguf --port 8080</code> and
+            click Test connection.
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 

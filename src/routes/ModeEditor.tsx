@@ -577,6 +577,7 @@ function AiOverridesSection({
                 <SelectItem value={INHERIT}>Use global default</SelectItem>
                 <SelectItem value="cloud">Cloud (Azure GPT)</SelectItem>
                 <SelectItem value="local-ollama">Local (Ollama)</SelectItem>
+                <SelectItem value="local-llamacpp">Local (llama.cpp)</SelectItem>
               </SelectContent>
             </Select>
           </Row>
@@ -607,6 +608,14 @@ function AiOverridesSection({
                   </SelectContent>
                 </Select>
               )}
+            </Row>
+          )}
+
+          {draft.cleanupProviderOverride === "local-llamacpp" && (
+            <Row label="llama.cpp">
+              <div className="text-xs text-text-muted">
+                Uses the llama-server connection from Settings → AI model.
+              </div>
             </Row>
           )}
         </div>

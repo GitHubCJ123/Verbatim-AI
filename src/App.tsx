@@ -24,6 +24,7 @@ import MigrationPicker from "./routes/MigrationPicker";
 import { Loader2, AlertTriangle } from "lucide-react";
 import { Toaster } from "./components/ui/Toast";
 import { UpdateBanner } from "./components/layout/UpdateBanner";
+import { WhatsNewModal } from "./components/layout/WhatsNewModal";
 import { checkForUpdate } from "./lib/updater";
 
 function FatalConfig() {
@@ -215,6 +216,7 @@ export default function App() {
       <Toaster />
       <UpdateBanner />
       <RouterProvider router={router} />
+      <WhatsNewModal navigate={(to, state) => void router.navigate(to, { state })} />
     </>
   );
 }

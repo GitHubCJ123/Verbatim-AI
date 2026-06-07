@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import { listen } from "@tauri-apps/api/event";
 import { Download, Trash2, CheckCircle2, Loader2, RefreshCw, ExternalLink } from "lucide-react";
 import { toast } from "../components/ui/Toast";
@@ -343,6 +343,9 @@ function UpdateSettingRow() {
 
 export default function Settings() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const initialTab =
+    (location.state as { settingsTab?: string } | null)?.settingsTab ?? "general";
   const [hotkey, setHotkey] = useState(() => loadHotkeyConfig());
   const [autostart, setAutostartState] = useState(false);
   const singleKeyHoldToTalk = isMacSingleKeySpec(hotkey.spec);
@@ -370,7 +373,7 @@ export default function Settings() {
   return (
     <PageContainer>
       <PageHeader title="Settings" description="Configure Verbatim AI to fit your workflow." />
-      <Tabs defaultValue="general">
+      <Tabs defaultValue={initialTab}>
         <TabsList>
           <TabsTrigger value="general">General</TabsTrigger>
           <TabsTrigger value="model">AI model</TabsTrigger>

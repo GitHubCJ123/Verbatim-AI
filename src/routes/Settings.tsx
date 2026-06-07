@@ -76,6 +76,8 @@ import {
   type OverlayPosition,
   isClipboardRestoreEnabled,
   setClipboardRestore,
+  isInsertOnlyEnabled,
+  setInsertOnly,
   isHistoryDisabled,
   setHistoryDisabled,
   getMicDeviceId,
@@ -203,6 +205,19 @@ function ClipboardRestoreSwitch() {
       checked={on}
       onCheckedChange={(v) => {
         setClipboardRestore(v);
+        setOn(v);
+      }}
+    />
+  );
+}
+
+function InsertOnlySwitch() {
+  const [on, setOn] = useState(isInsertOnlyEnabled());
+  return (
+    <Switch
+      checked={on}
+      onCheckedChange={(v) => {
+        setInsertOnly(v);
         setOn(v);
       }}
     />
@@ -435,6 +450,12 @@ export default function Settings() {
                     setHotkey((h) => ({ ...h, pushToTalk: checked }))
                   }
                 />
+              </SettingRow>
+              <SettingRow
+                title="Insert only — don't copy to clipboard"
+                description="When on, dictated text is inserted into the focused app without being left on your clipboard. Off by default, so your transcription is also copied (today's behavior)."
+              >
+                <InsertOnlySwitch />
               </SettingRow>
             </CardContent>
           </Card>

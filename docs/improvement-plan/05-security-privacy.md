@@ -39,7 +39,7 @@ Onboarding copy suggests a wildcard origin, which opens the user's Ollama to
 (`OLLAMA_ORIGINS=tauri://localhost,http://localhost:*` — verify exact origin
 the webview sends) and update the copy in `Onboarding.tsx` + Settings.
 
-### F6 — Data-at-rest
+### F6 — Data-at-rest  🟡 retention setting done; window-title opt-out still open
 Transcripts (history) and all settings live in plain `localStorage`
 (`sw.*` keys) and in Supabase in cloud mode. Window titles + exe names are
 attached to history rows — titles can contain sensitive content (document

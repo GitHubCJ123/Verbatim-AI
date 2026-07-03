@@ -104,6 +104,7 @@ export async function installHotkeyListeners(): Promise<UnlistenFn> {
   const offDown = await listen("hotkey:down", async () => {
     if (isHotkeyPaused()) return;
     if (!isOnboardingComplete()) return;
+    const pressedAt = Date.now();
     const cfg = loadHotkeyConfig();
     const { mode, activeWindow } = await resolveModeAtPress();
     if (!mode) {
@@ -123,7 +124,7 @@ export async function installHotkeyListeners(): Promise<UnlistenFn> {
       if (holdToTalkRecording) return;
       holdToTalkRecording = true;
       try {
-        await startRecording(mode.name, mode.id);
+        await startRecording(mode.name, mode.id, pressedAt);
       } catch (e) {
         holdToTalkRecording = false;
         throw e;
@@ -134,7 +135,7 @@ export async function installHotkeyListeners(): Promise<UnlistenFn> {
         await stopRecording();
       } else {
         toggleRecording = true;
-        await startRecording(mode.name, mode.id);
+        await startRecording(mode.name, mode.id, pressedAt);
       }
     }
   });

@@ -24,7 +24,7 @@ import {
   resizeOverlayToReview,
 } from "../lib/recording-bridge";
 import { pasteCleanedText, copyCleanedText, clearCapturedTarget } from "../lib/output";
-import { isAiImproveDisabled, getMicDeviceId } from "../lib/preferences";
+import { isAiImproveDisabled, getMicDeviceId, isPerfDebugEnabled } from "../lib/preferences";
 import { getPrivacyStatus, type DataLocality } from "../lib/privacyStatus";
 import type { Mode } from "../types/mode";
 
@@ -65,7 +65,7 @@ export default function Overlay() {
     await hideAfter(0);
   };
 
-  const start = async (mode: string, modeId: string | null) => {
+  const start = async (mode: string, modeId: string | null, pressedAt?: number) => {
     setError(null);
     setStreamingCleaned("");
     setRawText("");
@@ -89,6 +89,9 @@ export default function Overlay() {
       if (startingRef.current === starting) {
         controllerRef.current = controller;
         setState("recording");
+        if (pressedAt && isPerfDebugEnabled()) {
+          console.info(`[perf] press→listening ${Date.now() - pressedAt}ms`);
+        }
       }
       // else: a stop/cancel consumed this start while the mic was
       // being acquired — that path owns the controller now.
@@ -308,10 +311,14 @@ export default function Overlay() {
   };
 
   useEffect(() => {
-    const offStart = listen<{ modeName?: string; modeId?: string | null }>(
+    const offStart = listen<{ modeName?: string; modeId?: string | null; pressedAt?: number }>(
       "recording:start",
       (e) => {
-        void start(e.payload?.modeName ?? "Default", e.payload?.modeId ?? null);
+        void start(
+          e.payload?.modeName ?? "Default",
+          e.payload?.modeId ?? null,
+          e.payload?.pressedAt,
+        );
       },
     );
     const offStop = listen("recording:stop", () => {

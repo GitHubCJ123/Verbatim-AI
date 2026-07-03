@@ -58,7 +58,11 @@ async function getOverlay(): Promise<Window | null> {
   }
 }
 
-export async function startRecording(modeName = "Default", modeId: string | null = null) {
+export async function startRecording(
+  modeName = "Default",
+  modeId: string | null = null,
+  pressedAt: number = Date.now(),
+) {
   const overlay = await getOverlay();
   if (!overlay) return;
 
@@ -67,7 +71,7 @@ export async function startRecording(modeName = "Default", modeId: string | null
   // is visible, so audio capture doesn't wait on window chrome
   // (docs/improvement-plan/04-performance-latency.md, Fix 1).
   await waitForOverlayReady();
-  const audioStarted = emit("recording:start", { modeName, modeId });
+  const audioStarted = emit("recording:start", { modeName, modeId, pressedAt });
 
   // Window chrome runs concurrently with mic acquisition. Within this
   // chain the order still matters: capture the foreground window

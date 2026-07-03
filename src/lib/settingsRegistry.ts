@@ -132,6 +132,13 @@ export const SETTINGS_ENTRIES: SettingsSearchEntry[] = [
     tab: "privacy",
   },
   {
+    id: "history-retention",
+    title: "History retention",
+    description: "Auto-delete transcripts older than 7/30/90 days.",
+    keywords: ["privacy", "retention", "auto delete", "purge", "cleanup", "expire", "old transcripts"],
+    tab: "privacy",
+  },
+  {
     id: "telemetry",
     title: "Anonymous telemetry",
     description: "Usage stats — never your transcript content.",

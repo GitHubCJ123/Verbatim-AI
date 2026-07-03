@@ -8,6 +8,7 @@
  *
  * Spec: plan §12 (Audio Pipeline).
  */
+import { isPerfDebugEnabled } from "./preferences";
 
 export interface AudioControllerOptions {
   deviceId?: string;
@@ -116,6 +117,7 @@ export async function startRecording(opts: AudioControllerOptions = {}): Promise
   let stream: MediaStream;
   let audioCtx: AudioContext;
 
+  const acquireStart = performance.now();
   const warmHit = takeWarm(requestedKey);
   if (warmHit) {
     ({ stream, ctx: audioCtx } = warmHit);
@@ -156,6 +158,12 @@ export async function startRecording(opts: AudioControllerOptions = {}): Promise
       }
     }
     audioCtx = new AudioContext();
+  }
+
+  if (isPerfDebugEnabled()) {
+    console.info(
+      `[perf] mic acquire ${Math.round(performance.now() - acquireStart)}ms (${warmHit ? "warm" : "cold"})`,
+    );
   }
 
   const source = audioCtx.createMediaStreamSource(stream);

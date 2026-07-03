@@ -78,9 +78,13 @@ import {
   setClipboardRestore,
   isHistoryDisabled,
   setHistoryDisabled,
+  getHistoryRetentionDays,
+  setHistoryRetentionDays,
+  type HistoryRetentionDays,
   getMicDeviceId,
   setMicDeviceId,
 } from "../lib/preferences";
+import { pruneExpiredTranscriptions } from "../lib/history";
 
 interface RowProps {
   title: string;
@@ -212,6 +216,33 @@ function ClipboardRestoreSwitch() {
         setOn(v);
       }}
     />
+  );
+}
+
+function HistoryRetentionSelect() {
+  const [v, setV] = useState<string>(() => String(getHistoryRetentionDays() ?? "forever"));
+  return (
+    <Select
+      value={v}
+      onValueChange={(next) => {
+        setV(next);
+        const days = next === "forever" ? null : (Number(next) as HistoryRetentionDays);
+        setHistoryRetentionDays(days);
+        void pruneExpiredTranscriptions()
+          .then((n) => {
+            if (n > 0) toast.success(`Deleted ${n} old transcript${n === 1 ? "" : "s"}`);
+          })
+          .catch(() => {});
+      }}
+    >
+      <SelectTrigger className="w-36"><SelectValue /></SelectTrigger>
+      <SelectContent>
+        <SelectItem value="forever">Forever</SelectItem>
+        <SelectItem value="90">90 days</SelectItem>
+        <SelectItem value="30">30 days</SelectItem>
+        <SelectItem value="7">7 days</SelectItem>
+      </SelectContent>
+    </Select>
   );
 }
 
@@ -498,6 +529,13 @@ export default function Settings() {
                 description="When off, transcripts are not saved anywhere — your dictation still works and pastes/reviews as normal, but nothing is written to the History page. Overrides the per-mode setting."
               >
                 <HistoryDisabledSwitch />
+              </SettingRow>
+              <SettingRow
+                id="history-retention"
+                title="History retention"
+                description="Automatically delete transcripts older than this. Applies on app start."
+              >
+                <HistoryRetentionSelect />
               </SettingRow>
               <SettingRow id="telemetry" title="Anonymous telemetry" description="Help improve Verbatim AI. Never your transcript content.">
                 <Switch />

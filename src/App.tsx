@@ -20,6 +20,7 @@ import { useAppMappings } from "./lib/store/useAppMappings";
 import { useProfile } from "./lib/store/useProfile";
 import { getAppMode } from "./lib/appMode";
 import { isMigrationPending } from "./lib/migration";
+import { pruneExpiredTranscriptions } from "./lib/history";
 import MigrationPicker from "./routes/MigrationPicker";
 import { Loader2, AlertTriangle } from "lucide-react";
 import { Toaster } from "./components/ui/Toast";
@@ -126,6 +127,7 @@ export default function App() {
         } catch (e) {
           setHydrationError(e instanceof Error ? e.message : String(e));
         }
+        void pruneExpiredTranscriptions().catch(() => {});
         if (!cancelled) {
           router.navigate(isOnboardingComplete() ? "/" : "/onboarding", { replace: true });
           setPhase("ready");
@@ -184,6 +186,7 @@ export default function App() {
         } catch (e) {
           setHydrationError(e instanceof Error ? e.message : String(e));
         }
+        void pruneExpiredTranscriptions().catch(() => {});
         if (!cancelled) {
           router.navigate(isOnboardingComplete() ? "/" : "/onboarding", { replace: true });
         }

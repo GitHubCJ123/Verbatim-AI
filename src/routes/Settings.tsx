@@ -1300,7 +1300,7 @@ function CleanupSection() {
                 Ollama only allows requests from specific origins. Add Verbatim AI to the allowlist:
                 <ol className="mt-2 list-decimal space-y-1 pl-5">
                   <li>Quit Ollama from the system tray.</li>
-                  <li>Open a terminal and run: <code className="text-text-primary">setx OLLAMA_ORIGINS "*"</code> (on macOS/Linux: <code className="text-text-primary">launchctl setenv OLLAMA_ORIGINS "*"</code>).</li>
+                  <li>Open a terminal and run: <code className="text-text-primary">setx OLLAMA_ORIGINS "tauri://localhost,https://tauri.localhost"</code> (on macOS/Linux: <code className="text-text-primary">launchctl setenv OLLAMA_ORIGINS "tauri://localhost,https://tauri.localhost"</code>). Avoid <code className="text-text-primary">"*"</code> — it lets any website reach your Ollama.</li>
                   <li>Start Ollama again, then click the refresh icon.</li>
                 </ol>
               </div>

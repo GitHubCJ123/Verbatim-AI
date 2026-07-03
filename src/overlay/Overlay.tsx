@@ -25,6 +25,7 @@ import {
 } from "../lib/recording-bridge";
 import { pasteCleanedText, copyCleanedText, clearCapturedTarget } from "../lib/output";
 import { isAiImproveDisabled, getMicDeviceId } from "../lib/preferences";
+import { getPrivacyStatus, type DataLocality } from "../lib/privacyStatus";
 import type { Mode } from "../types/mode";
 
 type View = "pill" | "review";
@@ -36,6 +37,7 @@ export default function Overlay() {
   const [error, setError] = useState<string | null>(null);
   const [streamingCleaned, setStreamingCleaned] = useState("");
   const [rawText, setRawText] = useState("");
+  const [privacy, setPrivacy] = useState<DataLocality | null>(null);
 
   const controllerRef = useRef<AudioController | null>(null);
   // In-flight getUserMedia: a stop/cancel that lands while the mic is
@@ -70,6 +72,7 @@ export default function Overlay() {
     setView("pill");
     setModeName(mode);
     modeRef.current = getModeById(modeId) ?? getDefaultMode();
+    setPrivacy(getPrivacyStatus(modeRef.current).overall);
     try {
       // The bridge shows this window concurrently — don't wait for it.
       // Opening the mic immediately is what keeps the first syllable
@@ -361,6 +364,7 @@ export default function Overlay() {
           modeName={modeName}
           controller={controllerRef.current}
           error={error}
+          privacy={privacy}
         />
       )}
     </div>

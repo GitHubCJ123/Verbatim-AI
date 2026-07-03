@@ -21,8 +21,11 @@ Anyone extracting `VITE_SUPABASE_ANON_KEY` from the shipped bundle can call
 3. Also cap request body size and audio duration server-side.
 Files: `supabase/functions/transcribe`, `supabase/functions/cleanup`.
 
-### F3 — No user-visible "where does my data go" signal
-The core ask. See "Privacy indicator" below.
+### F3 — No user-visible "where does my data go" signal  ✅ done
+The core ask. See "Privacy indicator" below. Implemented:
+`src/lib/privacyStatus.ts` (resolved per-mode), `PrivacyCard` on Home
+(local/mixed/cloud variants + "Change" deep-link), shield/cloud glyph
+on the recording pill. Browser-verified for cloud and local variants.
 
 ### F4 — Windows: `--use-fake-ui-for-media-stream`
 `src-tauri/src/lib.rs` auto-grants **any** media prompt in the WebView
@@ -30,7 +33,7 @@ The core ask. See "Privacy indicator" below.
 document it, and prefer scoping if WebView2 ever allows per-permission
 policy. macOS is unaffected (WKWebView honors the OS TCC prompt).
 
-### F5 — Ollama guidance encourages `OLLAMA_ORIGINS=*`
+### F5 — Ollama guidance encourages `OLLAMA_ORIGINS=*`  ✅ fixed (copy scoped to tauri origins)
 Onboarding copy suggests a wildcard origin, which opens the user's Ollama to
 *any* website via drive-by requests. Recommend the specific origin instead
 (`OLLAMA_ORIGINS=tauri://localhost,http://localhost:*` — verify exact origin
@@ -79,7 +82,7 @@ the active mode, not the global setting.
 
 ## Recommended order
 
-1. F1 (done) → F5 copy fix → F3 indicator → F2 anonymous sign-ins →
+1. F1 (done) → F5 (done) → F3 (done) → **F2 anonymous sign-ins (next)** →
    F6 retention setting → F4 documentation note.
 
 ## Acceptance criteria

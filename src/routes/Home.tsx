@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Mic, Sparkles, Zap, Clock, Square } from "lucide-react";
+import { Mic, Sparkles, Zap, Clock, Square, ShieldCheck, Cloud, CloudCog } from "lucide-react";
 import { Card, CardContent } from "../components/ui/Card";
 import { Kbd } from "../components/ui/Kbd";
 import { Badge } from "../components/ui/Badge";
@@ -14,6 +14,8 @@ import { listTranscriptions, type Transcription } from "../lib/history";
 import { listen } from "@tauri-apps/api/event";
 import { useNavigate } from "react-router-dom";
 import { osName } from "../lib/os";
+import { hotkeyDisplayParts, loadHotkeyConfig } from "../lib/hotkey";
+import { getPrivacyStatus, type PrivacyStatus } from "../lib/privacyStatus";
 
 export default function Home() {
   const [active, setActive] = useState(false);
@@ -97,7 +99,14 @@ export default function Home() {
               </button>
             </div>
             <p className="text-sm text-text-secondary">
-              Press and hold <Kbd>Ctrl</Kbd> <Kbd>Space</Kbd> from any app. Release to transcribe.
+              Press and hold{" "}
+              {hotkeyDisplayParts(loadHotkeyConfig().spec).map((k, i) => (
+                <span key={`${k}-${i}`}>
+                  {i > 0 && " "}
+                  <Kbd>{k}</Kbd>
+                </span>
+              ))}{" "}
+              from any app. Release to transcribe.
             </p>
           </div>
           <div className="flex shrink-0 gap-2">
@@ -115,6 +124,8 @@ export default function Home() {
           </div>
         </CardContent>
       </Card>
+
+      <PrivacyCard />
 
       <div className="mt-6 grid grid-cols-3 gap-4">
         {[
@@ -173,6 +184,68 @@ export default function Home() {
         )}
       </div>
     </PageContainer>
+  );
+}
+
+/** Where dictation content goes, at a glance (plan doc 05, F3).
+ *  Reflects the global provider settings; Modes can still override. */
+function PrivacyCard() {
+  const navigate = useNavigate();
+  // Re-read on mount — provider settings live in localStorage and are
+  // edited on the Settings page, so mount-time is fresh enough here.
+  const [status] = useState<PrivacyStatus>(() => getPrivacyStatus());
+
+  const copy = {
+    local: {
+      Icon: ShieldCheck,
+      tone: "text-success bg-success/15",
+      headline: "Your voice never leaves this machine",
+      detail:
+        "Transcription and polish both run on-device. App updates and optional account sync still use the network.",
+    },
+    cloud: {
+      Icon: Cloud,
+      tone: "text-accent-solid bg-accent-solid/15",
+      headline: "Audio is processed in Verbatim cloud",
+      detail:
+        "Sent just long enough to transcribe and polish — recordings are never stored. Switch to fully-local in AI settings.",
+    },
+    mixed: {
+      Icon: CloudCog,
+      tone: "text-warning bg-warning/15",
+      headline: "Partly local, partly cloud",
+      detail: `${status.transcription === "cloud" ? "Audio goes to Verbatim cloud" : "Audio stays on-device"}; ${
+        status.cleanup === "cloud"
+          ? "text polish runs in the cloud."
+          : status.cleanup === "off"
+            ? "text polish is off."
+            : "text polish stays on-device."
+      }`,
+    },
+  }[status.overall];
+
+  return (
+    <Card className="mt-4">
+      <CardContent className="flex items-center justify-between gap-4 p-4 pt-4">
+        <div className="flex min-w-0 items-center gap-3">
+          <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-md ${copy.tone}`}>
+            <copy.Icon className="h-4 w-4" />
+          </span>
+          <div className="min-w-0">
+            <div className="text-sm font-medium">{copy.headline}</div>
+            <div className="text-xs text-text-muted">{copy.detail}</div>
+          </div>
+        </div>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="shrink-0"
+          onClick={() => navigate("/settings?tab=model&highlight=transcription-provider")}
+        >
+          Change
+        </Button>
+      </CardContent>
+    </Card>
   );
 }
 

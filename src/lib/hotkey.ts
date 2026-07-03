@@ -30,6 +30,19 @@ export interface HotkeyConfig {
   pushToTalk: boolean;
 }
 
+const KEY_LABEL: Record<string, string> = IS_MAC
+  ? { CommandOrControl: "⌘", Control: "⌃", Shift: "⇧", Alt: "⌥", Super: "⌘", Fn: "fn" }
+  : { CommandOrControl: "Ctrl", Control: "Ctrl", Super: "Win" };
+
+/** Spec → human key labels, e.g. "Control+Shift+Space" → ["⌃","⇧","Space"]. */
+export function hotkeyDisplayParts(spec: string): string[] {
+  return spec
+    .split("+")
+    .map((p) => p.trim())
+    .filter(Boolean)
+    .map((p) => KEY_LABEL[p] ?? p);
+}
+
 export interface ActiveWindow {
   exe: string;
   exe_path: string;

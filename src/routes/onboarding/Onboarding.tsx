@@ -1063,7 +1063,7 @@ function OllamaConfig() {
             )}
             {status === "forbidden" && (
               <span className="inline-flex items-center gap-1 text-danger">
-                <AlertTriangle className="h-3.5 w-3.5" /> Ollama rejected the origin (set OLLAMA_ORIGINS=*). More help in Settings → AI.
+                <AlertTriangle className="h-3.5 w-3.5" /> Ollama rejected the origin (allow tauri://localhost). Fix steps in Settings → AI model.
               </span>
             )}
             {status === "http-error" && (

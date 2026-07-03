@@ -7,7 +7,9 @@ import {
   History,
   Settings,
   CircleUser,
+  Search,
 } from "lucide-react";
+import { openCommandPalette } from "../CommandPalette";
 import { cn } from "../../lib/utils";
 import { useAuth } from "../../lib/store/useAuth";
 import { isLocalMode } from "../../lib/appMode";
@@ -37,6 +39,19 @@ export function Sidebar() {
         <img src="/logo.svg" alt="" className="h-7 w-7 rounded-md shadow-glow" />
         <span className="text-sm font-semibold tracking-tight">Verbatim AI</span>
       </div>
+
+      {/* Search (Cmd+K) */}
+      <button
+        type="button"
+        onClick={openCommandPalette}
+        className="flex items-center justify-between rounded-md border border-border-subtle bg-bg-elevated px-3 py-1.5 text-xs text-text-muted transition-colors hover:border-border-strong hover:text-text-secondary"
+      >
+        <span className="flex items-center gap-2">
+          <Search className="h-3.5 w-3.5" />
+          Search
+        </span>
+        <kbd className="rounded-sm border border-border-subtle px-1 text-[10px]">⌘K</kbd>
+      </button>
 
       {/* Nav */}
       <nav className="flex flex-1 flex-col gap-0.5">

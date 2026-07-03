@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { listen } from "@tauri-apps/api/event";
 import { Download, Trash2, CheckCircle2, Loader2, RefreshCw, ExternalLink } from "lucide-react";
 import { toast } from "../components/ui/Toast";
@@ -86,11 +86,17 @@ interface RowProps {
   title: string;
   description: string;
   children: React.ReactNode;
+  /** Registry id (src/lib/settingsRegistry.ts) — makes the row a
+   *  Cmd+K deep-link target via ?highlight=<id>. */
+  id?: string;
 }
 
-function SettingRow({ title, description, children }: RowProps) {
+function SettingRow({ title, description, children, id }: RowProps) {
   return (
-    <div className="flex items-center justify-between gap-6 border-b border-border-subtle py-4 last:border-b-0">
+    <div
+      id={id ? `setting-${id}` : undefined}
+      className="flex scroll-mt-24 items-center justify-between gap-6 rounded-md border-b border-border-subtle py-4 transition-shadow last:border-b-0"
+    >
       <div className="flex flex-col gap-0.5">
         <div className="text-sm font-medium">{title}</div>
         <div className="text-xs text-text-muted">{description}</div>
@@ -235,7 +241,7 @@ function VersionRow() {
     })();
   }, []);
   return (
-    <SettingRow title="Version" description="The version of Verbatim AI currently running.">
+    <SettingRow id="version" title="Version" description="The version of Verbatim AI currently running.">
       <span className="rounded bg-bg-elevated px-2 py-1 font-mono text-xs text-text-secondary">
         {version || "…"}
       </span>
@@ -249,7 +255,7 @@ function UpdateSettingRow() {
 
   const { description, action } = renderUpdate(status);
   return (
-    <SettingRow title="App updates" description={description}>
+    <SettingRow id="updates" title="App updates" description={description}>
       {action}
     </SettingRow>
   );
@@ -341,11 +347,33 @@ function UpdateSettingRow() {
   }
 }
 
+const VALID_TABS = ["general", "model", "recording", "overlay", "privacy", "advanced"];
+
 export default function Settings() {
   const navigate = useNavigate();
   const [hotkey, setHotkey] = useState(() => loadHotkeyConfig());
   const [autostart, setAutostartState] = useState(false);
   const singleKeyHoldToTalk = isMacSingleKeySpec(hotkey.spec);
+
+  // Tab + row deep-linking for the Cmd+K palette:
+  // /settings?tab=recording&highlight=hotkey
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tabParam = searchParams.get("tab");
+  const tab = tabParam && VALID_TABS.includes(tabParam) ? tabParam : "general";
+  const highlight = searchParams.get("highlight");
+
+  useEffect(() => {
+    if (!highlight) return;
+    // Wait a frame so the tab's content is mounted before we scroll.
+    const t = setTimeout(() => {
+      const el = document.getElementById(`setting-${highlight}`);
+      if (!el) return;
+      el.scrollIntoView({ block: "center", behavior: "smooth" });
+      el.classList.add("ring-2", "ring-accent-solid/60");
+      setTimeout(() => el.classList.remove("ring-2", "ring-accent-solid/60"), 2000);
+    }, 60);
+    return () => clearTimeout(t);
+  }, [highlight, tab]);
 
   useEffect(() => {
     saveHotkeyConfig(hotkey);
@@ -370,7 +398,10 @@ export default function Settings() {
   return (
     <PageContainer>
       <PageHeader title="Settings" description="Configure Verbatim AI to fit your workflow." />
-      <Tabs defaultValue="general">
+      <Tabs
+        value={tab}
+        onValueChange={(v) => setSearchParams({ tab: v }, { replace: true })}
+      >
         <TabsList>
           <TabsTrigger value="general">General</TabsTrigger>
           <TabsTrigger value="model">AI model</TabsTrigger>
@@ -383,7 +414,7 @@ export default function Settings() {
         <TabsContent value="general">
           <Card>
             <CardContent className="p-5 pt-5">
-              <SettingRow title="Launch at startup" description={`Open Verbatim AI when ${osName()} starts.`}>
+              <SettingRow id="autostart" title="Launch at startup" description={`Open Verbatim AI when ${osName()} starts.`}>
                 <Switch
                   checked={autostart}
                   onCheckedChange={async (v) => {
@@ -398,7 +429,7 @@ export default function Settings() {
                   }}
                 />
               </SettingRow>
-              <SettingRow title="Theme" description={`Match ${osName()} or pick light/dark.`}>
+              <SettingRow id="theme" title="Theme" description={`Match ${osName()} or pick light/dark.`}>
                 <ThemeSelect />
               </SettingRow>
               <VersionRow />
@@ -414,13 +445,14 @@ export default function Settings() {
         <TabsContent value="recording">
           <Card>
             <CardContent className="p-5 pt-5">
-              <SettingRow title="Global hotkey" description="Hold to dictate from anywhere.">
+              <SettingRow id="hotkey" title="Global hotkey" description="Hold to dictate from anywhere.">
                 <HotkeyRecorder value={hotkey.spec} onChange={handleHotkeyChange} />
               </SettingRow>
-              <SettingRow title="Microphone" description="Input device used for recording.">
+              <SettingRow id="microphone" title="Microphone" description="Input device used for recording.">
                 <MicrophoneSelect />
               </SettingRow>
               <SettingRow
+                id="push-to-talk"
                 title="Push-to-talk"
                 description={
                   singleKeyHoldToTalk
@@ -443,10 +475,11 @@ export default function Settings() {
         <TabsContent value="overlay">
           <Card>
             <CardContent className="p-5 pt-5">
-              <SettingRow title="Position" description="Where the recording pill appears.">
+              <SettingRow id="overlay-position" title="Position" description="Where the recording pill appears.">
                 <OverlayPositionSelect />
               </SettingRow>
               <SettingRow
+                id="clipboard-restore"
                 title="Restore clipboard after paste"
                 description={`When on, Verbatim AI remembers whatever you had on the clipboard before dictating, pastes the cleaned text, then puts your original content back ~1 second later. Off by default — ${clipboardHistoryHint()}`}
               >
@@ -460,12 +493,13 @@ export default function Settings() {
           <Card>
             <CardContent className="p-5 pt-5">
               <SettingRow
+                id="history-save"
                 title="Save transcription history"
                 description="When off, transcripts are not saved anywhere — your dictation still works and pastes/reviews as normal, but nothing is written to the History page. Overrides the per-mode setting."
               >
                 <HistoryDisabledSwitch />
               </SettingRow>
-              <SettingRow title="Anonymous telemetry" description="Help improve Verbatim AI. Never your transcript content.">
+              <SettingRow id="telemetry" title="Anonymous telemetry" description="Help improve Verbatim AI. Never your transcript content.">
                 <Switch />
               </SettingRow>
             </CardContent>
@@ -475,7 +509,7 @@ export default function Settings() {
         <TabsContent value="advanced">
           <Card>
             <CardContent className="p-5 pt-5">
-              <SettingRow title="Log level" description="Verbosity of log files.">
+              <SettingRow id="log-level" title="Log level" description="Verbosity of log files.">
                 <Select defaultValue="info">
                   <SelectTrigger className="w-32"><SelectValue /></SelectTrigger>
                   <SelectContent>
@@ -487,6 +521,7 @@ export default function Settings() {
                 </Select>
               </SettingRow>
               <SettingRow
+                id="test-ai"
                 title="Test AI connection"
                 description="Sends a ping to the Supabase cleanup function. Tells you whether the network path works."
               >
@@ -515,6 +550,7 @@ export default function Settings() {
                 </Button>
               </SettingRow>
               <SettingRow
+                id="rerun-onboarding"
                 title="Re-run onboarding"
                 description="Walk through the welcome flow again to reconfigure tone presets."
               >
@@ -530,6 +566,7 @@ export default function Settings() {
                 </Button>
               </SettingRow>
               <SettingRow
+                id="devtools"
                 title="Open developer tools"
                 description="Show the WebView2 dev tools for the main window. Use the Console tab to see app logs (Ollama, transcription, updates, etc)."
               >
@@ -668,6 +705,7 @@ function ModelTab() {
       <Card>
         <CardContent className="p-5 pt-5">
           <SettingRow
+            id="transcription-provider"
             title="Transcription provider"
             description="Where speech-to-text runs. Cloud is the default. Local keeps audio on this machine and works offline once a model is downloaded."
           >
@@ -1078,6 +1116,7 @@ function ParakeetSection() {
         {/* Language */}
         <div className="pt-3">
           <SettingRow
+            id="transcription-language"
             title="Language"
             description="Pick a specific language for best accuracy, or let the model auto-detect. (v2 is English-only regardless.)"
           >
@@ -1151,6 +1190,7 @@ function CleanupSection() {
       <Card>
         <CardContent className="p-5 pt-5">
           <SettingRow
+            id="cleanup-provider"
             title="Cleanup provider"
             description="Where tone polish and grammar fix runs. Independent from transcription — you can mix and match."
           >

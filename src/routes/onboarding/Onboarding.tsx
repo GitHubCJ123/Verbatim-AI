@@ -49,7 +49,7 @@ import {
   type Tone,
 } from "../../lib/store/useOnboarding";
 import { osName, micPermissionPath } from "../../lib/os";
-import { applyHotkey, saveHotkeyConfig } from "../../lib/hotkey";
+import { applyHotkey, saveHotkeyConfig, loadHotkeyConfig, IS_MAC } from "../../lib/hotkey";
 import { cn } from "../../lib/utils";
 import { useAuth } from "../../lib/store/useAuth";
 import { isLocalMode } from "../../lib/appMode";
@@ -233,10 +233,56 @@ function NavRow({
 
 // ─── Step 1: Welcome ─────────────────────────────────────────────────────
 
+/**
+ * Quick-start defaults (docs/improvement-plan/01-quick-setup.md): cloud
+ * transcription + cleanup, platform-default hold-to-talk hotkey, history
+ * on, pill bottom-center. Built-in Modes are already seeded elsewhere.
+ */
+async function applyQuickDefaults() {
+  const cfg = loadHotkeyConfig(); // platform default unless the user rebound before
+  await applyHotkey(cfg.spec);
+  saveHotkeyConfig({ spec: cfg.spec, pushToTalk: true });
+  setAiProviderKind("cloud");
+  setCleanupProviderKind("cloud");
+  setHistoryDisabled(false);
+  setOverlayPosition("bottom-center");
+  const ob = useOnboarding.getState();
+  ob.setHotkey(cfg.spec);
+  ob.setPushToTalk(true);
+}
+
 function Welcome() {
   const next = useOnboarding((s) => s.next);
+  const setStep = useOnboarding((s) => s.setStep);
   const finish = useOnboarding((s) => s.finish);
   const navigate = useNavigate();
+  const [applying, setApplying] = useState(false);
+
+  const setMicPermission = useOnboarding((s) => s.setMicPermission);
+
+  const quickStart = async () => {
+    setApplying(true);
+    try {
+      // Mic permission is the one step that can't be defaulted.
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        stream.getTracks().forEach((t) => t.stop());
+        setMicPermission("granted");
+      } catch {
+        setMicPermission("denied");
+        setStep(1); // Permissions step has the "how to unblock" guidance
+        return;
+      }
+      await applyQuickDefaults();
+      setStep(TOTAL_STEPS - 1); // straight to "You're all set"
+    } catch (e) {
+      toast.error("Couldn't apply the default setup", {
+        description: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setApplying(false);
+    }
+  };
 
   return (
     <div className="text-center">
@@ -254,9 +300,13 @@ function Welcome() {
         Talk anywhere. We type it for you, in your voice, in the right tone, in any app.
       </p>
       <div className="mt-10 flex justify-center gap-3">
-        <Button variant="primary" size="lg" onClick={next}>
-          Get started
+        <Button variant="primary" size="lg" onClick={() => void quickStart()} disabled={applying}>
+          {applying && <Loader2 className="h-4 w-4 animate-spin" />}
+          Quick start
           <ArrowRight className="h-4 w-4" />
+        </Button>
+        <Button variant="secondary" size="lg" onClick={next}>
+          Customize setup
         </Button>
         <Button
           variant="ghost"
@@ -269,6 +319,12 @@ function Welcome() {
           I'm just exploring
         </Button>
       </div>
+      <p className="mx-auto mt-6 max-w-md text-xs text-text-muted">
+        Quick start uses our defaults: cloud AI (audio is sent to our cloud
+        just long enough to transcribe), hold-to-talk hotkey, and transcript
+        history on. Everything can be changed later in Settings — including
+        switching to fully-local AI.
+      </p>
     </div>
   );
 }
@@ -692,10 +748,18 @@ function Generate() {
 
 // ─── Step 8: Test recording ──────────────────────────────────────────────
 
+const KEY_LABEL: Record<string, string> = IS_MAC
+  ? { CommandOrControl: "⌘", Control: "⌃", Shift: "⇧", Alt: "⌥", Super: "⌘" }
+  : { CommandOrControl: "Ctrl", Control: "Ctrl", Super: "Win" };
+
 function TestRecording() {
   const navigate = useNavigate();
   const finish = useOnboarding((s) => s.finish);
   const back = useOnboarding((s) => s.back);
+  const hotkeyParts = loadHotkeyConfig()
+    .spec.split("+")
+    .map((p) => p.trim())
+    .filter(Boolean);
 
   return (
     <div className="text-center">
@@ -704,7 +768,14 @@ function TestRecording() {
       </div>
       <h2 className="text-2xl font-semibold tracking-tight">You're all set</h2>
       <p className="mt-3 text-sm text-text-secondary">
-        Hold <Kbd>Ctrl</Kbd> <Kbd>Space</Kbd> anywhere on {osName()} and say something. The pill will
+        Hold{" "}
+        {hotkeyParts.map((k, i) => (
+          <span key={k}>
+            {i > 0 && " "}
+            <Kbd>{KEY_LABEL[k] ?? k}</Kbd>
+          </span>
+        ))}{" "}
+        anywhere on {osName()} and say something. The pill will
         appear, your voice will type itself wherever your cursor is.
       </p>
       <p className="mt-2 text-xs text-text-muted">

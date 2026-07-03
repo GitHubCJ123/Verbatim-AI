@@ -50,7 +50,14 @@ Also run step 2 (`resolveModeAtPress`) in parallel with the bridge call in
 not for capture. (The emit payload carries mode name/id; either pre-resolve
 in parallel and emit after, or move resolution to the overlay side.)
 
-## Fix 2 — warm mic (bigger win, opt-in)
+## Fix 2 — warm mic (bigger win, opt-in)  ✅ option 2 implemented
+
+Landed as a 30 s keep-warm cache in `src/lib/audio.ts` (`takeWarm` /
+`parkWarm` / exported `releaseWarmMic` escape hatch): after a dictation
+ends the stream + AudioContext are parked and reused if the next one
+starts within the window, keyed by device id (device switch = fresh
+acquire). The OS mic indicator stays on for the window — by design.
+Option 3 (always-warm setting) remains unimplemented.
 
 `getUserMedia` cold start is the real 300–1000 ms. Options, in order:
 

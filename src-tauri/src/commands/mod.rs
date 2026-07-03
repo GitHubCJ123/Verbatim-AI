@@ -1,5 +1,6 @@
 pub mod active_window;
 pub mod devtools;
+pub mod fn_hotkey;
 pub mod hotkey;
 pub mod local_whisper;
 pub mod parakeet;

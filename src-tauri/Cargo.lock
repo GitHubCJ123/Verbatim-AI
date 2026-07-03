@@ -5196,6 +5196,8 @@ name = "verbatim-ai"
 version = "0.5.5"
 dependencies = [
  "bzip2",
+ "core-foundation 0.10.1",
+ "core-graphics",
  "enigo",
  "futures-util",
  "objc2 0.5.2",

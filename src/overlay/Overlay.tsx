@@ -38,6 +38,9 @@ export default function Overlay() {
   const [rawText, setRawText] = useState("");
 
   const controllerRef = useRef<AudioController | null>(null);
+  // In-flight getUserMedia: a stop/cancel that lands while the mic is
+  // still being acquired must await this so the stream is never leaked.
+  const startingRef = useRef<Promise<AudioController> | null>(null);
   const modeRef = useRef<Mode | null>(null);
 
   const hideAfter = async (ms: number) => {
@@ -68,16 +71,24 @@ export default function Overlay() {
     setModeName(mode);
     modeRef.current = getModeById(modeId) ?? getDefaultMode();
     try {
-      const w = getCurrentWindow();
-      await w.show();
-      controllerRef.current = await startRecording({
+      // The bridge shows this window concurrently — don't wait for it.
+      // Opening the mic immediately is what keeps the first syllable
+      // from being lost (docs/improvement-plan/04-performance-latency.md).
+      const starting = startRecording({
         deviceId: getMicDeviceId() || undefined,
         onError: (e) => {
           setError(e.message);
           setState("error");
         },
       });
-      setState("recording");
+      startingRef.current = starting;
+      const controller = await starting;
+      if (startingRef.current === starting) {
+        controllerRef.current = controller;
+        setState("recording");
+      }
+      // else: a stop/cancel consumed this start while the mic was
+      // being acquired — that path owns the controller now.
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       setError(msg);
@@ -152,10 +163,13 @@ export default function Overlay() {
         if (cleaned !== cleanedRaw) setStreamingCleaned(cleaned);
       }
 
-      console.info("[Verbatim AI] raw:", transcript.text);
-      console.info("[Verbatim AI] cleaned:", cleaned);
-
-      console.info("[Verbatim AI] emitting recording:result to main", { mode, modeId: activeMode.id });
+      // Transcript content is only ever logged in dev builds — release
+      // builds must not emit dictation content to any console/log
+      // (docs/improvement-plan/05-security-privacy.md, F1).
+      if (import.meta.env.DEV) {
+        console.info("[Verbatim AI] raw:", transcript.text);
+        console.info("[Verbatim AI] cleaned:", cleaned);
+      }
       const payload = {
         emitId: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         raw: transcript.text,
@@ -195,19 +209,45 @@ export default function Overlay() {
   };
 
   const stop = async () => {
-    const c = controllerRef.current;
+    let c = controllerRef.current;
     controllerRef.current = null;
+    const starting = startingRef.current;
+    startingRef.current = null;
+    if (!c && starting) {
+      // Mic acquisition still in flight — adopt it so the stream is
+      // stopped instead of leaking.
+      try {
+        c = await starting;
+      } catch {
+        c = null;
+      }
+    }
     if (!c) {
-      setState("idle");
+      void reset();
       return;
     }
     setState("processing");
     const result = await c.stop();
-    if (!result) {
+    if (!result || result.durationMs < 300) {
+      // Accidental tap — nothing worth transcribing.
       void reset();
       return;
     }
     await runPipeline(result.blob, result.durationMs, modeName);
+  };
+
+  const cancelActive = () => {
+    const starting = startingRef.current;
+    startingRef.current = null;
+    const c = controllerRef.current;
+    controllerRef.current = null;
+    if (c) {
+      c.cancel();
+    } else if (starting) {
+      // Mic still being acquired — cancel it once it materializes.
+      void starting.then((ctrl) => ctrl.cancel()).catch(() => {});
+    }
+    void reset();
   };
 
   // Review panel actions
@@ -275,9 +315,7 @@ export default function Overlay() {
       void stop();
     });
     const offCancel = listen("recording:cancel", () => {
-      controllerRef.current?.cancel();
-      controllerRef.current = null;
-      void reset();
+      cancelActive();
     });
     // Tell the main window we're alive so it doesn't drop a
     // recording:start emitted before our listeners attached.
@@ -296,9 +334,7 @@ export default function Overlay() {
     if (view === "review") return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        controllerRef.current?.cancel();
-        controllerRef.current = null;
-        void reset();
+        cancelActive();
       }
     };
     window.addEventListener("keydown", onKey);

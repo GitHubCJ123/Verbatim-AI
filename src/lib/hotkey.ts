@@ -97,7 +97,8 @@ export async function installHotkeyListeners(): Promise<UnlistenFn> {
       console.warn("[Verbatim AI] no modes available — sign in / hydrate first.");
       return;
     }
-    if (activeWindow?.exe) {
+    // Window titles can contain sensitive content — dev builds only.
+    if (import.meta.env.DEV && activeWindow?.exe) {
       console.debug(
         `[Verbatim AI] ${activeWindow.exe} → ${mode.name}${
           activeWindow.title ? ` (window: "${activeWindow.title}")` : ""

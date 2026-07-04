@@ -36,9 +36,11 @@ function FatalConfig() {
           <span className="text-sm font-semibold">Configuration missing</span>
         </div>
         <p className="mt-3 text-sm text-text-secondary">
-          Verbatim AI needs <code className="font-mono text-xs">VITE_SUPABASE_URL</code> and{" "}
+          Account sync needs <code className="font-mono text-xs">VITE_SUPABASE_URL</code> and{" "}
           <code className="font-mono text-xs">VITE_SUPABASE_ANON_KEY</code> in{" "}
-          <code className="font-mono text-xs">.env.local</code>. Set them and restart.
+          <code className="font-mono text-xs">.env.local</code>. Set them and restart, or clear
+          your browser storage and choose "Use locally" instead — that path doesn't need Supabase
+          at all.
         </p>
       </div>
     </div>
@@ -88,13 +90,15 @@ const router = createMemoryRouter(
 export default function App() {
   const [phase, setPhase] = useState<"boot" | "ready">("boot");
   const [hydrationError, setHydrationError] = useState<string | null>(null);
+  // Only cloud app-mode (account + sync) hard-requires Supabase. Local
+  // mode and the first-launch picker never touch it, so a fully-local
+  // setup (Local Whisper/Parakeet + local Ollama) needs no .env.local
+  // at all — Supabase is just the relay to Azure for the cloud AI
+  // option, not a prerequisite for the app to run.
+  const [fatalCloudConfig, setFatalCloudConfig] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
-    if (!isSupabaseConfigured) {
-      setPhase("ready");
-      return;
-    }
 
     void (async () => {
       // One-time wipe of legacy keys from the local-mode era.
@@ -135,7 +139,16 @@ export default function App() {
         return;
       }
 
-      // Cloud mode.
+      // Cloud mode requires Supabase for auth — there's no local
+      // fallback for account sync itself.
+      if (!isSupabaseConfigured) {
+        if (!cancelled) {
+          setFatalCloudConfig(true);
+          setPhase("ready");
+        }
+        return;
+      }
+
       await useAuth.getState().init();
 
       // Subscribe to subsequent auth changes so caches stay in sync.
@@ -208,7 +221,7 @@ export default function App() {
     };
   }, []);
 
-  if (!isSupabaseConfigured) return <FatalConfig />;
+  if (fatalCloudConfig) return <FatalConfig />;
   if (phase === "boot") return <BootSpinner />;
   // Note: hydrationError is shown via toasts inside the running app; we
   // still render so the user can sign out or retry from Account.

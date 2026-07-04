@@ -10,7 +10,7 @@ import {
   type TranscribeInput,
   type TranscribeResult,
 } from "./AIProvider";
-import { supabase, supabaseAnonKey, supabaseUrl } from "../supabase";
+import { supabase, supabaseAnonKey, supabaseUrl, isSupabaseConfigured } from "../supabase";
 import { isLocalMode } from "../appMode";
 import {
   LocalWhisperProvider,
@@ -36,6 +36,16 @@ const CLEANUP_TIMEOUT_MS = 10 * 60 * 1000; // 10 min — long transcripts can st
 const MAX_RETRIES = 3;
 
 async function getAuthHeaders(): Promise<Record<string, string>> {
+  // Cloud AI proxies through Supabase Edge Functions — a fully-local
+  // setup (no .env.local) can reach this only if the user explicitly
+  // picks the cloud provider. Fail with a clear message instead of a
+  // raw network error against an empty URL.
+  if (!isSupabaseConfigured) {
+    throw new Error(
+      "Cloud AI needs Supabase configured (VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY in .env.local). " +
+        "Switch to Local Whisper or Parakeet in Settings → AI model to run fully offline instead.",
+    );
+  }
   const anon = supabaseAnonKey();
   // Local mode: no session, send anon key as bearer (Edge Functions are
   // deployed --no-verify-jwt so this works).

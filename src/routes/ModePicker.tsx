@@ -69,8 +69,9 @@ export default function ModePicker() {
           </Card>
         </div>
         <p className="mt-8 text-center text-xs text-text-muted">
-          Transcription + cleanup always run in the cloud (Azure) — that's how the AI works.
-          "Local" means your data isn't stored on a server.
+          Either way you can pick fully on-device transcription and cleanup afterward in
+          Settings → AI model. This choice is only about whether your modes, vocabulary, and
+          history sync to an account.
         </p>
       </div>
     </div>

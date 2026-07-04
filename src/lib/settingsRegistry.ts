@@ -157,8 +157,8 @@ export const SETTINGS_ENTRIES: SettingsSearchEntry[] = [
     id: "test-ai",
     title: "Test AI connection",
     description: "Verify the transcription and cleanup backends respond.",
-    keywords: ["connection", "health", "ping", "azure", "debug", "not working"],
-    tab: "advanced",
+    keywords: ["connection", "health", "ping", "azure", "ollama", "debug", "not working"],
+    tab: "model",
   },
   {
     id: "rerun-onboarding",

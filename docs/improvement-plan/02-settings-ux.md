@@ -56,20 +56,18 @@ fuzzy-match over `SETTINGS` (title + keywords) **plus** nav pages
 new dependency needed (or use `cmdk` if preferred). Sidebar gets a small
 "Search ⌘K" affordance above the nav.
 
-### C. Tab reorganization (do after A/B; cheap once registry exists)
+### C. Tab reorganization — scope settled with the user (2026-07-03)
 
-Proposed 4 tabs, task-oriented:
+The original proposal (4 task-oriented tabs + Account merged into
+Settings) was reviewed against a before/after mockup. Decisions:
 
-| Tab | Contents |
-|---|---|
-| **General** | startup, theme, updates, version |
-| **Dictation** | hotkey, push-to-talk, microphone, overlay position, clipboard restore |
-| **AI & Privacy** | transcription provider, cleanup provider, model management, **data-locality indicator** (doc 05), history on/off, telemetry, test connection |
-| **Advanced** | log level, re-run onboarding, devtools |
-
-Merge **Account into Settings** as a header card or 5th tab; drop the
-sidebar item (sidebar becomes: Home · Modes · Apps · Vocabulary · History ·
-Settings).
+- **Account merge: rejected.** Account stays a separate sidebar page.
+  Do not re-propose.
+- **Model selection in one menu: done.** Everything model-related lives
+  in the AI model tab — providers, model management, language, Ollama
+  config, and "Test AI connection" (moved from Advanced).
+- **Recording+Overlay → "Dictation" merge: not requested.** Parked;
+  only pick it up if the user asks.
 
 ## Implementation steps
 

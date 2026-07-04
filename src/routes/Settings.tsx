@@ -559,35 +559,6 @@ export default function Settings() {
                 </Select>
               </SettingRow>
               <SettingRow
-                id="test-ai"
-                title="Test AI connection"
-                description="Sends a ping to the Supabase cleanup function. Tells you whether the network path works."
-              >
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={async () => {
-                    const provider = getActiveProvider();
-                    if (!provider) {
-                      toast.error("No provider configured");
-                      return;
-                    }
-                    toast.info("Pinging…");
-                    const h = await provider.health();
-                    if (h.ok) {
-                      toast.success(`Connected (${h.latencyMs ?? "?"} ms)`);
-                    } else {
-                      toast.error("Connection failed", {
-                        description: h.message ?? "Unknown",
-                        duration: 12000,
-                      });
-                    }
-                  }}
-                >
-                  Test
-                </Button>
-              </SettingRow>
-              <SettingRow
                 id="rerun-onboarding"
                 title="Re-run onboarding"
                 description="Walk through the welcome flow again to reconfigure tone presets."
@@ -894,6 +865,42 @@ function ModelTab() {
       {kind === "local-parakeet" && <ParakeetSection />}
 
       <CleanupSection />
+
+      {/* One menu owns everything model-related, including verifying it
+          works — moved here from Advanced (doc 02, user-tweaked scope). */}
+      <Card className="mt-3">
+        <CardContent className="p-5 pt-5">
+          <SettingRow
+            id="test-ai"
+            title="Test AI connection"
+            description="Checks that the transcription and cleanup providers picked above actually respond."
+          >
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={async () => {
+                const provider = getActiveProvider();
+                if (!provider) {
+                  toast.error("No provider configured");
+                  return;
+                }
+                toast.info("Pinging…");
+                const h = await provider.health();
+                if (h.ok) {
+                  toast.success(`Connected (${h.latencyMs ?? "?"} ms)`);
+                } else {
+                  toast.error("Connection failed", {
+                    description: h.message ?? "Unknown",
+                    duration: 12000,
+                  });
+                }
+              }}
+            >
+              Test
+            </Button>
+          </SettingRow>
+        </CardContent>
+      </Card>
     </div>
   );
 }

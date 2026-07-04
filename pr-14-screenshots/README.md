@@ -1,3 +1,5 @@
 # PR 14 screenshot artifacts
 
-Generated before/after screenshots for PR #14. The `comparison/` images are side-by-side sheets used in the PR comment; `raw/` contains the original before and after captures.
+Focused before/after screenshots for PR #14. `comparison/` contains the side-by-side images used in the PR comment; `raw/` contains the verified focused captures.
+
+v3 notes: corrected the cleanup-provider screenshots and replaced full-page captures with focused crops so the UI changes are visible.

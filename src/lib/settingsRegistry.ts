@@ -76,7 +76,7 @@ export const SETTINGS_ENTRIES: SettingsSearchEntry[] = [
     id: "cleanup-provider",
     title: "Cleanup provider",
     description: "Where tone polish and grammar fixes run: cloud or local Ollama.",
-    keywords: ["ai", "ollama", "polish", "llm", "grammar", "local", "cloud", "improve"],
+    keywords: ["ai", "ollama", "polish", "llm", "grammar", "local", "cloud", "improve", "none", "raw", "off", "skip", "disable"],
     tab: "model",
   },
   {

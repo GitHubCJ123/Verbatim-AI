@@ -83,6 +83,8 @@ import {
   type HistoryRetentionDays,
   getMicDeviceId,
   setMicDeviceId,
+  isAiImproveDisabled,
+  setAiImproveDisabled,
 } from "../lib/preferences";
 import { pruneExpiredTranscriptions } from "../lib/history";
 
@@ -1180,8 +1182,15 @@ function ParakeetSection() {
   );
 }
 
+// "none" = skip the LLM polish entirely (vocabulary replacements still
+// run). Stored as the existing sw.ai.disabled flag, so the overlay
+// pipeline and privacy indicator already understand it.
+type CleanupChoice = CleanupProviderKind | "none";
+
 function CleanupSection() {
-  const [kind, setKind] = useState<CleanupProviderKind>(getCleanupProviderKind());
+  const [kind, setKind] = useState<CleanupChoice>(() =>
+    isAiImproveDisabled() ? "none" : getCleanupProviderKind(),
+  );
   const [host, setHostState] = useState<string>(getOllamaHost());
   const [model, setModelState] = useState<string>(getOllamaModel());
   const [models, setModels] = useState<OllamaModelInfo[]>([]);
@@ -1222,11 +1231,20 @@ function CleanupSection() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [kind, host]);
 
-  const handleKind = (next: CleanupProviderKind) => {
-    setCleanupProviderKind(next);
+  const handleKind = (next: CleanupChoice) => {
+    if (next === "none") {
+      setAiImproveDisabled(true);
+    } else {
+      setAiImproveDisabled(false);
+      setCleanupProviderKind(next);
+    }
     setKind(next);
     toast.success(
-      next === "cloud" ? "Cleanup: using cloud" : "Cleanup: using local Ollama",
+      next === "cloud"
+        ? "Cleanup: using cloud"
+        : next === "local-ollama"
+          ? "Cleanup: using local Ollama"
+          : "Cleanup off — you'll get the raw transcript",
     );
   };
 
@@ -1237,13 +1255,14 @@ function CleanupSection() {
           <SettingRow
             id="cleanup-provider"
             title="Cleanup provider"
-            description="Where tone polish and grammar fix runs. Independent from transcription — you can mix and match."
+            description="Where tone polish and grammar fix runs — or none to keep the raw transcript (vocabulary fixes still apply). Independent from transcription."
           >
-            <Select value={kind} onValueChange={(v) => handleKind(v as CleanupProviderKind)}>
+            <Select value={kind} onValueChange={(v) => handleKind(v as CleanupChoice)}>
               <SelectTrigger className="w-56"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="cloud">Cloud (Azure GPT)</SelectItem>
                 <SelectItem value="local-ollama">Local (Ollama)</SelectItem>
+                <SelectItem value="none">None — raw transcript</SelectItem>
               </SelectContent>
             </Select>
           </SettingRow>

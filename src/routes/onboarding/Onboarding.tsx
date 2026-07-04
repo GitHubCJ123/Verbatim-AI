@@ -49,7 +49,7 @@ import {
   type Tone,
 } from "../../lib/store/useOnboarding";
 import { osName, micPermissionPath } from "../../lib/os";
-import { applyHotkey, saveHotkeyConfig, loadHotkeyConfig, IS_MAC } from "../../lib/hotkey";
+import { applyHotkey, saveHotkeyConfig, loadHotkeyConfig, hotkeyDisplayParts, DEFAULT_SPEC, IS_MAC } from "../../lib/hotkey";
 import { cn } from "../../lib/utils";
 import { useAuth } from "../../lib/store/useAuth";
 import { isLocalMode } from "../../lib/appMode";
@@ -61,6 +61,8 @@ import {
   type OverlayPosition,
   isHistoryDisabled,
   setHistoryDisabled,
+  isAiImproveDisabled,
+  setAiImproveDisabled,
   isAutostartEnabled,
   setAutostart,
 } from "../../lib/preferences";
@@ -244,6 +246,7 @@ async function applyQuickDefaults() {
   saveHotkeyConfig({ spec: cfg.spec, pushToTalk: true });
   setAiProviderKind("cloud");
   setCleanupProviderKind("cloud");
+  setAiImproveDisabled(false);
   setHistoryDisabled(false);
   setOverlayPosition("bottom-center");
   const ob = useOnboarding.getState();
@@ -503,7 +506,15 @@ function HotkeyStep() {
           <div className="flex items-center justify-between">
             <div>
               <div className="text-sm font-medium">Global hotkey</div>
-              <div className="text-xs text-text-muted">Default: <Kbd>Ctrl</Kbd> <Kbd>Space</Kbd></div>
+              <div className="text-xs text-text-muted">
+                Default:{" "}
+                {hotkeyDisplayParts(DEFAULT_SPEC).map((k, i) => (
+                  <span key={`${k}-${i}`}>
+                    {i > 0 && " "}
+                    <Kbd>{k}</Kbd>
+                  </span>
+                ))}
+              </div>
             </div>
             <HotkeyRecorder value={hotkey} onChange={setHotkeyState} />
           </div>
@@ -839,19 +850,28 @@ const PROVIDER_OPTIONS: ProviderOption[] = [
   },
 ];
 
+type CleanupChoice = CleanupProviderKind | "none";
+
 function AIStep() {
   const back = useOnboarding((s) => s.back);
   const next = useOnboarding((s) => s.next);
   const [kind, setKind] = useState<AiProviderKind>(getAiProviderKind());
-  const [cleanup, setCleanup] = useState<CleanupProviderKind>(getCleanupProviderKind());
+  const [cleanup, setCleanup] = useState<CleanupChoice>(() =>
+    isAiImproveDisabled() ? "none" : getCleanupProviderKind(),
+  );
 
   const choose = (k: AiProviderKind) => {
     setAiProviderKind(k);
     setKind(k);
   };
 
-  const chooseCleanup = (k: CleanupProviderKind) => {
-    setCleanupProviderKind(k);
+  const chooseCleanup = (k: CleanupChoice) => {
+    if (k === "none") {
+      setAiImproveDisabled(true);
+    } else {
+      setAiImproveDisabled(false);
+      setCleanupProviderKind(k);
+    }
     setCleanup(k);
   };
 
@@ -951,14 +971,17 @@ function AIStep() {
             <div className="text-xs text-text-muted">
               {cleanup === "cloud"
                 ? "Azure GPT — fastest, no setup."
-                : "Local Ollama on this machine."}
+                : cleanup === "local-ollama"
+                  ? "Local Ollama on this machine."
+                  : "No AI polish — you get the raw transcript as spoken."}
             </div>
           </div>
-          <Select value={cleanup} onValueChange={(v) => chooseCleanup(v as CleanupProviderKind)}>
+          <Select value={cleanup} onValueChange={(v) => chooseCleanup(v as CleanupChoice)}>
             <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="cloud">Cloud (Azure)</SelectItem>
               <SelectItem value="local-ollama">Local Ollama</SelectItem>
+              <SelectItem value="none">None — raw text</SelectItem>
             </SelectContent>
           </Select>
         </CardContent>

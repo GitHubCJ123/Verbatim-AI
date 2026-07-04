@@ -22,7 +22,7 @@ const LS_PTT = "sw.hotkey.ptt";
 // On macOS ⌘+Space is Spotlight — pick something the user can use out of the box.
 export const IS_MAC =
   typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
-const DEFAULT_SPEC = IS_MAC ? "Control+Shift+Space" : "CommandOrControl+Space";
+export const DEFAULT_SPEC = IS_MAC ? "Control+Shift+Space" : "CommandOrControl+Space";
 
 export interface HotkeyConfig {
   spec: string;

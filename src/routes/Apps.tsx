@@ -27,7 +27,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "../components/ui/Dialog";
-import { PageContainer, PageHeader } from "../components/layout/PageHeader";
 import { useAppMappings } from "../lib/store/useAppMappings";
 import { useModes } from "../lib/store/useModes";
 import { toast } from "../components/ui/Toast";
@@ -41,7 +40,9 @@ interface RunningApp {
 
 const NONE = "__none__";
 
-export default function Apps() {
+/** App→Mode mapping manager. Rendered as the "Apps" tab of the Modes
+ *  page — apps map to Modes, so they live together (user request). */
+export function AppsPanel() {
   const mappings = useAppMappings((s) => s.mappings);
   const addMapping = useAppMappings((s) => s.add);
   const updateMapping = useAppMappings((s) => s.update);
@@ -51,17 +52,16 @@ export default function Apps() {
   const [pickerOpen, setPickerOpen] = useState(false);
 
   return (
-    <PageContainer>
-      <PageHeader
-        title="Apps"
-        description="Map specific apps to Modes. Without a rule, Verbatim AI uses your default Mode."
-        actions={
-          <Button variant="primary" size="sm" onClick={() => setPickerOpen(true)}>
-            <Plus className="h-4 w-4" />
-            Add app
-          </Button>
-        }
-      />
+    <div>
+      <div className="mb-4 flex items-start justify-between gap-4">
+        <p className="text-sm text-text-secondary">
+          Map specific apps to Modes. Without a rule, Verbatim AI uses your default Mode.
+        </p>
+        <Button variant="primary" size="sm" className="shrink-0" onClick={() => setPickerOpen(true)}>
+          <Plus className="h-4 w-4" />
+          Add app
+        </Button>
+      </div>
 
       <div className="mb-4 rounded-md border border-border-subtle bg-bg-elevated/40 px-4 py-3 text-xs text-text-secondary">
         <span className="font-medium text-text-primary">Heads up:</span> the
@@ -187,7 +187,7 @@ export default function Apps() {
           toast.success(`Added ${app.exe}`);
         }}
       />
-    </PageContainer>
+    </div>
   );
 }
 

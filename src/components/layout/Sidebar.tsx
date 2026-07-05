@@ -2,7 +2,6 @@ import { NavLink } from "react-router-dom";
 import {
   Home,
   Layers,
-  AppWindow,
   BookText,
   History,
   Settings,
@@ -19,7 +18,6 @@ import { FeedbackDialog } from "../feedback/FeedbackDialog";
 const navItems = [
   { to: "/", label: "Home", icon: Home, end: true },
   { to: "/modes", label: "Modes", icon: Layers },
-  { to: "/apps", label: "Apps", icon: AppWindow },
   { to: "/vocabulary", label: "Vocabulary", icon: BookText },
   { to: "/history", label: "History", icon: History },
   { to: "/settings", label: "Settings", icon: Settings },

@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   DndContext,
   PointerSensor,
@@ -36,6 +36,8 @@ import {
   TooltipTrigger,
 } from "../components/ui/Tooltip";
 import { PageContainer, PageHeader } from "../components/layout/PageHeader";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "../components/ui/Tabs";
+import { AppsPanel } from "./Apps";
 import { useModes } from "../lib/store/useModes";
 import { isAiImproveDisabled, setAiImproveDisabled } from "../lib/preferences";
 import { Switch } from "../components/ui/Switch";
@@ -93,55 +95,79 @@ export default function Modes() {
     navigate(`/modes/editor?id=${m.id}`);
   };
 
+  // Apps map to Modes, so they live as a tab here (?tab=apps).
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tab = searchParams.get("tab") === "apps" ? "apps" : "modes";
+
   return (
     <PageContainer>
       <PageHeader
         title="Modes"
-        description="Reusable presets for cleanup, language, and output behavior."
+        description="Reusable presets for cleanup, language, and output behavior — and which apps use them."
         actions={
-          <Button variant="primary" size="sm" onClick={handleCreate}>
-            <Plus className="h-4 w-4" />
-            New Mode
-          </Button>
+          tab === "modes" ? (
+            <Button variant="primary" size="sm" onClick={handleCreate}>
+              <Plus className="h-4 w-4" />
+              New Mode
+            </Button>
+          ) : undefined
         }
       />
 
-      <AiImproveToggle />
+      <Tabs
+        value={tab}
+        onValueChange={(v) =>
+          setSearchParams(v === "modes" ? {} : { tab: v }, { replace: true })
+        }
+      >
+        <TabsList className="mb-4">
+          <TabsTrigger value="modes">Modes</TabsTrigger>
+          <TabsTrigger value="apps">Apps</TabsTrigger>
+        </TabsList>
 
-      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-        <SortableContext items={ids} strategy={rectSortingStrategy}>
-          <div className="grid grid-cols-2 gap-4 lg:grid-cols-3">
-            {sorted.map((mode) => (
-              <SortableModeCard
-                key={mode.id}
-                mode={mode}
-                isDefault={mode.id === defaultModeId}
-                onEdit={() => navigate(`/modes/editor?id=${mode.id}`)}
-                onDuplicate={async () => {
-                  const dup = await duplicate(mode.id);
-                  if (dup) navigate(`/modes/editor?id=${dup.id}`);
-                }}
-                onDelete={async () => {
-                  if (
-                    await confirmDialog({
-                      title: `Delete "${mode.name}"?`,
-                      message: "This mode and its app mappings won't be recoverable.",
-                      confirmLabel: "Delete",
-                      destructive: true,
-                    })
-                  ) {
-                    void remove(mode.id);
-                  }
-                }}
-                onSetDefault={() => {
-                  setDefault(mode.id);
-                  toast.success(`${mode.name} is now your default`);
-                }}
-              />
-            ))}
-          </div>
-        </SortableContext>
-      </DndContext>
+        <TabsContent value="modes">
+          <AiImproveToggle />
+
+          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+            <SortableContext items={ids} strategy={rectSortingStrategy}>
+              <div className="grid grid-cols-2 gap-4 lg:grid-cols-3">
+                {sorted.map((mode) => (
+                  <SortableModeCard
+                    key={mode.id}
+                    mode={mode}
+                    isDefault={mode.id === defaultModeId}
+                    onEdit={() => navigate(`/modes/editor?id=${mode.id}`)}
+                    onDuplicate={async () => {
+                      const dup = await duplicate(mode.id);
+                      if (dup) navigate(`/modes/editor?id=${dup.id}`);
+                    }}
+                    onDelete={async () => {
+                      if (
+                        await confirmDialog({
+                          title: `Delete "${mode.name}"?`,
+                          message: "This mode and its app mappings won't be recoverable.",
+                          confirmLabel: "Delete",
+                          destructive: true,
+                        })
+                      ) {
+                        void remove(mode.id);
+                      }
+                    }}
+                    onSetDefault={() => {
+                      setDefault(mode.id);
+                      toast.success(`${mode.name} is now your default`);
+                    }}
+                  />
+                ))}
+              </div>
+            </SortableContext>
+          </DndContext>
+        </TabsContent>
+
+        <TabsContent value="apps">
+          <AppsPanel />
+        </TabsContent>
+      </Tabs>
     </PageContainer>
   );
 }

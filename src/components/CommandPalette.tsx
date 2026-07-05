@@ -20,7 +20,6 @@ const TAB_LABEL: Record<string, string> = {
   general: "General",
   model: "AI model",
   recording: "Recording",
-  overlay: "Overlay",
   privacy: "Privacy",
   advanced: "Advanced",
 };

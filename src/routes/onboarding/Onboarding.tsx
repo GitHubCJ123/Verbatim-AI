@@ -598,7 +598,7 @@ function AppsPick() {
         })}
       </div>
       <p className="mt-3 text-center text-xs text-text-muted">
-        Don't see one? Add any app later from the Apps page.
+        Don't see one? Add any app later from Modes → Apps.
       </p>
       <NavRow
         onBack={back}
@@ -628,7 +628,7 @@ function ToneEach() {
   if (chosen.length === 0) {
     return (
       <div>
-        <StepHeading title="No apps picked" subtitle="You can add app rules later from the Apps page." />
+        <StepHeading title="No apps picked" subtitle="You can add app rules later from Modes → Apps." />
         <NavRow onBack={back} onPrimary={next} />
       </div>
     );
@@ -1190,6 +1190,9 @@ function LocalWhisperInstaller() {
   const downloadModel = async () => {
     setDlProgress({ downloaded: 0, total: 0 });
     try {
+      // The runtime is an implementation detail — set it up silently
+      // as part of the first model download.
+      if (!runtimeInstalled) await installWhisperRuntime();
       await downloadLocalModel(tier);
       toast.success(`Downloaded ${tier}`);
     } catch (e) {
@@ -1283,7 +1286,7 @@ function LocalWhisperInstaller() {
                 {dlProgress.total > 0 ? `${Math.round((dlProgress.downloaded / dlProgress.total) * 100)}%` : "Starting…"}
               </Button>
             ) : (
-              <Button variant="primary" size="sm" onClick={() => void downloadModel()} disabled={!runtimeInstalled}>
+              <Button variant="primary" size="sm" onClick={() => void downloadModel()}>
                 <Download className="h-3.5 w-3.5" /> Download
               </Button>
             )}
@@ -1364,6 +1367,9 @@ function LocalParakeetInstaller() {
   const downloadModel = async () => {
     setDlProgress({ downloaded: 0, total: 0 });
     try {
+      // The runtime is an implementation detail — set it up silently
+      // as part of the first model download.
+      if (!runtimeInstalled) await installParakeetRuntime();
       await downloadParakeetModel(variant);
       toast.success(`Parakeet ${variant} model downloaded`);
     } catch (e) {
@@ -1414,7 +1420,6 @@ function LocalParakeetInstaller() {
           installed={modelInstalled}
           progress={dlProgress}
           onInstall={downloadModel}
-          disabled={!runtimeInstalled}
         />
       </CardContent>
     </Card>

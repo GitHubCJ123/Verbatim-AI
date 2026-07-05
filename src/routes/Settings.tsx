@@ -45,7 +45,6 @@ import {
   SUGGESTED_OLLAMA_MODELS,
   type CleanupProviderKind,
   type OllamaModelInfo,
-  type SuggestedModel,
   type PingResult,
   PARAKEET_LANGUAGES,
   getParakeetLanguage,
@@ -108,6 +107,24 @@ function SettingRow({ title, description, children, id }: RowProps) {
         <div className="text-xs text-text-muted">{description}</div>
       </div>
       <div className="shrink-0">{children}</div>
+    </div>
+  );
+}
+
+/** Collapsed-by-default container for technical settings most users
+ *  never need (runtime management etc.). */
+function AdvancedSection({ children }: { children: React.ReactNode }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="mt-4 border-t border-border-subtle pt-3">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="text-xs text-text-muted transition-colors hover:text-text-secondary"
+      >
+        {open ? "Hide advanced settings" : "Show advanced settings"}
+      </button>
+      {open && <div className="pt-3">{children}</div>}
     </div>
   );
 }
@@ -380,7 +397,7 @@ function UpdateSettingRow() {
   }
 }
 
-const VALID_TABS = ["general", "model", "recording", "overlay", "privacy", "advanced"];
+const VALID_TABS = ["general", "model", "recording", "privacy", "advanced"];
 
 export default function Settings() {
   const navigate = useNavigate();
@@ -439,7 +456,6 @@ export default function Settings() {
           <TabsTrigger value="general">General</TabsTrigger>
           <TabsTrigger value="model">AI model</TabsTrigger>
           <TabsTrigger value="recording">Recording</TabsTrigger>
-          <TabsTrigger value="overlay">Overlay</TabsTrigger>
           <TabsTrigger value="privacy">Privacy</TabsTrigger>
           <TabsTrigger value="advanced">Advanced</TabsTrigger>
         </TabsList>
@@ -501,14 +517,11 @@ export default function Settings() {
                   }
                 />
               </SettingRow>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="overlay">
-          <Card>
-            <CardContent className="p-5 pt-5">
-              <SettingRow id="overlay-position" title="Position" description="Where the recording pill appears.">
+              <SettingRow
+                id="overlay-position"
+                title="Recording pill position"
+                description="Where the floating pill appears while you talk."
+              >
                 <OverlayPositionSelect />
               </SettingRow>
               <SettingRow
@@ -668,10 +681,31 @@ function ModelTab() {
     };
   }, []);
 
+  // The whisper.cpp runtime is an implementation detail — install it
+  // automatically whenever it's needed so the user never has to think
+  // about it (manual reinstall lives behind "Show advanced settings").
+  const ensureRuntime = async () => {
+    if (runtimeInstalled || installingRuntime) return;
+    setInstallingRuntime({ downloaded: 0, total: 0 });
+    try {
+      await installWhisperRuntime();
+    } catch (e) {
+      setInstallingRuntime(null);
+      throw e;
+    }
+  };
+
   const handleProviderChange = (next: AiProviderKind) => {
     setAiProviderKind(next);
     setKind(next);
     toast.success(next === "cloud" ? "Using cloud (Azure Whisper)" : "Using local Whisper");
+    if (next === "local-whisper" && !runtimeInstalled) {
+      void ensureRuntime().catch((e) => {
+        toast.error("Couldn't set up the Whisper runtime", {
+          description: e instanceof Error ? e.message : String(e),
+        });
+      });
+    }
   };
 
   const handleTierChange = (tier: WhisperTier) => {
@@ -682,6 +716,7 @@ function ModelTab() {
   const handleDownload = async (tier: WhisperTier) => {
     setDownloading((d) => ({ ...d, [tier]: { downloaded: 0, total: 0 } }));
     try {
+      await ensureRuntime();
       await downloadLocalModel(tier);
       toast.success(`Downloaded ${tier}`);
     } catch (e) {
@@ -723,9 +758,9 @@ function ModelTab() {
             <Select value={kind} onValueChange={(v) => handleProviderChange(v as AiProviderKind)}>
               <SelectTrigger className="w-56"><SelectValue /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="cloud">Cloud (Azure Whisper)</SelectItem>
-                <SelectItem value="local-whisper">Local Whisper</SelectItem>
-                <SelectItem value="local-parakeet">Parakeet TDT (NVIDIA)</SelectItem>
+                <SelectItem value="cloud">Cloud — Azure Whisper</SelectItem>
+                <SelectItem value="local-whisper">Local — Whisper</SelectItem>
+                <SelectItem value="local-parakeet">Local — Parakeet (NVIDIA)</SelectItem>
               </SelectContent>
             </Select>
           </SettingRow>
@@ -738,54 +773,22 @@ function ModelTab() {
       {kind === "local-whisper" && (
         <Card>
           <CardContent className="p-5 pt-5">
-            <div className="mb-3 text-sm font-medium">whisper.cpp runtime</div>
-            <div className="mb-4 text-xs text-text-muted">
-              The runtime is the small executable (~5 MB) that actually runs Whisper on your machine. Install it once.
-            </div>
-            <div className="flex items-center justify-between rounded-md border border-border-subtle p-3">
-              <div className="flex flex-col gap-0.5">
-                <div className="text-sm">
-                  {runtimeInstalled ? (
-                    <span className="inline-flex items-center gap-1 text-green-600 dark:text-green-400">
-                      <CheckCircle2 className="h-4 w-4" /> Installed
-                    </span>
-                  ) : (
-                    <span className="text-text-muted">Not installed</span>
-                  )}
-                </div>
-                <div className="text-xs text-text-muted">whisper.cpp v1.8.4 · CUDA build (uses your NVIDIA GPU)</div>
-              </div>
-              {runtimeInstalled ? (
-                <Button variant="ghost" size="sm" onClick={handleInstallRuntime} title="Reinstall">Reinstall</Button>
-              ) : installingRuntime ? (
-                <Button variant="secondary" size="sm" disabled>
-                  <Loader2 className="mr-1 h-4 w-4 animate-spin" />
-                  {installingRuntime.total > 0
-                    ? `${Math.round((installingRuntime.downloaded / installingRuntime.total) * 100)}%`
-                    : "Starting…"}
-                </Button>
-              ) : (
-                <Button variant="primary" size="sm" onClick={handleInstallRuntime}>
-                  <Download className="mr-1 h-4 w-4" /> Install runtime
-                </Button>
-              )}
-            </div>
-            {installingRuntime && installingRuntime.total > 0 && (
-              <div className="pt-3">
-                <ProgressBar value={Math.round((installingRuntime.downloaded / installingRuntime.total) * 100)} />
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      )}
-
-      {kind === "local-whisper" && (
-        <Card>
-          <CardContent className="p-5 pt-5">
             <div className="mb-3 text-sm font-medium">Local Whisper models</div>
             <div className="mb-4 text-xs text-text-muted">
-              Pick a tier based on your machine. Larger = more accurate, slower. Models download from Hugging Face on demand.
+              Pick a tier based on your machine. Larger = more accurate, slower. Everything needed to
+              run models on this machine is set up automatically with your first download.
             </div>
+            {installingRuntime && (
+              <div className="mb-3 rounded-md border border-border-subtle bg-bg-elevated/40 p-3">
+                <div className="mb-1 flex items-center gap-2 text-xs text-text-secondary">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  Setting up the on-device engine (one time, ~5 MB)…
+                </div>
+                {installingRuntime.total > 0 && (
+                  <ProgressBar value={Math.round((installingRuntime.downloaded / installingRuntime.total) * 100)} />
+                )}
+              </div>
+            )}
             <div className="flex flex-col gap-2">
               {WHISPER_TIERS.map((meta) => {
                 const info = models.find((m) => m.tier === meta.tier);
@@ -860,6 +863,31 @@ function ModelTab() {
                 );
               })}
             </div>
+            <AdvancedSection>
+              <div className="flex items-center justify-between rounded-md border border-border-subtle p-3">
+                <div className="flex flex-col gap-0.5">
+                  <div className="text-sm">
+                    whisper.cpp runtime:{" "}
+                    {runtimeInstalled ? (
+                      <span className="inline-flex items-center gap-1 text-green-600 dark:text-green-400">
+                        <CheckCircle2 className="h-4 w-4" /> Installed
+                      </span>
+                    ) : (
+                      <span className="text-text-muted">Not installed — installs automatically with the first model download</span>
+                    )}
+                  </div>
+                  <div className="text-xs text-text-muted">whisper.cpp v1.8.4 · CUDA build (uses your NVIDIA GPU)</div>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleInstallRuntime}
+                  disabled={!!installingRuntime}
+                >
+                  {runtimeInstalled ? "Reinstall" : "Install now"}
+                </Button>
+              </div>
+            </AdvancedSection>
           </CardContent>
         </Card>
       )}
@@ -999,6 +1027,19 @@ function ParakeetSection() {
     }
   };
 
+  // Runtime is an implementation detail — auto-install on first model
+  // download; manual controls live behind "Show advanced settings".
+  const ensureRuntime = async () => {
+    if (runtimeInstalled || installingRuntime) return;
+    setInstallingRuntime({ downloaded: 0, total: 0 });
+    try {
+      await installParakeetRuntime();
+    } catch (e) {
+      setInstallingRuntime(null);
+      throw e;
+    }
+  };
+
   const handleVariantChange = (v: ParakeetVariant) => {
     setParakeetVariant(v);
     setSelectedVariant(v);
@@ -1007,6 +1048,7 @@ function ParakeetSection() {
   const handleDownload = async (v: ParakeetVariant) => {
     setDownloading((d) => ({ ...d, [v]: { downloaded: 0, total: 0 } }));
     try {
+      await ensureRuntime();
       await downloadParakeetModel(v);
       toast.success(`Parakeet ${v} model downloaded`);
     } catch (e) {
@@ -1048,43 +1090,21 @@ function ParakeetSection() {
           best WER, or v3 for 25 European languages. Runs on CPU. Windows x64 and Apple Silicon only.
         </div>
 
-        {/* Runtime */}
-        <div className="mb-3 flex items-center justify-between rounded-md border border-border-subtle p-3">
-          <div className="flex flex-col gap-0.5">
-            <div className="text-sm">
-              Runtime: {runtimeInstalled ? (
-                <span className="inline-flex items-center gap-1 text-green-600 dark:text-green-400">
-                  <CheckCircle2 className="h-4 w-4" /> Installed
-                </span>
-              ) : (
-                <span className="text-text-muted">Not installed</span>
-              )}
+        {installingRuntime && (
+          <div className="mb-3 rounded-md border border-border-subtle bg-bg-elevated/40 p-3">
+            <div className="mb-1 flex items-center gap-2 text-xs text-text-secondary">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              Setting up the on-device engine (one time, ~50 MB)…
             </div>
-            <div className="text-xs text-text-muted">sherpa-onnx v1.13.2 · CPU build (~50 MB)</div>
+            {rtPct !== undefined && <ProgressBar value={rtPct} />}
           </div>
-          {runtimeInstalled ? (
-            <Button variant="ghost" size="sm" onClick={handleInstallRuntime} title="Reinstall">
-              Reinstall
-            </Button>
-          ) : installingRuntime ? (
-            <Button variant="secondary" size="sm" disabled>
-              <Loader2 className="mr-1 h-4 w-4 animate-spin" />
-              {rtPct !== undefined ? `${rtPct}%` : "Starting…"}
-            </Button>
-          ) : (
-            <Button variant="primary" size="sm" onClick={handleInstallRuntime}>
-              <Download className="mr-1 h-4 w-4" /> Install runtime
-            </Button>
-          )}
-        </div>
-        {installingRuntime && rtPct !== undefined && (
-          <div className="pb-3"><ProgressBar value={rtPct} /></div>
         )}
 
         {/* Model variants */}
         <div className="mb-3 text-sm font-medium">Models</div>
         <div className="mb-4 text-xs text-text-muted">
-          Pick the variant that fits your needs. Both can be installed; the selected one is used for new recordings.
+          Pick the variant that fits your needs. Both can be installed; the selected one is used for
+          new recordings. Everything needed to run them is set up automatically with your first download.
         </div>
         <div className="flex flex-col gap-2">
           {PARAKEET_VARIANTS.map((meta) => {
@@ -1146,8 +1166,6 @@ function ParakeetSection() {
                         variant="primary"
                         size="sm"
                         onClick={() => handleDownload(meta.variant)}
-                        disabled={!runtimeInstalled}
-                        title={!runtimeInstalled ? "Install the runtime first" : undefined}
                       >
                         <Download className="mr-1 h-4 w-4" /> Download
                       </Button>
@@ -1177,6 +1195,32 @@ function ParakeetSection() {
             </Select>
           </SettingRow>
         </div>
+
+        <AdvancedSection>
+          <div className="flex items-center justify-between rounded-md border border-border-subtle p-3">
+            <div className="flex flex-col gap-0.5">
+              <div className="text-sm">
+                sherpa-onnx runtime:{" "}
+                {runtimeInstalled ? (
+                  <span className="inline-flex items-center gap-1 text-green-600 dark:text-green-400">
+                    <CheckCircle2 className="h-4 w-4" /> Installed
+                  </span>
+                ) : (
+                  <span className="text-text-muted">Not installed — installs automatically with the first model download</span>
+                )}
+              </div>
+              <div className="text-xs text-text-muted">sherpa-onnx v1.13.2 · CPU build (~50 MB)</div>
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleInstallRuntime}
+              disabled={!!installingRuntime}
+            >
+              {runtimeInstalled ? "Reinstall" : "Install now"}
+            </Button>
+          </div>
+        </AdvancedSection>
       </CardContent>
     </Card>
   );
@@ -1260,8 +1304,8 @@ function CleanupSection() {
             <Select value={kind} onValueChange={(v) => handleKind(v as CleanupChoice)}>
               <SelectTrigger className="w-56"><SelectValue /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="cloud">Cloud (Azure GPT)</SelectItem>
-                <SelectItem value="local-ollama">Local (Ollama)</SelectItem>
+                <SelectItem value="cloud">Cloud — Azure GPT</SelectItem>
+                <SelectItem value="local-ollama">Local — Ollama</SelectItem>
                 <SelectItem value="none">None — raw transcript</SelectItem>
               </SelectContent>
             </Select>
@@ -1328,36 +1372,6 @@ function CleanupSection() {
               </div>
             </SettingRow>
 
-            <SettingRow
-              title="Model"
-              description="Pulled models on this Ollama instance. Pull more from a terminal."
-            >
-              {reachable === false ? (
-                <span className="text-xs text-text-muted">Connect first</span>
-              ) : models.length === 0 ? (
-                <span className="text-xs text-text-muted">No models pulled</span>
-              ) : (
-                <Select
-                  value={model || undefined}
-                  onValueChange={(v) => {
-                    setOllamaModel(v);
-                    setModelState(v);
-                  }}
-                >
-                  <SelectTrigger className="w-64">
-                    <SelectValue placeholder="Pick a model" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {models.map((m) => (
-                      <SelectItem key={m.name} value={m.name}>
-                        {m.name} · {formatBytes(m.sizeBytes)}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              )}
-            </SettingRow>
-
             {ping?.kind === "forbidden" && (
               <div className="mt-3 rounded-md border border-danger/30 bg-danger/5 p-3 text-xs text-text-secondary">
                 <div className="mb-1 font-medium text-danger">Ollama is rejecting requests from this app (HTTP 403).</div>
@@ -1381,9 +1395,9 @@ function CleanupSection() {
       )}
 
       {kind === "local-ollama" && reachable && (
-        <SuggestedOllamaList
+        <OllamaModelList
           host={host}
-          installedNames={new Set(models.map((m) => m.name))}
+          installed={models}
           currentModel={model}
           onPulled={refresh}
           onPick={(name) => {
@@ -1401,58 +1415,97 @@ function formatMB(mb: number): string {
   return `${mb} MB`;
 }
 
-function SuggestedOllamaList({
+/**
+ * Unified Ollama model picker — one list, styled exactly like the
+ * Whisper/Parakeet model lists: suggested models are downloadable in
+ * place, installed models (including ones pulled manually) get
+ * "Use this" / "In use". Replaces the old separate Model dropdown +
+ * "Suggested models" box (user request: one consistent pattern).
+ */
+function OllamaModelList({
   host,
-  installedNames,
+  installed,
   currentModel,
   onPulled,
   onPick,
 }: {
   host: string;
-  installedNames: Set<string>;
+  installed: OllamaModelInfo[];
   currentModel: string;
   onPulled: () => void | Promise<void>;
   onPick: (name: string) => void;
 }) {
-  const [pulling, setPulling] = useState<Record<string, { completed: number; total: number; status: string } | undefined>>(
-    {} as Record<string, { completed: number; total: number; status: string } | undefined>,
-  );
+  const [pulling, setPulling] = useState<Record<string, { completed: number; total: number; status: string } | undefined>>({});
 
-  const handlePull = async (m: SuggestedModel) => {
-    setPulling((p) => ({ ...p, [m.tag]: { completed: 0, total: 0, status: "starting" } }));
+  const handlePull = async (tag: string) => {
+    setPulling((p) => ({ ...p, [tag]: { completed: 0, total: 0, status: "starting" } }));
     try {
-      await pullOllamaModel(m.tag, host, (prog) => {
+      await pullOllamaModel(tag, host, (prog) => {
         setPulling((p) => ({
           ...p,
-          [m.tag]: {
+          [tag]: {
             completed: prog.completed ?? 0,
             total: prog.total ?? 0,
             status: prog.status,
           },
         }));
       });
-      toast.success(`Pulled ${m.tag}`);
+      toast.success(`Downloaded ${tag}`);
       await onPulled();
+      onPick(tag);
     } catch (e) {
-      toast.error("Pull failed", {
+      toast.error("Download failed", {
         description: e instanceof Error ? e.message : String(e),
       });
     } finally {
-      setPulling((p) => ({ ...p, [m.tag]: undefined }));
+      setPulling((p) => ({ ...p, [tag]: undefined }));
     }
   };
+
+  const installedByName = new Map(installed.map((m) => [m.name, m]));
+  // Suggested first (recommended order), then anything else the user
+  // already pulled that we don't have a blurb for.
+  const extraInstalled = installed.filter(
+    (m) => !SUGGESTED_OLLAMA_MODELS.some((s) => s.tag === m.name),
+  );
+
+  interface Row {
+    tag: string;
+    label: string;
+    meta: string;
+    blurb: string;
+    recommended: boolean;
+    isInstalled: boolean;
+  }
+  const rows: Row[] = [
+    ...SUGGESTED_OLLAMA_MODELS.map((m) => ({
+      tag: m.tag,
+      label: m.label,
+      meta: `${formatMB(m.approxDiskMB)} disk · ~${formatMB(m.approxVramMB)} VRAM`,
+      blurb: m.blurb,
+      recommended: !!m.recommended,
+      isInstalled: installedByName.has(m.tag),
+    })),
+    ...extraInstalled.map((m) => ({
+      tag: m.name,
+      label: m.name,
+      meta: formatBytes(m.sizeBytes),
+      blurb: "Pulled into Ollama outside Verbatim AI.",
+      recommended: false,
+      isInstalled: true,
+    })),
+  ];
 
   return (
     <Card>
       <CardContent className="p-5 pt-5">
-        <div className="mb-3 text-sm font-medium">Suggested models</div>
+        <div className="mb-3 text-sm font-medium">Ollama models</div>
         <div className="mb-4 text-xs text-text-muted">
-          Pull any of these directly into Ollama from here. You can also pull anything else with{" "}
+          Pick the model used for polish. Downloads go straight into Ollama — or pull anything else with{" "}
           <code className="text-text-primary">ollama pull &lt;tag&gt;</code> in a terminal.
         </div>
         <div className="flex flex-col gap-2">
-          {SUGGESTED_OLLAMA_MODELS.map((m) => {
-            const installed = installedNames.has(m.tag);
+          {rows.map((m) => {
             const selected = currentModel === m.tag;
             const p = pulling[m.tag];
             const pct = p && p.total > 0 ? Math.round((p.completed / p.total) * 100) : undefined;
@@ -1472,13 +1525,15 @@ function SuggestedOllamaList({
                           Recommended
                         </span>
                       )}
+                      {m.label !== m.tag && (
+                        <>
+                          <span className="text-xs text-text-muted">·</span>
+                          <span className="text-xs text-text-muted"><code>{m.tag}</code></span>
+                        </>
+                      )}
                       <span className="text-xs text-text-muted">·</span>
-                      <span className="text-xs text-text-muted"><code>{m.tag}</code></span>
-                      <span className="text-xs text-text-muted">·</span>
-                      <span className="text-xs text-text-muted">
-                        {formatMB(m.approxDiskMB)} disk · ~{formatMB(m.approxVramMB)} VRAM
-                      </span>
-                      {installed && (
+                      <span className="text-xs text-text-muted">{m.meta}</span>
+                      {m.isInstalled && (
                         <span className="inline-flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
                           <CheckCircle2 className="h-3.5 w-3.5" /> installed
                         </span>
@@ -1487,7 +1542,7 @@ function SuggestedOllamaList({
                     <div className="text-xs text-text-muted">{m.blurb}</div>
                   </div>
                   <div className="flex shrink-0 items-center gap-2">
-                    {installed ? (
+                    {m.isInstalled ? (
                       <Button
                         variant={selected ? "primary" : "secondary"}
                         size="sm"
@@ -1499,11 +1554,12 @@ function SuggestedOllamaList({
                     ) : p ? (
                       <Button variant="secondary" size="sm" disabled>
                         <Loader2 className="mr-1 h-4 w-4 animate-spin" />
-                        {pct !== undefined ? `${pct}%` : p.status}
+                        {pct !== undefined ? `${pct}%` : "Starting…"}
                       </Button>
                     ) : (
-                      <Button variant="secondary" size="sm" onClick={() => handlePull(m)}>
-                        <Download className="mr-1 h-4 w-4" /> Download
+                      <Button variant="secondary" size="sm" onClick={() => handlePull(m.tag)}>
+                        <Download className="mr-1 h-4 w-4" />
+                        Download
                       </Button>
                     )}
                   </div>

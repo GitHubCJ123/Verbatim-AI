@@ -16,7 +16,6 @@ export type SettingsTab =
   | "general"
   | "model"
   | "recording"
-  | "overlay"
   | "privacy"
   | "advanced";
 
@@ -108,20 +107,19 @@ export const SETTINGS_ENTRIES: SettingsSearchEntry[] = [
     keywords: ["ptt", "hold", "toggle", "tap", "hands free"],
     tab: "recording",
   },
-  // Overlay
   {
     id: "overlay-position",
-    title: "Overlay position",
-    description: "Where the recording pill appears on screen.",
-    keywords: ["pill", "popup", "corner", "screen position", "widget"],
-    tab: "overlay",
+    title: "Recording pill position",
+    description: "Where the floating pill appears while you talk.",
+    keywords: ["pill", "popup", "corner", "screen position", "widget", "overlay"],
+    tab: "recording",
   },
   {
     id: "clipboard-restore",
     title: "Restore clipboard after paste",
     description: "Put your previous clipboard back after text is pasted.",
-    keywords: ["clipboard", "paste", "copy", "restore"],
-    tab: "overlay",
+    keywords: ["clipboard", "paste", "copy", "restore", "overlay"],
+    tab: "recording",
   },
   // Privacy
   {
@@ -192,9 +190,9 @@ export const SETTINGS_ENTRIES: SettingsSearchEntry[] = [
   {
     id: "page-apps",
     title: "Apps",
-    description: "Map applications to Modes automatically.",
+    description: "Map applications to Modes automatically (Modes → Apps tab).",
     keywords: ["per app", "mapping", "rules", "slack", "email", "automatic mode"],
-    route: "/apps",
+    route: "/modes?tab=apps",
   },
   {
     id: "page-vocabulary",

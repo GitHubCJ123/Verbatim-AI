@@ -24,7 +24,12 @@ import {
   resizeOverlayToReview,
 } from "../lib/recording-bridge";
 import { pasteCleanedText, copyCleanedText, clearCapturedTarget } from "../lib/output";
-import { isAiImproveDisabled, getMicDeviceId, isPerfDebugEnabled } from "../lib/preferences";
+import {
+  isAiImproveDisabled,
+  getMicDeviceId,
+  isInsertOnlyEnabled,
+  isPerfDebugEnabled,
+} from "../lib/preferences";
 import { getPrivacyStatus, type DataLocality } from "../lib/privacyStatus";
 import type { Mode } from "../types/mode";
 
@@ -192,8 +197,11 @@ export default function Overlay() {
       if (activeMode.outputStyle === "paste") {
         const pasted = await pasteCleanedText(cleaned);
         if (!pasted) {
-          // No captured target — fall back to clipboard.
-          console.info("[Verbatim AI] no paste target; copied to clipboard");
+          console.info(
+            isInsertOnlyEnabled()
+              ? "[Verbatim AI] no paste target; clipboard unchanged because insert-only is enabled"
+              : "[Verbatim AI] no paste target; copied to clipboard",
+          );
         }
         setState("success");
         setTimeout(() => void reset(), 900);

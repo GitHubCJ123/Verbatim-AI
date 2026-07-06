@@ -19,7 +19,10 @@ use commands::{
         is_parakeet_model_installed, is_parakeet_runtime_installed, list_parakeet_models,
         transcribe_parakeet,
     },
-    paste::{capture_target_window, clear_target_window, paste_to_target, TargetWindowState},
+    paste::{
+        capture_target_window, clear_target_window, insert_text_to_target, paste_to_target,
+        TargetWindowState,
+    },
     process_list::list_running_apps,
     relay::relay_event,
 };
@@ -85,6 +88,7 @@ pub fn run() {
             list_running_apps,
             capture_target_window,
             clear_target_window,
+            insert_text_to_target,
             paste_to_target,
             relay_event,
             list_local_models,

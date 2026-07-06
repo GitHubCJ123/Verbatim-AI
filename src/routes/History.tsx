@@ -34,6 +34,7 @@ import { isSupabaseConfigured } from "../lib/supabase";
 import { toast } from "../components/ui/Toast";
 import { confirmDialog } from "../components/ui/confirmDialog";
 import { copyCleanedText, pasteCleanedText } from "../lib/output";
+import { isInsertOnlyEnabled } from "../lib/preferences";
 import { useModes } from "../lib/store/useModes";
 import { getActiveProvider } from "../lib/ai";
 import { loadVocabulary } from "../lib/store/useModes";
@@ -229,7 +230,13 @@ function HistoryRow({
 
   const handlePaste = async () => {
     const pasted = await pasteCleanedText(cleaned);
-    toast.success(pasted ? "Pasted" : "Copied (no target window)");
+    toast.success(
+      pasted
+        ? "Pasted"
+        : isInsertOnlyEnabled()
+          ? "No target window; clipboard unchanged"
+          : "Copied (no target window)",
+    );
   };
 
   const handleReclean = async () => {

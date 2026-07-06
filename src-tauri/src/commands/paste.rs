@@ -3,12 +3,13 @@
 //! Flow:
 //!   1. Frontend calls `capture_target_window()` *before* showing the
 //!      overlay so we remember which app had focus.
-//!   2. Frontend writes the cleaned text to the clipboard (via the
-//!      clipboard-manager plugin from JS).
-//!   3. Frontend calls `paste_to_target()` which:
+//!   2. Clipboard mode writes the cleaned text to the clipboard, then
+//!      calls `paste_to_target()` which:
 //!      - Restores foreground to the captured HWND
 //!      - Briefly waits so Windows finishes the focus change
 //!      - Sends Ctrl+V via `enigo`
+//!   3. Insert-only mode calls `insert_text_to_target()` instead, which
+//!      restores focus and types text directly without touching the clipboard.
 //!
 //! If no target was captured, `paste_to_target()` returns Ok(false) so
 //! the caller can fall back to "Copied to clipboard" UX.
@@ -139,6 +140,31 @@ pub fn paste_to_target(state: State<'_, TargetWindowState>) -> Result<bool, Stri
     enigo
         .key(modifier, Direction::Release)
         .map_err(|e| e.to_string())?;
+
+    Ok(true)
+}
+
+/// Restore focus to the captured target window and type text directly,
+/// avoiding the system clipboard and clipboard history.
+#[tauri::command]
+pub fn insert_text_to_target(
+    state: State<'_, TargetWindowState>,
+    text: String,
+) -> Result<bool, String> {
+    let hwnd = {
+        let g = state.0.lock().map_err(|e| e.to_string())?;
+        *g
+    };
+
+    let Some(hwnd) = hwnd else {
+        return Ok(false);
+    };
+
+    imp::restore_foreground(hwnd);
+    std::thread::sleep(std::time::Duration::from_millis(60));
+
+    let mut enigo = Enigo::new(&Settings::default()).map_err(|e| e.to_string())?;
+    enigo.text(&text).map_err(|e| e.to_string())?;
 
     Ok(true)
 }

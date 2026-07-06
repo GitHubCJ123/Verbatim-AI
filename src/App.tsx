@@ -12,10 +12,10 @@ import Account from "./routes/Account";
 import Onboarding from "./routes/onboarding/Onboarding";
 import AuthGate from "./routes/AuthGate";
 import ModePicker from "./routes/ModePicker";
-import { isOnboardingComplete } from "./lib/store/useOnboarding";
+import { isOnboardingComplete, markOnboardingComplete } from "./lib/store/useOnboarding";
 import { isSupabaseConfigured } from "./lib/supabase";
 import { useAuth } from "./lib/store/useAuth";
-import { hydrateAll, clearAllCaches } from "./lib/store/useModes";
+import { hydrateAll, clearAllCaches, loadModes, useModes } from "./lib/store/useModes";
 import { useAppMappings } from "./lib/store/useAppMappings";
 import { useProfile } from "./lib/store/useProfile";
 import { getAppMode } from "./lib/appMode";
@@ -55,6 +55,15 @@ function BootSpinner() {
   );
 }
 
+function onboardingDestination(hasExistingConfig: boolean): "/" | "/onboarding" {
+  if (isOnboardingComplete()) return "/";
+  if (hasExistingConfig) {
+    markOnboardingComplete();
+    return "/";
+  }
+  return "/onboarding";
+}
+
 const router = createMemoryRouter(
   [
     { path: "/picker", element: <ModePicker /> },
@@ -64,7 +73,9 @@ const router = createMemoryRouter(
       element: (
         <MigrationPicker
           onDone={() =>
-            router.navigate(isOnboardingComplete() ? "/" : "/onboarding", { replace: true })
+            router.navigate(onboardingDestination(useModes.getState().modes.length > 0), {
+              replace: true,
+            })
           }
         />
       ),
@@ -122,6 +133,7 @@ export default function App() {
       }
 
       if (mode === "local") {
+        const hadExistingLocalConfig = loadModes().length > 0;
         // Local mode: no auth, hydrate from localStorage (seeds built-ins).
         try {
           await hydrateAll();
@@ -131,7 +143,7 @@ export default function App() {
         }
         void pruneExpiredTranscriptions().catch(() => {});
         if (!cancelled) {
-          router.navigate(isOnboardingComplete() ? "/" : "/onboarding", { replace: true });
+          router.navigate(onboardingDestination(hadExistingLocalConfig), { replace: true });
           setPhase("ready");
         }
         return;
@@ -166,7 +178,9 @@ export default function App() {
             } catch (e) {
               setHydrationError(e instanceof Error ? e.message : String(e));
             }
-            router.navigate(isOnboardingComplete() ? "/" : "/onboarding", { replace: true });
+            router.navigate(onboardingDestination(useModes.getState().modes.length > 0), {
+              replace: true,
+            });
           })();
         }
         if (!state.user && prev.user) {
@@ -199,7 +213,9 @@ export default function App() {
         }
         void pruneExpiredTranscriptions().catch(() => {});
         if (!cancelled) {
-          router.navigate(isOnboardingComplete() ? "/" : "/onboarding", { replace: true });
+          router.navigate(onboardingDestination(useModes.getState().modes.length > 0), {
+            replace: true,
+          });
         }
       } else if (!cancelled) {
         // Cloud mode, signed out — go to auth gate.

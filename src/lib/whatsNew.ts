@@ -43,6 +43,32 @@ export interface WhatsNewEntry {
  * by version).
  */
 export const WHATS_NEW: Record<string, WhatsNewEntry> = {
+  "0.5.7": {
+    version: "0.5.7",
+    date: "2026",
+    highlights: [
+      {
+        title: "Local Whisper runtime choices",
+        description:
+          "Local Whisper now supports hardware-specific runtime choices so non-NVIDIA PCs can use CPU, Vulkan, or DirectML instead of failing on CUDA-only builds.",
+        link: {
+          label: "Open model settings",
+          to: "/settings",
+          settingsTab: "model",
+        },
+      },
+      {
+        title: "Clearer recording and privacy controls",
+        description:
+          "Settings now groups recording, model, privacy, and update controls more clearly, with history retention and provider health checks easier to find.",
+        link: {
+          label: "Review privacy settings",
+          to: "/settings",
+          settingsTab: "privacy",
+        },
+      },
+    ],
+  },
   "0.5.5": {
     version: "0.5.5",
     date: "2025",

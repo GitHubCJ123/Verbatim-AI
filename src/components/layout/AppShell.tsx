@@ -3,12 +3,14 @@ import { Outlet, useLocation } from "react-router-dom";
 import { Sidebar } from "./Sidebar";
 import { TopBar } from "./TopBar";
 import { TooltipProvider } from "../ui/Tooltip";
+import { CommandPalette } from "../CommandPalette";
 
 export function AppShell() {
   const { pathname } = useLocation();
 
   return (
     <TooltipProvider delayDuration={200}>
+      <CommandPalette />
       <div className="flex h-screen w-screen overflow-hidden bg-bg-base text-text-primary">
         <Sidebar />
         <div className="flex flex-1 flex-col">

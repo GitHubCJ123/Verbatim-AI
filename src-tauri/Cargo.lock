@@ -5193,17 +5193,22 @@ dependencies = [
 
 [[package]]
 name = "verbatim-ai"
-version = "0.5.5"
+version = "0.5.7"
 dependencies = [
  "bzip2",
+ "core-foundation 0.10.1",
+ "core-graphics",
  "enigo",
+ "flate2",
  "futures-util",
+ "minisign-verify",
  "objc2 0.5.2",
  "objc2-app-kit 0.2.2",
  "objc2-foundation 0.2.2",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
+ "sha2",
  "tar",
  "tauri",
  "tauri-build",

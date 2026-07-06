@@ -7,10 +7,12 @@
  * Press a non-modifier next to commit. Click again to start over.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { Kbd } from "../ui/Kbd";
 import { Button } from "../ui/Button";
 import { cn } from "../../lib/utils";
 import { applyHotkey, clearHotkey, isFunctionKey } from "../../lib/hotkey";
+import { toast } from "../ui/Toast";
 
 interface HotkeyRecorderProps {
   value: string;
@@ -27,6 +29,7 @@ const MODIFIER_LABEL: Record<string, string> = IS_MAC
       Shift: "⇧",
       Alt: "⌥",
       Super: "⌘",
+      Fn: "fn",
     }
   : {
       CommandOrControl: "Ctrl",
@@ -139,8 +142,36 @@ export function HotkeyRecorder({ value, onChange }: HotkeyRecorderProps) {
   const displayed = committed ?? value;
   const tokens = recording && pendingMods.length > 0 ? pendingMods : parts(displayed);
 
+  // The fn key never produces a keydown in the WebView, so it can't be
+  // captured by the recorder — it gets an explicit chip instead. The
+  // Rust side runs a flags-changed event tap for it (fn_hotkey.rs) and
+  // needs the Input Monitoring permission.
+  const useFnKey = async () => {
+    try {
+      await applyHotkey("Fn");
+      committedRef.current = "Fn";
+      setCommitted("Fn");
+      setRecording(false);
+      setPendingMods([]);
+      onChange("Fn");
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg.includes("needs-input-monitoring")) {
+        toast.error("Input Monitoring permission needed", {
+          description:
+            "Enable Verbatim AI under System Settings → Privacy & Security → " +
+            "Input Monitoring (opening now), then relaunch the app and pick fn again.",
+        });
+        void invoke("open_input_monitoring_settings").catch(() => {});
+      } else {
+        toast.error("Couldn't enable the fn key", { description: msg });
+      }
+    }
+  };
+
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex flex-col items-end gap-1.5">
+      <div className="flex items-center gap-2">
       <button
         type="button"
         onClick={async () => {
@@ -194,6 +225,23 @@ export function HotkeyRecorder({ value, onChange }: HotkeyRecorderProps) {
         >
           Cancel
         </Button>
+      )}
+        {IS_MAC && !recording && displayed !== "Fn" && (
+          <button
+            type="button"
+            onClick={() => void useFnKey()}
+            className="flex h-9 items-center gap-1 rounded-md border border-border-subtle bg-bg-elevated px-3 text-xs text-text-secondary transition-colors hover:border-border-strong hover:text-text-primary"
+            title="Use the fn key alone — hold to talk"
+          >
+            Use <Kbd>fn</Kbd>
+          </button>
+        )}
+      </div>
+      {IS_MAC && displayed === "Fn" && (
+        <p className="max-w-[260px] text-right text-[11px] leading-snug text-text-muted">
+          Hold <Kbd>fn</Kbd> to talk. If pressing it opens the emoji picker,
+          set System Settings → Keyboard → "Press 🌐 key to" → Do Nothing.
+        </p>
       )}
     </div>
   );

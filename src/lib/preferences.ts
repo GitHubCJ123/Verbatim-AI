@@ -16,6 +16,8 @@ const LS_OUTPUT_INSERT_ONLY = "sw.output.insertOnly";
 const LS_TELEMETRY = "sw.telemetry.enabled";
 const LS_AI_DISABLED = "sw.ai.disabled";
 const LS_HISTORY_DISABLED = "sw.history.disabled";
+const LS_HISTORY_RETENTION = "sw.history.retentionDays";
+const LS_PERF_DEBUG = "sw.debug.perf";
 
 export type OverlayPosition =
   | "bottom-center"
@@ -92,6 +94,32 @@ export function isHistoryDisabled(): boolean {
 
 export function setHistoryDisabled(v: boolean): void {
   localStorage.setItem(LS_HISTORY_DISABLED, v ? "1" : "0");
+}
+
+/** How long transcripts are kept. null = forever (default). */
+export type HistoryRetentionDays = 7 | 30 | 90 | null;
+
+export function getHistoryRetentionDays(): HistoryRetentionDays {
+  switch (localStorage.getItem(LS_HISTORY_RETENTION)) {
+    case "7": return 7;
+    case "30": return 30;
+    case "90": return 90;
+    default: return null;
+  }
+}
+
+export function setHistoryRetentionDays(days: HistoryRetentionDays): void {
+  if (days === null) localStorage.removeItem(LS_HISTORY_RETENTION);
+  else localStorage.setItem(LS_HISTORY_RETENTION, String(days));
+}
+
+/**
+ * Hot-path latency logging (docs/improvement-plan/04-performance-latency.md,
+ * "Measure, don't guess"). Off unless `sw.debug.perf` is "1" — set it
+ * from devtools to get press→listening and mic-acquire timings.
+ */
+export function isPerfDebugEnabled(): boolean {
+  return localStorage.getItem(LS_PERF_DEBUG) === "1";
 }
 
 export function isClipboardRestoreEnabled(): boolean {

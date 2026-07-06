@@ -22,12 +22,25 @@ const LS_PTT = "sw.hotkey.ptt";
 // On macOS ⌘+Space is Spotlight — pick something the user can use out of the box.
 export const IS_MAC =
   typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
-const DEFAULT_SPEC = IS_MAC ? "Control+Shift+Space" : "CommandOrControl+Space";
+export const DEFAULT_SPEC = IS_MAC ? "Control+Shift+Space" : "CommandOrControl+Space";
 
 export interface HotkeyConfig {
   spec: string;
   /** push-to-talk: hold to record, release to stop. */
   pushToTalk: boolean;
+}
+
+const KEY_LABEL: Record<string, string> = IS_MAC
+  ? { CommandOrControl: "⌘", Control: "⌃", Shift: "⇧", Alt: "⌥", Super: "⌘", Fn: "fn" }
+  : { CommandOrControl: "Ctrl", Control: "Ctrl", Super: "Win" };
+
+/** Spec → human key labels, e.g. "Control+Shift+Space" → ["⌃","⇧","Space"]. */
+export function hotkeyDisplayParts(spec: string): string[] {
+  return spec
+    .split("+")
+    .map((p) => p.trim())
+    .filter(Boolean)
+    .map((p) => KEY_LABEL[p] ?? p);
 }
 
 export interface ActiveWindow {
@@ -106,13 +119,15 @@ export async function installHotkeyListeners(): Promise<UnlistenFn> {
   const offDown = await listen("hotkey:down", async () => {
     if (isHotkeyPaused()) return;
     if (!isOnboardingComplete()) return;
+    const pressedAt = Date.now();
     const cfg = loadHotkeyConfig();
     const { mode, activeWindow } = await resolveModeAtPress();
     if (!mode) {
       console.warn("[Verbatim AI] no modes available — sign in / hydrate first.");
       return;
     }
-    if (activeWindow?.exe) {
+    // Window titles can contain sensitive content — dev builds only.
+    if (import.meta.env.DEV && activeWindow?.exe) {
       console.debug(
         `[Verbatim AI] ${activeWindow.exe} → ${mode.name}${
           activeWindow.title ? ` (window: "${activeWindow.title}")` : ""
@@ -124,7 +139,7 @@ export async function installHotkeyListeners(): Promise<UnlistenFn> {
       if (holdToTalkRecording) return;
       holdToTalkRecording = true;
       try {
-        await startRecording(mode.name, mode.id);
+        await startRecording(mode.name, mode.id, pressedAt);
       } catch (e) {
         holdToTalkRecording = false;
         throw e;
@@ -135,7 +150,7 @@ export async function installHotkeyListeners(): Promise<UnlistenFn> {
         await stopRecording();
       } else {
         toggleRecording = true;
-        await startRecording(mode.name, mode.id);
+        await startRecording(mode.name, mode.id, pressedAt);
       }
     }
   });

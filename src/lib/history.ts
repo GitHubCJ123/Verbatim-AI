@@ -7,6 +7,7 @@ import { supabase } from "./supabase";
 import { useAuth } from "./store/useAuth";
 import { newId, nowIso } from "../types/mode";
 import { isLocalMode } from "./appMode";
+import { getHistoryRetentionDays } from "./preferences";
 
 const LS_HISTORY = "sw.history.local";
 const LOCAL_CAP = 500;
@@ -133,6 +134,31 @@ export async function deleteTranscription(id: string): Promise<void> {
   }
   const { error } = await supabase.from("transcriptions").delete().eq("id", id);
   if (error) throw new Error(error.message);
+}
+
+/**
+ * Delete transcripts older than the retention window (Settings →
+ * Privacy). No-op when retention is "forever". Called on app boot and
+ * when the setting changes. Returns the number of rows removed.
+ */
+export async function pruneExpiredTranscriptions(): Promise<number> {
+  const days = getHistoryRetentionDays();
+  if (days === null) return 0;
+  const cutoff = new Date(Date.now() - days * 86_400_000).toISOString();
+  if (isLocalMode()) {
+    const rows = loadLocal();
+    const kept = rows.filter((r) => r.created_at >= cutoff);
+    if (kept.length !== rows.length) saveLocal(kept);
+    return rows.length - kept.length;
+  }
+  const userId = requireUserId();
+  const { count, error } = await supabase
+    .from("transcriptions")
+    .delete({ count: "exact" })
+    .eq("user_id", userId)
+    .lt("created_at", cutoff);
+  if (error) throw new Error(error.message);
+  return count ?? 0;
 }
 
 export async function clearAllTranscriptions(): Promise<void> {

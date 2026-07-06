@@ -71,9 +71,10 @@ export interface LocalModelInfo {
 }
 
 export async function listLocalModels(): Promise<LocalModelInfo[]> {
-  const raw = await invoke<
-    Array<{ tier: WhisperTier; installed: boolean; size_bytes: number }>
-  >("list_local_models");
+  const raw =
+    await invoke<Array<{ tier: WhisperTier; installed: boolean; size_bytes: number }>>(
+      "list_local_models",
+    );
   return raw.map((r) => ({
     tier: r.tier,
     installed: r.installed,
@@ -90,16 +91,24 @@ export function deleteLocalModel(tier: WhisperTier): Promise<void> {
 }
 
 export function isWhisperRuntimeInstalled(): Promise<boolean> {
-  return invoke<boolean>("is_whisper_runtime_installed");
+  return invoke<boolean>("is_whisper_runtime_installed", {
+    preference: getWhisperComputePreference(),
+  });
 }
 
 export function installWhisperRuntime(): Promise<void> {
-  return invoke("install_whisper_runtime");
+  return invoke("install_whisper_runtime", {
+    preference: getWhisperComputePreference(),
+  });
 }
+
+export type WhisperComputePreference = "auto" | "cuda" | "vulkan" | "cpu";
+export type WhisperRuntimeVariant = "cpu" | "vulkan" | "cuda" | "metal";
 
 // Provider selection persisted in localStorage.
 const LS_AI_PROVIDER = "sw.ai.provider";
 const LS_LOCAL_WHISPER_TIER = "sw.ai.localWhisperTier";
+const LS_WHISPER_COMPUTE = "sw.ai.whisperCompute";
 
 export type AiProviderKind = "cloud" | "local-whisper" | "local-parakeet";
 
@@ -115,19 +124,58 @@ export function setAiProviderKind(v: AiProviderKind): void {
 
 export function getLocalWhisperTier(): WhisperTier {
   const v = localStorage.getItem(LS_LOCAL_WHISPER_TIER);
-  if (
-    v === "tiny" ||
-    v === "base" ||
-    v === "small" ||
-    v === "turbo" ||
-    v === "large-v3"
-  )
-    return v;
+  if (v === "tiny" || v === "base" || v === "small" || v === "turbo" || v === "large-v3") return v;
   return "turbo";
 }
 
 export function setLocalWhisperTier(v: WhisperTier): void {
   localStorage.setItem(LS_LOCAL_WHISPER_TIER, v);
+}
+
+export function getWhisperComputePreference(): WhisperComputePreference {
+  const v = localStorage.getItem(LS_WHISPER_COMPUTE);
+  if (v === "cuda" || v === "vulkan" || v === "cpu") return v;
+  return "auto";
+}
+
+export function setWhisperComputePreference(v: WhisperComputePreference): void {
+  localStorage.setItem(LS_WHISPER_COMPUTE, v);
+}
+
+export function detectWhisperComputeBackend(): Promise<WhisperRuntimeVariant> {
+  return invoke<WhisperRuntimeVariant>("detect_whisper_compute_backend");
+}
+
+export function getActiveWhisperRuntimeVariant(): Promise<WhisperRuntimeVariant> {
+  return invoke<WhisperRuntimeVariant>("get_active_whisper_runtime_variant", {
+    preference: getWhisperComputePreference(),
+  });
+}
+
+export function whisperComputePreferenceLabel(v: WhisperComputePreference): string {
+  switch (v) {
+    case "cuda":
+      return "NVIDIA (CUDA)";
+    case "vulkan":
+      return "GPU (Vulkan)";
+    case "cpu":
+      return "CPU";
+    default:
+      return "Auto (recommended)";
+  }
+}
+
+export function whisperRuntimeVariantLabel(v: WhisperRuntimeVariant): string {
+  switch (v) {
+    case "cuda":
+      return "NVIDIA CUDA";
+    case "vulkan":
+      return "Vulkan GPU";
+    case "metal":
+      return "Apple Metal";
+    default:
+      return "CPU";
+  }
 }
 
 // Decode arbitrary audio Blob → 16 kHz mono Float32 PCM.
@@ -157,6 +205,7 @@ export class LocalWhisperProvider implements AIProvider {
         tier: this.cfg.tier,
         language: input.language ?? null,
         translate: false,
+        compute_preference: getWhisperComputePreference(),
         pcm: Array.from(samples),
       },
     });
@@ -175,6 +224,13 @@ export class LocalWhisperProvider implements AIProvider {
   async health(): Promise<ProviderHealth> {
     try {
       const models = await listLocalModels();
+      const runtime = await isWhisperRuntimeInstalled();
+      if (!runtime) {
+        return {
+          ok: false,
+          message: `${whisperRuntimeVariantLabel(await getActiveWhisperRuntimeVariant())} runtime is not installed.`,
+        };
+      }
       const target = models.find((m) => m.tier === this.cfg.tier);
       if (!target?.installed) {
         return {

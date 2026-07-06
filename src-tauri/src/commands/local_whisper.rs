@@ -14,13 +14,52 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use futures_util::StreamExt;
+use minisign_verify::{PublicKey, Signature};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 
-const WHISPER_CPP_VERSION: &str = "v1.8.4";
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum WhisperRuntimeVariant {
+    Cpu,
+    Vulkan,
+    Cuda,
+    Metal,
+}
+
+impl WhisperRuntimeVariant {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::Cpu => "cpu",
+            Self::Vulkan => "vulkan",
+            Self::Cuda => "cuda",
+            Self::Metal => "metal",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WhisperComputePreference {
+    Auto,
+    Cpu,
+    Vulkan,
+    Cuda,
+}
+
+impl WhisperComputePreference {
+    fn from_str(s: Option<&str>) -> Self {
+        match s {
+            Some("cpu") => Self::Cpu,
+            Some("vulkan") => Self::Vulkan,
+            Some("cuda") => Self::Cuda,
+            _ => Self::Auto,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WhisperTier {
@@ -93,6 +132,12 @@ fn bin_dir(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(dir)
 }
 
+fn variant_bin_dir(app: &AppHandle, variant: WhisperRuntimeVariant) -> Result<PathBuf, String> {
+    let dir = bin_dir(app)?.join(variant.as_str());
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    Ok(dir)
+}
+
 fn whisper_cli_name() -> &'static str {
     #[cfg(windows)]
     {
@@ -104,8 +149,7 @@ fn whisper_cli_name() -> &'static str {
     }
 }
 
-fn locate_whisper_cli(app: &AppHandle) -> Result<Option<PathBuf>, String> {
-    let dir = bin_dir(app)?;
+fn locate_whisper_cli_in_dir(dir: &Path) -> Option<PathBuf> {
     let target = whisper_cli_name();
     fn walk(dir: &Path, target: &str) -> Option<PathBuf> {
         let entries = std::fs::read_dir(dir).ok()?;
@@ -123,7 +167,20 @@ fn locate_whisper_cli(app: &AppHandle) -> Result<Option<PathBuf>, String> {
         }
         None
     }
-    Ok(walk(&dir, target))
+    walk(dir, target)
+}
+
+fn locate_whisper_cli_for_variant(
+    app: &AppHandle,
+    variant: WhisperRuntimeVariant,
+) -> Result<Option<PathBuf>, String> {
+    let dir = variant_bin_dir(app, variant)?;
+    Ok(locate_whisper_cli_in_dir(&dir))
+}
+
+fn locate_legacy_whisper_cli(app: &AppHandle) -> Result<Option<PathBuf>, String> {
+    let dir = bin_dir(app)?;
+    Ok(locate_whisper_cli_in_dir(&dir))
 }
 
 /// Recursive list of every file under `root`. Used to chmod whisper-cli
@@ -146,31 +203,167 @@ fn walk_dir(root: &Path) -> Vec<PathBuf> {
     out
 }
 
-fn runtime_archive_url() -> Result<&'static str, String> {
-    // Both runtime zips ship as assets on every published app release.
-    // Using `/releases/latest/download/<name>` so the app always pulls
-    // the bundle that matches the most recent published release — no
-    // need to bump a URL when we cut a new app version.
+#[cfg(windows)]
+fn windows_system32_file_exists(name: &str) -> bool {
+    let system_root = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".into());
+    Path::new(&system_root).join("System32").join(name).exists()
+}
+
+fn default_runtime_variant() -> WhisperRuntimeVariant {
     #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
     {
-        Ok("https://github.com/GitHubCJ123/Verbatim-AI/releases/latest/download/whisper-bin-windows-x64.zip")
+        if windows_system32_file_exists("nvcuda.dll") {
+            WhisperRuntimeVariant::Cuda
+        } else if windows_system32_file_exists("vulkan-1.dll") {
+            WhisperRuntimeVariant::Vulkan
+        } else {
+            WhisperRuntimeVariant::Cpu
+        }
     }
     #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     {
-        Ok("https://github.com/GitHubCJ123/Verbatim-AI/releases/latest/download/whisper-bin-macos-arm64.zip")
+        WhisperRuntimeVariant::Metal
     }
     #[cfg(not(any(
         all(target_os = "windows", target_arch = "x86_64"),
         all(target_os = "macos", target_arch = "aarch64"),
     )))]
     {
-        Err("No prebuilt whisper.cpp runtime is available for this platform yet.".into())
+        WhisperRuntimeVariant::Cpu
     }
 }
 
+fn resolve_runtime_variant(preference: Option<&str>) -> WhisperRuntimeVariant {
+    match WhisperComputePreference::from_str(preference) {
+        WhisperComputePreference::Auto => default_runtime_variant(),
+        WhisperComputePreference::Cpu => WhisperRuntimeVariant::Cpu,
+        WhisperComputePreference::Vulkan => WhisperRuntimeVariant::Vulkan,
+        WhisperComputePreference::Cuda => WhisperRuntimeVariant::Cuda,
+    }
+}
+
+struct RuntimeAsset {
+    name: &'static str,
+    url: String,
+}
+
+#[derive(Deserialize)]
+struct RuntimeManifest {
+    assets: std::collections::HashMap<String, RuntimeManifestAsset>,
+}
+
+#[derive(Deserialize)]
+struct RuntimeManifestAsset {
+    sha256: String,
+}
+
+const RUNTIME_MANIFEST_NAME: &str = "whisper-runtimes.json";
+const MINISIGN_PUBLIC_KEY: &str = "untrusted comment: minisign public key: 89A198BC00AE1902\nRWQCGa4AvJihibrPt0tf7NaYo91fwiVD6F8qMvToNlJEdsu9G6hqLY6P";
+
+fn release_asset_url(asset: &str) -> String {
+    format!(
+        "https://github.com/GitHubCJ123/Verbatim-AI/releases/download/v{}/{}",
+        env!("CARGO_PKG_VERSION"),
+        asset
+    )
+}
+
+fn release_asset_base_url() -> String {
+    format!(
+        "https://github.com/GitHubCJ123/Verbatim-AI/releases/download/v{}",
+        env!("CARGO_PKG_VERSION")
+    )
+}
+
+fn runtime_archive_url(variant: WhisperRuntimeVariant) -> Result<RuntimeAsset, String> {
+    #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+    {
+        let name = match variant {
+            WhisperRuntimeVariant::Cpu => "whisper-bin-windows-x64-cpu.zip",
+            WhisperRuntimeVariant::Vulkan => "whisper-bin-windows-x64-vulkan.zip",
+            WhisperRuntimeVariant::Cuda => "whisper-bin-windows-x64-cuda.zip",
+            WhisperRuntimeVariant::Metal => {
+                return Err("Metal Whisper runtime is only available on macOS.".into())
+            }
+        };
+        return Ok(RuntimeAsset { name, url: release_asset_url(name) });
+    }
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    {
+        let name = match variant {
+            WhisperRuntimeVariant::Metal => "whisper-bin-macos-arm64.zip",
+            _ => return Err("This Whisper compute backend is not available on macOS.".into()),
+        };
+        return Ok(RuntimeAsset { name, url: release_asset_url(name) });
+    }
+    #[cfg(not(any(
+        all(target_os = "windows", target_arch = "x86_64"),
+        all(target_os = "macos", target_arch = "aarch64"),
+    )))]
+    {
+        return Err("No prebuilt whisper.cpp runtime is available for this platform yet.".into());
+    }
+}
+
+fn hex_lower(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+async fn verified_runtime_manifest(client: &reqwest::Client) -> Result<RuntimeManifest, String> {
+    let base = release_asset_base_url();
+    let manifest_url = format!("{base}/{RUNTIME_MANIFEST_NAME}");
+    let sig_url = format!("{manifest_url}.sig");
+    let manifest_bytes = client
+        .get(&manifest_url)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?
+        .error_for_status()
+        .map_err(|e| e.to_string())?
+        .bytes()
+        .await
+        .map_err(|e| e.to_string())?;
+    let signature_text = client
+        .get(&sig_url)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?
+        .error_for_status()
+        .map_err(|e| e.to_string())?
+        .text()
+        .await
+        .map_err(|e| e.to_string())?;
+    let public_key = PublicKey::decode(MINISIGN_PUBLIC_KEY).map_err(|e| e.to_string())?;
+    let signature = Signature::decode(&signature_text).map_err(|e| e.to_string())?;
+    public_key
+        .verify(&manifest_bytes, &signature, false)
+        .map_err(|e| format!("Whisper runtime manifest signature verification failed: {e}"))?;
+    serde_json::from_slice::<RuntimeManifest>(&manifest_bytes).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
-pub async fn is_whisper_runtime_installed(app: AppHandle) -> Result<bool, String> {
-    Ok(locate_whisper_cli(&app)?.is_some())
+pub async fn detect_whisper_compute_backend() -> Result<String, String> {
+    Ok(default_runtime_variant().as_str().to_string())
+}
+
+#[tauri::command]
+pub async fn get_active_whisper_runtime_variant(
+    preference: Option<String>,
+) -> Result<String, String> {
+    Ok(resolve_runtime_variant(preference.as_deref()).as_str().to_string())
+}
+
+#[tauri::command]
+pub async fn is_whisper_runtime_installed(
+    app: AppHandle,
+    preference: Option<String>,
+) -> Result<bool, String> {
+    let variant = resolve_runtime_variant(preference.as_deref());
+    Ok(locate_whisper_cli_for_variant(&app, variant)?.is_some()
+        || (matches!(
+            variant,
+            WhisperRuntimeVariant::Cuda | WhisperRuntimeVariant::Metal
+        ) && locate_legacy_whisper_cli(&app)?.is_some()))
 }
 
 #[derive(Serialize, Clone)]
@@ -180,12 +373,23 @@ struct RuntimeProgress {
 }
 
 #[tauri::command]
-pub async fn install_whisper_runtime(app: AppHandle) -> Result<(), String> {
-    let url = runtime_archive_url()?;
-    let dir = bin_dir(&app)?;
+pub async fn install_whisper_runtime(
+    app: AppHandle,
+    preference: Option<String>,
+) -> Result<(), String> {
+    let variant = resolve_runtime_variant(preference.as_deref());
+    install_whisper_runtime_variant(&app, variant).await
+}
 
-    // Always reinstall fresh: wipe any previous extraction so we pick up
-    // URL/version changes (e.g. CPU build -> CUDA build).
+async fn install_whisper_runtime_variant(
+    app: &AppHandle,
+    variant: WhisperRuntimeVariant,
+) -> Result<(), String> {
+    let asset = runtime_archive_url(variant)?;
+    let dir = variant_bin_dir(app, variant)?;
+
+    // Always reinstall this variant fresh: wipe any previous extraction
+    // so URL/version changes are picked up without deleting other variants.
     if dir.exists() {
         for entry in std::fs::read_dir(&dir).map_err(|e| e.to_string())?.flatten() {
             let p = entry.path();
@@ -196,18 +400,26 @@ pub async fn install_whisper_runtime(app: AppHandle) -> Result<(), String> {
             }
         }
     }
-    let tmp_zip = dir.join("whisper-bin.partial.zip");
+    let tmp_zip = dir.join(format!("whisper-bin-{}.partial.zip", variant.as_str()));
 
     let client = reqwest::Client::builder()
         .user_agent("Verbatim-AI/0.2 (+https://github.com/GitHubCJ123/Verbatim-AI)")
         .build()
         .map_err(|e| e.to_string())?;
-    let res = client.get(url).send().await.map_err(|e| e.to_string())?;
+    let manifest = verified_runtime_manifest(&client).await?;
+    let expected_sha = manifest
+        .assets
+        .get(asset.name)
+        .ok_or_else(|| format!("{} is missing from signed runtime manifest", asset.name))?
+        .sha256
+        .to_ascii_lowercase();
+
+    let res = client.get(&asset.url).send().await.map_err(|e| e.to_string())?;
     if !res.status().is_success() {
         return Err(format!(
             "download failed: HTTP {} from {}",
             res.status(),
-            url
+            asset.url
         ));
     }
     let total = res.content_length().unwrap_or(0);
@@ -218,8 +430,10 @@ pub async fn install_whisper_runtime(app: AppHandle) -> Result<(), String> {
     let mut stream = res.bytes_stream();
     let mut downloaded: u64 = 0;
     let mut last_emit = Instant::now();
+    let mut hasher = Sha256::new();
     while let Some(chunk) = stream.next().await {
         let bytes = chunk.map_err(|e| e.to_string())?;
+        hasher.update(&bytes);
         file.write_all(&bytes).await.map_err(|e| e.to_string())?;
         downloaded += bytes.len() as u64;
         if last_emit.elapsed().as_millis() > 150 {
@@ -232,6 +446,16 @@ pub async fn install_whisper_runtime(app: AppHandle) -> Result<(), String> {
     }
     file.flush().await.map_err(|e| e.to_string())?;
     drop(file);
+    let actual_sha = hex_lower(&hasher.finalize());
+    if actual_sha != expected_sha {
+        let _ = fs::remove_file(&tmp_zip).await;
+        return Err(format!(
+            "Whisper runtime checksum mismatch for {}: expected {}, got {}",
+            variant.as_str(),
+            expected_sha,
+            actual_sha
+        ));
+    }
 
     let extract_dir = dir.clone();
     let tmp_zip_for_extract = tmp_zip.clone();
@@ -295,13 +519,13 @@ pub async fn install_whisper_runtime(app: AppHandle) -> Result<(), String> {
 
     let _ = fs::remove_file(&tmp_zip).await;
 
-    if locate_whisper_cli(&app)?.is_none() {
+    if locate_whisper_cli_for_variant(app, variant)?.is_none() {
         return Err(format!(
             "Extraction finished but {} was not found in the archive",
             whisper_cli_name()
         ));
     }
-    let _ = app.emit("local-whisper:runtime:complete", WHISPER_CPP_VERSION);
+    let _ = app.emit("local-whisper:runtime:complete", variant.as_str().to_string());
     Ok(())
 }
 
@@ -414,6 +638,7 @@ pub struct TranscribeArgs {
     pub tier: String,
     pub language: Option<String>,
     pub translate: Option<bool>,
+    pub compute_preference: Option<String>,
     /// 16 kHz mono Float32 PCM samples.
     pub pcm: Vec<f32>,
 }
@@ -423,6 +648,12 @@ pub struct TranscribeOutput {
     text: String,
     language_detected: String,
     duration_ms: u64,
+}
+
+struct WhisperRunError {
+    message: String,
+    stderr: String,
+    code: Option<i32>,
 }
 
 fn write_wav(path: &Path, samples: &[f32]) -> Result<(), String> {
@@ -465,56 +696,28 @@ fn write_wav(path: &Path, samples: &[f32]) -> Result<(), String> {
     Ok(())
 }
 
-#[tauri::command]
-pub async fn transcribe_local(
-    app: AppHandle,
-    args: TranscribeArgs,
-) -> Result<TranscribeOutput, String> {
-    let t =
-        WhisperTier::from_str(&args.tier).ok_or_else(|| format!("unknown tier: {}", args.tier))?;
-    let model_path = models_dir(&app)?.join(t.file_name());
-    if !model_path.exists() {
-        return Err(format!(
-            "Model '{}' is not downloaded yet. Download it from Settings → AI model.",
-            args.tier
-        ));
-    }
-    let cli_path = locate_whisper_cli(&app)?.ok_or_else(|| {
-        "whisper.cpp runtime is not installed. Click 'Install runtime' in Settings → AI model."
-            .to_string()
-    })?;
-
-    if args.pcm.is_empty() {
-        return Err("Empty audio buffer".into());
-    }
-
-    let tmp_dir = app_data(&app)?.join("whisper-tmp");
-    std::fs::create_dir_all(&tmp_dir).map_err(|e| e.to_string())?;
-    let wav_path = tmp_dir.join(format!(
-        "rec-{}.wav",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis())
-            .unwrap_or(0)
-    ));
-    write_wav(&wav_path, &args.pcm)?;
-
+async fn run_whisper_cli(
+    cli_path: &Path,
+    model_path: &Path,
+    wav_path: &Path,
+    json_stem: &Path,
+    args: &TranscribeArgs,
+    variant: WhisperRuntimeVariant,
+) -> Result<TranscribeOutput, WhisperRunError> {
     let started = Instant::now();
 
     let mut cmd = Command::new(&cli_path);
     cmd.arg("-m").arg(&model_path);
     cmd.arg("-f").arg(&wav_path);
     cmd.arg("-nt");
-    // -np (no-prints) is intentionally omitted: we want to see model-load,
-    // CUDA init, and timing lines on stderr for diagnostics. The actual
-    // transcript still arrives clean on stdout (-nt strips timestamps).
-    cmd.arg("-fa"); // flash attention — much faster on Ampere+ NVIDIA GPUs
+    if matches!(variant, WhisperRuntimeVariant::Cuda | WhisperRuntimeVariant::Metal) {
+        cmd.arg("-fa");
+    }
     let lang = args.language.as_deref().unwrap_or("auto");
     cmd.arg("-l").arg(lang);
     if args.translate.unwrap_or(false) {
         cmd.arg("-tr");
     }
-    let json_stem = wav_path.with_extension("");
     cmd.arg("-oj").arg("-of").arg(&json_stem);
 
     #[cfg(windows)]
@@ -527,7 +730,11 @@ pub async fn transcribe_local(
 
     // Always surface whisper-cli's stderr to the host stderr so users can
     // see CUDA init logs ("ggml_init_cublas: ...") and confirm GPU usage.
-    let output = cmd.output().await.map_err(|e| e.to_string())?;
+    let output = cmd.output().await.map_err(|e| WhisperRunError {
+        message: e.to_string(),
+        stderr: String::new(),
+        code: None,
+    })?;
     if !output.stderr.is_empty() {
         eprintln!(
             "[whisper-cli] {}",
@@ -536,12 +743,15 @@ pub async fn transcribe_local(
     }
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        let _ = fs::remove_file(&wav_path).await;
-        return Err(format!(
-            "whisper-cli failed (exit {:?}): {}",
-            output.status.code(),
-            stderr.trim()
-        ));
+        return Err(WhisperRunError {
+            message: format!(
+                "whisper-cli failed (exit {:?}): {}",
+                output.status.code(),
+                stderr.trim()
+            ),
+            stderr: stderr.to_string(),
+            code: output.status.code(),
+        });
     }
     let stdout_text = String::from_utf8_lossy(&output.stdout).trim().to_string();
 
@@ -562,12 +772,128 @@ pub async fn transcribe_local(
         let _ = fs::remove_file(&json_path).await;
     }
 
-    let _ = fs::remove_file(&wav_path).await;
-
     let duration_ms = started.elapsed().as_millis() as u64;
     Ok(TranscribeOutput {
         text: stdout_text,
         language_detected: lang_detected,
         duration_ms,
     })
+}
+
+fn should_fallback_to_cpu(variant: WhisperRuntimeVariant, e: &WhisperRunError) -> bool {
+    if variant == WhisperRuntimeVariant::Cpu {
+        return false;
+    }
+    if e.code == Some(-1073741515) {
+        return true;
+    }
+    let hay = format!("{} {}", e.message, e.stderr).to_lowercase();
+    [
+        "nvcuda.dll",
+        "ggml-cuda.dll",
+        "cublas64_",
+        "cudart64_",
+        "cuda error",
+        "failed to initialize cuda",
+        "vulkan-1.dll",
+        "no vulkan device",
+        "vkcreatedevice",
+        "vkenumeratephysicaldevices",
+        "dll was not found",
+    ]
+    .iter()
+    .any(|needle| hay.contains(needle))
+}
+
+#[derive(Serialize, Clone)]
+struct RuntimeFallbackPayload {
+    from: String,
+    to: String,
+    reason: String,
+}
+
+#[tauri::command]
+pub async fn transcribe_local(
+    app: AppHandle,
+    args: TranscribeArgs,
+) -> Result<TranscribeOutput, String> {
+    let t =
+        WhisperTier::from_str(&args.tier).ok_or_else(|| format!("unknown tier: {}", args.tier))?;
+    let model_path = models_dir(&app)?.join(t.file_name());
+    if !model_path.exists() {
+        return Err(format!(
+            "Model '{}' is not downloaded yet. Download it from Settings → AI model.",
+            args.tier
+        ));
+    }
+
+    if args.pcm.is_empty() {
+        return Err("Empty audio buffer".into());
+    }
+
+    let variant = resolve_runtime_variant(args.compute_preference.as_deref());
+    let cli_path = locate_whisper_cli_for_variant(&app, variant)?
+        .or_else(|| {
+            if matches!(
+                variant,
+                WhisperRuntimeVariant::Cuda | WhisperRuntimeVariant::Metal
+            ) {
+                locate_legacy_whisper_cli(&app).ok().flatten()
+            } else {
+                None
+            }
+        })
+        .ok_or_else(|| {
+            format!(
+                "whisper.cpp {} runtime is not installed. Click Install in Settings → AI model.",
+                variant.as_str()
+            )
+        })?;
+
+    let tmp_dir = app_data(&app)?.join("whisper-tmp");
+    std::fs::create_dir_all(&tmp_dir).map_err(|e| e.to_string())?;
+    let wav_path = tmp_dir.join(format!(
+        "rec-{}.wav",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0)
+    ));
+    write_wav(&wav_path, &args.pcm)?;
+    let json_stem = wav_path.with_extension("");
+
+    let output: Result<TranscribeOutput, String> = async {
+        let result =
+            run_whisper_cli(&cli_path, &model_path, &wav_path, &json_stem, &args, variant).await;
+        match result {
+            Ok(out) => Ok(out),
+            Err(e) if should_fallback_to_cpu(variant, &e) => {
+                let cpu = WhisperRuntimeVariant::Cpu;
+                if locate_whisper_cli_for_variant(&app, cpu)?.is_none() {
+                    install_whisper_runtime_variant(&app, cpu).await?;
+                }
+                let cpu_cli = locate_whisper_cli_for_variant(&app, cpu)?.ok_or_else(|| {
+                    "CPU Whisper runtime install completed but whisper-cli was not found."
+                        .to_string()
+                })?;
+                let _ = app.emit(
+                    "local-whisper:runtime:fallback",
+                    RuntimeFallbackPayload {
+                        from: variant.as_str().to_string(),
+                        to: cpu.as_str().to_string(),
+                        reason: e.message.clone(),
+                    },
+                );
+                run_whisper_cli(&cpu_cli, &model_path, &wav_path, &json_stem, &args, cpu)
+                    .await
+                    .map_err(|cpu_err| cpu_err.message)
+            }
+            Err(e) => Err(e.message),
+        }
+    }
+    .await;
+
+    let _ = fs::remove_file(&wav_path).await;
+    let _ = fs::remove_file(json_stem.with_extension("json")).await;
+    output
 }

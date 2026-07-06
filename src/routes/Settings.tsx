@@ -33,9 +33,16 @@ import {
   deleteLocalModel,
   isWhisperRuntimeInstalled,
   installWhisperRuntime,
+  getWhisperComputePreference,
+  setWhisperComputePreference,
+  getActiveWhisperRuntimeVariant,
+  whisperComputePreferenceLabel,
+  whisperRuntimeVariantLabel,
   WHISPER_TIERS,
   type AiProviderKind,
   type LocalModelInfo,
+  type WhisperComputePreference,
+  type WhisperRuntimeVariant,
   type WhisperTier,
   getCleanupProviderKind,
   setCleanupProviderKind,
@@ -762,6 +769,10 @@ function formatSize(mb: number): string {
 function ModelTab() {
   const [kind, setKind] = useState<AiProviderKind>(getAiProviderKind());
   const [selectedTier, setSelectedTier] = useState<WhisperTier>(getLocalWhisperTier());
+  const [computePreference, setComputePreference] = useState<WhisperComputePreference>(
+    getWhisperComputePreference(),
+  );
+  const [activeRuntime, setActiveRuntime] = useState<WhisperRuntimeVariant | null>(null);
   const [models, setModels] = useState<LocalModelInfo[]>([]);
   const [runtimeInstalled, setRuntimeInstalled] = useState<boolean>(false);
   const [installingRuntime, setInstallingRuntime] = useState<{
@@ -776,9 +787,14 @@ function ModelTab() {
 
   const refresh = async () => {
     try {
-      const [m, rt] = await Promise.all([listLocalModels(), isWhisperRuntimeInstalled()]);
+      const [m, rt, active] = await Promise.all([
+        listLocalModels(),
+        isWhisperRuntimeInstalled(),
+        getActiveWhisperRuntimeVariant(),
+      ]);
       setModels(m);
       setRuntimeInstalled(rt);
+      setActiveRuntime(active);
     } catch (e) {
       toast.error("Couldn't read local Whisper state", {
         description: e instanceof Error ? e.message : String(e),
@@ -850,6 +866,13 @@ function ModelTab() {
   const handleTierChange = (tier: WhisperTier) => {
     setLocalWhisperTier(tier);
     setSelectedTier(tier);
+  };
+
+  const handleComputeChange = (next: WhisperComputePreference) => {
+    setWhisperComputePreference(next);
+    setComputePreference(next);
+    setRuntimeInstalled(false);
+    void refresh();
   };
 
   const handleDownload = async (tier: WhisperTier) => {
@@ -928,7 +951,7 @@ function ModelTab() {
               <SelectContent>
                 <SelectItem value="cloud">Cloud — Azure Whisper</SelectItem>
                 <SelectItem value="local-whisper">Local — Whisper</SelectItem>
-                <SelectItem value="local-parakeet">Local — Parakeet (NVIDIA)</SelectItem>
+                <SelectItem value="local-parakeet">Local — Parakeet</SelectItem>
               </SelectContent>
             </Select>
           </SettingRow>
@@ -963,6 +986,30 @@ function ModelTab() {
                 on your machine. Larger = more accurate, slower. The runtime is set up automatically
                 with your first download.
               </div>
+              <SettingRow
+                title="Compute device"
+                description={`Auto currently resolves to ${
+                  activeRuntime
+                    ? whisperRuntimeVariantLabel(activeRuntime)
+                    : "the best available backend"
+                }.`}
+              >
+                <Select
+                  value={computePreference}
+                  onValueChange={(v) => handleComputeChange(v as WhisperComputePreference)}
+                >
+                  <SelectTrigger className="w-48">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(["auto", "cuda", "vulkan", "cpu"] as WhisperComputePreference[]).map((v) => (
+                      <SelectItem key={v} value={v}>
+                        {whisperComputePreferenceLabel(v)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </SettingRow>
               {installingRuntime && (
                 <div className="mb-3 rounded-md border border-border-subtle bg-bg-elevated/40 p-3">
                   <div className="mb-1 flex items-center gap-2 text-xs text-text-secondary">
@@ -980,7 +1027,9 @@ function ModelTab() {
               )}
               <RuntimeRow
                 title="Runtime"
-                description="Downloads the whisper.cpp sidecar used for local speech-to-text."
+                description={`Downloads the ${
+                  activeRuntime ? whisperRuntimeVariantLabel(activeRuntime) : "selected"
+                } whisper.cpp sidecar used for local speech-to-text.`}
                 installed={runtimeInstalled}
                 installing={!!installingRuntime}
                 onInstall={handleInstallRuntime}
@@ -1221,7 +1270,7 @@ function ParakeetSection() {
 
   return (
     <div className="mt-5 border-t border-border-subtle pt-5">
-      <div className="mb-3 text-sm font-medium">Parakeet TDT (NVIDIA)</div>
+      <div className="mb-3 text-sm font-medium">Parakeet TDT</div>
       <div className="mb-4 text-xs text-text-muted">
         On-device transcription via the sherpa-onnx runtime. Pick a model variant — v2 for
         English-only with the best WER, or v3 for 25 European languages. Runs on CPU. Windows x64

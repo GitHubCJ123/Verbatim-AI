@@ -10,16 +10,20 @@ import { Switch } from "../components/ui/Switch";
 import { Button } from "../components/ui/Button";
 import { Input } from "../components/ui/Input";
 import { ProgressBar } from "../components/ui/ProgressBar";
-import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "../components/ui/Select";
+import {
+  Select,
+  SelectTrigger,
+  SelectValue,
+  SelectContent,
+  SelectItem,
+} from "../components/ui/Select";
 import { HotkeyRecorder } from "../components/settings/HotkeyRecorder";
 import { applyHotkey, isMacSingleKeySpec, loadHotkeyConfig, saveHotkeyConfig } from "../lib/hotkey";
-import {
-  isAutostartEnabled,
-  setAutostart,
-} from "../lib/preferences";
+import { isAutostartEnabled, setAutostart } from "../lib/preferences";
 import { useOnboarding } from "../lib/store/useOnboarding";
 import {
-  getActiveProvider,
+  testTranscriptionProvider,
+  testCleanupProvider,
   getAiProviderKind,
   setAiProviderKind,
   getLocalWhisperTier,
@@ -43,6 +47,11 @@ import {
   pingOllama,
   pullOllamaModel,
   SUGGESTED_OLLAMA_MODELS,
+  LLAMA_CPP_MODELS,
+  getLlamaCppModel,
+  setLlamaCppModel,
+  isLlamaCppRuntimeInstalled,
+  installLlamaCppRuntime,
   type CleanupProviderKind,
   type OllamaModelInfo,
   type PingResult,
@@ -60,6 +69,7 @@ import {
   downloadParakeetModel,
   deleteParakeetModel,
 } from "../lib/ai";
+import { providerTestStatus, type ProviderTestStatus } from "../lib/ai/healthStatus";
 import { useTheme, type Theme } from "../lib/theme";
 import { osName, clipboardHistoryHint } from "../lib/os";
 import {
@@ -111,21 +121,113 @@ function SettingRow({ title, description, children, id }: RowProps) {
   );
 }
 
-/** Collapsed-by-default container for technical settings most users
- *  never need (runtime management etc.). */
-function AdvancedSection({ children }: { children: React.ReactNode }) {
-  const [open, setOpen] = useState(false);
+function StageHeader({
+  eyebrow,
+  title,
+  description,
+}: {
+  eyebrow: string;
+  title: string;
+  description: string;
+}) {
   return (
-    <div className="mt-4 border-t border-border-subtle pt-3">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="text-xs text-text-muted transition-colors hover:text-text-secondary"
-      >
-        {open ? "Hide advanced settings" : "Show advanced settings"}
-      </button>
-      {open && <div className="pt-3">{children}</div>}
+    <div className="mb-2 flex flex-col gap-1">
+      <div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-accent-start">
+        {eyebrow}
+      </div>
+      <div className="text-base font-semibold tracking-tight">{title}</div>
+      <div className="max-w-2xl text-xs leading-relaxed text-text-muted">{description}</div>
     </div>
+  );
+}
+
+function ProviderTestControl({
+  id,
+  label,
+  testing,
+  status,
+  onTest,
+}: {
+  id?: string;
+  label: string;
+  testing: boolean;
+  status: ProviderTestStatus | null;
+  onTest: () => void;
+}) {
+  return (
+    <div
+      id={id ? `setting-${id}` : undefined}
+      className="mt-4 scroll-mt-24 rounded-md border border-border-subtle bg-bg-base/40 p-4"
+    >
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <div className="text-sm font-medium">{label}</div>
+          <div className="mt-1 text-xs text-text-muted">
+            Runs a health check for this stage and keeps the result here.
+          </div>
+        </div>
+        <Button variant="secondary" size="sm" onClick={onTest} disabled={testing}>
+          {testing && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+          Test
+        </Button>
+      </div>
+      {status && (
+        <div
+          className={`mt-3 rounded-md border p-3 text-xs ${
+            status.ok
+              ? "border-success/30 bg-success/10 text-text-secondary"
+              : "border-danger/30 bg-danger/5 text-text-secondary"
+          }`}
+        >
+          <div className={status.ok ? "font-medium text-success" : "font-medium text-danger"}>
+            {status.title}
+          </div>
+          <div className="mt-1">{status.message}</div>
+          {!status.ok && status.troubleshoot && (
+            <div className="mt-2">
+              <span className="font-medium text-text-primary">Troubleshoot: </span>
+              {status.troubleshoot}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function RuntimeRow({
+  title,
+  description,
+  installed,
+  installing,
+  installLabel = "Install",
+  reinstallLabel = "Reinstall",
+  onInstall,
+}: {
+  title: string;
+  description: string;
+  installed: boolean;
+  installing: boolean;
+  installLabel?: string;
+  reinstallLabel?: string;
+  onInstall: () => void;
+}) {
+  return (
+    <SettingRow title={title} description={description}>
+      <div className="flex items-center gap-2">
+        {installed ? (
+          <span className="inline-flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
+            <CheckCircle2 className="h-3.5 w-3.5" /> Installed
+          </span>
+        ) : (
+          <span className="text-xs text-text-muted">Not installed</span>
+        )}
+        <Button variant="secondary" size="sm" onClick={onInstall} disabled={installing}>
+          {installing && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+          {installed ? reinstallLabel : installLabel}
+        </Button>
+      </div>
+    </SettingRow>
   );
 }
 
@@ -134,7 +236,9 @@ function ThemeSelect() {
   const setTheme = useTheme((s) => s.set);
   return (
     <Select value={theme} onValueChange={(v) => setTheme(v as Theme)}>
-      <SelectTrigger className="w-32"><SelectValue /></SelectTrigger>
+      <SelectTrigger className="w-32">
+        <SelectValue />
+      </SelectTrigger>
       <SelectContent>
         <SelectItem value="dark">Dark</SelectItem>
         <SelectItem value="light">Light</SelectItem>
@@ -155,7 +259,9 @@ function OverlayPositionSelect() {
         setV(np);
       }}
     >
-      <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
+      <SelectTrigger className="w-40">
+        <SelectValue />
+      </SelectTrigger>
       <SelectContent>
         <SelectItem value="bottom-center">Bottom center</SelectItem>
         <SelectItem value="top-center">Top center</SelectItem>
@@ -212,7 +318,9 @@ function MicrophoneSelect() {
         setDeviceId(id);
       }}
     >
-      <SelectTrigger className="w-56"><SelectValue /></SelectTrigger>
+      <SelectTrigger className="w-56">
+        <SelectValue />
+      </SelectTrigger>
       <SelectContent>
         <SelectItem value="default">System default</SelectItem>
         {devices.map((d, i) => (
@@ -254,7 +362,9 @@ function HistoryRetentionSelect() {
           .catch(() => {});
       }}
     >
-      <SelectTrigger className="w-36"><SelectValue /></SelectTrigger>
+      <SelectTrigger className="w-36">
+        <SelectValue />
+      </SelectTrigger>
       <SelectContent>
         <SelectItem value="forever">Forever</SelectItem>
         <SelectItem value="90">90 days</SelectItem>
@@ -291,7 +401,11 @@ function VersionRow() {
     })();
   }, []);
   return (
-    <SettingRow id="version" title="Version" description="The version of Verbatim AI currently running.">
+    <SettingRow
+      id="version"
+      title="Version"
+      description="The version of Verbatim AI currently running."
+    >
       <span className="rounded bg-bg-elevated px-2 py-1 font-mono text-xs text-text-secondary">
         {version || "…"}
       </span>
@@ -448,10 +562,7 @@ export default function Settings() {
   return (
     <PageContainer>
       <PageHeader title="Settings" description="Configure Verbatim AI to fit your workflow." />
-      <Tabs
-        value={tab}
-        onValueChange={(v) => setSearchParams({ tab: v }, { replace: true })}
-      >
+      <Tabs value={tab} onValueChange={(v) => setSearchParams({ tab: v }, { replace: true })}>
         <TabsList>
           <TabsTrigger value="general">General</TabsTrigger>
           <TabsTrigger value="model">AI model</TabsTrigger>
@@ -463,7 +574,11 @@ export default function Settings() {
         <TabsContent value="general">
           <Card>
             <CardContent className="p-5 pt-5">
-              <SettingRow id="autostart" title="Launch at startup" description={`Open Verbatim AI when ${osName()} starts.`}>
+              <SettingRow
+                id="autostart"
+                title="Launch at startup"
+                description={`Open Verbatim AI when ${osName()} starts.`}
+              >
                 <Switch
                   checked={autostart}
                   onCheckedChange={async (v) => {
@@ -478,7 +593,11 @@ export default function Settings() {
                   }}
                 />
               </SettingRow>
-              <SettingRow id="theme" title="Theme" description={`Match ${osName()} or pick light/dark.`}>
+              <SettingRow
+                id="theme"
+                title="Theme"
+                description={`Match ${osName()} or pick light/dark.`}
+              >
                 <ThemeSelect />
               </SettingRow>
               <VersionRow />
@@ -494,10 +613,18 @@ export default function Settings() {
         <TabsContent value="recording">
           <Card>
             <CardContent className="p-5 pt-5">
-              <SettingRow id="hotkey" title="Global hotkey" description="Hold to dictate from anywhere.">
+              <SettingRow
+                id="hotkey"
+                title="Global hotkey"
+                description="Hold to dictate from anywhere."
+              >
                 <HotkeyRecorder value={hotkey.spec} onChange={handleHotkeyChange} />
               </SettingRow>
-              <SettingRow id="microphone" title="Microphone" description="Input device used for recording.">
+              <SettingRow
+                id="microphone"
+                title="Microphone"
+                description="Input device used for recording."
+              >
                 <MicrophoneSelect />
               </SettingRow>
               <SettingRow
@@ -512,9 +639,7 @@ export default function Settings() {
                 <Switch
                   checked={singleKeyHoldToTalk || hotkey.pushToTalk}
                   disabled={singleKeyHoldToTalk}
-                  onCheckedChange={(checked) =>
-                    setHotkey((h) => ({ ...h, pushToTalk: checked }))
-                  }
+                  onCheckedChange={(checked) => setHotkey((h) => ({ ...h, pushToTalk: checked }))}
                 />
               </SettingRow>
               <SettingRow
@@ -552,7 +677,11 @@ export default function Settings() {
               >
                 <HistoryRetentionSelect />
               </SettingRow>
-              <SettingRow id="telemetry" title="Anonymous telemetry" description="Help improve Verbatim AI. Never your transcript content.">
+              <SettingRow
+                id="telemetry"
+                title="Anonymous telemetry"
+                description="Help improve Verbatim AI. Never your transcript content."
+              >
                 <Switch />
               </SettingRow>
             </CardContent>
@@ -564,7 +693,9 @@ export default function Settings() {
             <CardContent className="p-5 pt-5">
               <SettingRow id="log-level" title="Log level" description="Verbosity of log files.">
                 <Select defaultValue="info">
-                  <SelectTrigger className="w-32"><SelectValue /></SelectTrigger>
+                  <SelectTrigger className="w-32">
+                    <SelectValue />
+                  </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="error">Error</SelectItem>
                     <SelectItem value="warn">Warn</SelectItem>
@@ -633,10 +764,15 @@ function ModelTab() {
   const [selectedTier, setSelectedTier] = useState<WhisperTier>(getLocalWhisperTier());
   const [models, setModels] = useState<LocalModelInfo[]>([]);
   const [runtimeInstalled, setRuntimeInstalled] = useState<boolean>(false);
-  const [installingRuntime, setInstallingRuntime] = useState<{ downloaded: number; total: number } | null>(null);
-  const [downloading, setDownloading] = useState<Record<WhisperTier, { downloaded: number; total: number } | undefined>>(
-    {} as Record<WhisperTier, { downloaded: number; total: number } | undefined>,
-  );
+  const [installingRuntime, setInstallingRuntime] = useState<{
+    downloaded: number;
+    total: number;
+  } | null>(null);
+  const [downloading, setDownloading] = useState<
+    Record<WhisperTier, { downloaded: number; total: number } | undefined>
+  >({} as Record<WhisperTier, { downloaded: number; total: number } | undefined>);
+  const [transcriptionTest, setTranscriptionTest] = useState<ProviderTestStatus | null>(null);
+  const [testingTranscription, setTestingTranscription] = useState(false);
 
   const refresh = async () => {
     try {
@@ -658,7 +794,10 @@ function ModelTab() {
     const offDl = listen<{ tier: WhisperTier; downloaded: number; total: number }>(
       "local-whisper:download:progress",
       (e) => {
-        setDownloading((d) => ({ ...d, [e.payload.tier]: { downloaded: e.payload.downloaded, total: e.payload.total } }));
+        setDownloading((d) => ({
+          ...d,
+          [e.payload.tier]: { downloaded: e.payload.downloaded, total: e.payload.total },
+        }));
       },
     );
     const offDone = listen<string>("local-whisper:download:complete", (e) => {
@@ -731,7 +870,9 @@ function ModelTab() {
       toast.success(`Removed ${tier}`);
       void refresh();
     } catch (e) {
-      toast.error("Couldn't remove model", { description: e instanceof Error ? e.message : String(e) });
+      toast.error("Couldn't remove model", {
+        description: e instanceof Error ? e.message : String(e),
+      });
     }
   };
 
@@ -741,8 +882,28 @@ function ModelTab() {
       await installWhisperRuntime();
       toast.success("whisper.cpp runtime installed");
     } catch (e) {
-      toast.error("Couldn't install runtime", { description: e instanceof Error ? e.message : String(e) });
+      toast.error("Couldn't install runtime", {
+        description: e instanceof Error ? e.message : String(e),
+      });
       setInstallingRuntime(null);
+    }
+  };
+
+  const handleTestTranscription = async () => {
+    setTestingTranscription(true);
+    setTranscriptionTest(null);
+    try {
+      const health = await testTranscriptionProvider();
+      setTranscriptionTest(providerTestStatus("transcription", health));
+    } catch (e) {
+      setTranscriptionTest(
+        providerTestStatus("transcription", {
+          ok: false,
+          message: e instanceof Error ? e.message : String(e),
+        }),
+      );
+    } finally {
+      setTestingTranscription(false);
     }
   };
 
@@ -750,13 +911,20 @@ function ModelTab() {
     <div className="flex flex-col gap-4">
       <Card>
         <CardContent className="p-5 pt-5">
+          <StageHeader
+            eyebrow="Step 1"
+            title="Transcription"
+            description="Turn audio into text. Pick the engine first, then tune the model options that belong to that engine."
+          />
           <SettingRow
             id="transcription-provider"
-            title="Transcription provider"
-            description="Where speech-to-text runs. Cloud is the default. Local keeps audio on this machine and works offline once a model is downloaded."
+            title="Transcription engine"
+            description="Where speech-to-text runs. Cloud is the default. Local engines keep audio on this machine once a model is downloaded."
           >
             <Select value={kind} onValueChange={(v) => handleProviderChange(v as AiProviderKind)}>
-              <SelectTrigger className="w-56"><SelectValue /></SelectTrigger>
+              <SelectTrigger className="w-56">
+                <SelectValue />
+              </SelectTrigger>
               <SelectContent>
                 <SelectItem value="cloud">Cloud — Azure Whisper</SelectItem>
                 <SelectItem value="local-whisper">Local — Whisper</SelectItem>
@@ -764,173 +932,145 @@ function ModelTab() {
               </SelectContent>
             </Select>
           </SettingRow>
-          <div className="pt-3 text-xs text-text-muted">
-            Cloud option may be removed in a future release. The cleanup step (tone polish) is configured separately below.
-          </div>
-        </CardContent>
-      </Card>
 
-      {kind === "local-whisper" && (
-        <Card>
-          <CardContent className="p-5 pt-5">
-            <div className="mb-3 text-sm font-medium">Local Whisper models</div>
-            <div className="mb-4 text-xs text-text-muted">
-              Pick a tier based on your machine. Larger = more accurate, slower. Everything needed to
-              run models on this machine is set up automatically with your first download.
-            </div>
-            {installingRuntime && (
-              <div className="mb-3 rounded-md border border-border-subtle bg-bg-elevated/40 p-3">
-                <div className="mb-1 flex items-center gap-2 text-xs text-text-secondary">
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  Setting up the on-device engine (one time, ~5 MB)…
-                </div>
-                {installingRuntime.total > 0 && (
-                  <ProgressBar value={Math.round((installingRuntime.downloaded / installingRuntime.total) * 100)} />
-                )}
+          <div className="pt-3 text-xs text-text-muted">
+            Cleanup and tone polish are configured separately in the next section.
+          </div>
+
+          {kind === "cloud" && (
+            <div className="mt-5 rounded-md border border-border-subtle bg-bg-base/40 p-4">
+              <div className="text-sm font-medium">Azure Whisper</div>
+              <div className="mt-1 text-xs leading-relaxed text-text-muted">
+                No local model download is needed. Audio is sent to the Verbatim cloud just long
+                enough to transcribe it.
               </div>
-            )}
-            <div className="flex flex-col gap-2">
-              {WHISPER_TIERS.map((meta) => {
-                const info = models.find((m) => m.tier === meta.tier);
-                const installed = !!info?.installed;
-                const isSelected = selectedTier === meta.tier;
-                const dl = downloading[meta.tier];
-                const dlPct =
-                  dl && dl.total > 0 ? Math.round((dl.downloaded / dl.total) * 100) : undefined;
-                return (
-                  <div
-                    key={meta.tier}
-                    className={`flex flex-col gap-2 rounded-md border p-3 ${
-                      isSelected
-                        ? "border-accent bg-accent/5"
-                        : "border-border-subtle"
-                    }`}
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="flex flex-col gap-0.5">
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm font-medium">{meta.label}</span>
-                          <span className="text-xs text-text-muted">·</span>
-                          <span className="text-xs text-text-muted">{meta.tier}</span>
-                          <span className="text-xs text-text-muted">·</span>
-                          <span className="text-xs text-text-muted">{formatSize(meta.approxSizeMB)}</span>
-                          {installed && (
-                            <span className="inline-flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
-                              <CheckCircle2 className="h-3.5 w-3.5" /> installed
+            </div>
+          )}
+
+          <ProviderTestControl
+            id="test-transcription"
+            label="Test transcription"
+            testing={testingTranscription}
+            status={transcriptionTest}
+            onTest={handleTestTranscription}
+          />
+
+          {kind === "local-whisper" && (
+            <div className="mt-5 border-t border-border-subtle pt-5">
+              <div className="mb-3 text-sm font-medium">Whisper.cpp models</div>
+              <div className="mb-4 text-xs text-text-muted">
+                Local Whisper uses whisper.cpp, the ggml speech-to-text runtime. Pick a tier based
+                on your machine. Larger = more accurate, slower. The runtime is set up automatically
+                with your first download.
+              </div>
+              {installingRuntime && (
+                <div className="mb-3 rounded-md border border-border-subtle bg-bg-elevated/40 p-3">
+                  <div className="mb-1 flex items-center gap-2 text-xs text-text-secondary">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    Setting up the on-device engine (one time, ~5 MB)…
+                  </div>
+                  {installingRuntime.total > 0 && (
+                    <ProgressBar
+                      value={Math.round(
+                        (installingRuntime.downloaded / installingRuntime.total) * 100,
+                      )}
+                    />
+                  )}
+                </div>
+              )}
+              <RuntimeRow
+                title="Runtime"
+                description="Downloads the whisper.cpp sidecar used for local speech-to-text."
+                installed={runtimeInstalled}
+                installing={!!installingRuntime}
+                onInstall={handleInstallRuntime}
+              />
+              <div className="flex flex-col gap-2">
+                {WHISPER_TIERS.map((meta) => {
+                  const info = models.find((m) => m.tier === meta.tier);
+                  const installed = !!info?.installed;
+                  const isSelected = selectedTier === meta.tier;
+                  const dl = downloading[meta.tier];
+                  const dlPct =
+                    dl && dl.total > 0 ? Math.round((dl.downloaded / dl.total) * 100) : undefined;
+                  return (
+                    <div
+                      key={meta.tier}
+                      className={`flex flex-col gap-2 rounded-md border p-3 ${
+                        isSelected ? "border-accent bg-accent/5" : "border-border-subtle"
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex flex-col gap-0.5">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-medium">{meta.label}</span>
+                            <span className="text-xs text-text-muted">·</span>
+                            <span className="text-xs text-text-muted">{meta.tier}</span>
+                            <span className="text-xs text-text-muted">·</span>
+                            <span className="text-xs text-text-muted">
+                              {formatSize(meta.approxSizeMB)}
                             </span>
+                            {installed && (
+                              <span className="inline-flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
+                                <CheckCircle2 className="h-3.5 w-3.5" /> installed
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-xs text-text-muted">{meta.blurb}</div>
+                          <div className="text-xs text-text-muted">
+                            Best for: {meta.recommendedFor}
+                          </div>
+                        </div>
+                        <div className="flex shrink-0 items-center gap-2">
+                          {installed ? (
+                            <>
+                              <Button
+                                variant={isSelected ? "primary" : "secondary"}
+                                size="sm"
+                                onClick={() => handleTierChange(meta.tier)}
+                                disabled={isSelected}
+                              >
+                                {isSelected ? "In use" : "Use this"}
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleDelete(meta.tier)}
+                                title="Remove model file"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </>
+                          ) : dl ? (
+                            <Button variant="secondary" size="sm" disabled>
+                              <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+                              {dlPct !== undefined ? `${dlPct}%` : "Starting…"}
+                            </Button>
+                          ) : (
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              onClick={() => handleDownload(meta.tier)}
+                            >
+                              <Download className="mr-1 h-4 w-4" />
+                              Download
+                            </Button>
                           )}
                         </div>
-                        <div className="text-xs text-text-muted">{meta.blurb}</div>
-                        <div className="text-xs text-text-muted">Best for: {meta.recommendedFor}</div>
                       </div>
-                      <div className="flex shrink-0 items-center gap-2">
-                        {installed ? (
-                          <>
-                            <Button
-                              variant={isSelected ? "primary" : "secondary"}
-                              size="sm"
-                              onClick={() => handleTierChange(meta.tier)}
-                              disabled={isSelected}
-                            >
-                              {isSelected ? "In use" : "Use this"}
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => handleDelete(meta.tier)}
-                              title="Remove model file"
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
-                          </>
-                        ) : dl ? (
-                          <Button variant="secondary" size="sm" disabled>
-                            <Loader2 className="mr-1 h-4 w-4 animate-spin" />
-                            {dlPct !== undefined ? `${dlPct}%` : "Starting…"}
-                          </Button>
-                        ) : (
-                          <Button variant="secondary" size="sm" onClick={() => handleDownload(meta.tier)}>
-                            <Download className="mr-1 h-4 w-4" />
-                            Download
-                          </Button>
-                        )}
-                      </div>
+                      {dl && dlPct !== undefined && <ProgressBar value={dlPct} />}
                     </div>
-                    {dl && dlPct !== undefined && (
-                      <ProgressBar value={dlPct} />
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-            <AdvancedSection>
-              <div className="flex items-center justify-between rounded-md border border-border-subtle p-3">
-                <div className="flex flex-col gap-0.5">
-                  <div className="text-sm">
-                    whisper.cpp runtime:{" "}
-                    {runtimeInstalled ? (
-                      <span className="inline-flex items-center gap-1 text-green-600 dark:text-green-400">
-                        <CheckCircle2 className="h-4 w-4" /> Installed
-                      </span>
-                    ) : (
-                      <span className="text-text-muted">Not installed — installs automatically with the first model download</span>
-                    )}
-                  </div>
-                  <div className="text-xs text-text-muted">whisper.cpp v1.8.4 · CUDA build (uses your NVIDIA GPU)</div>
-                </div>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={handleInstallRuntime}
-                  disabled={!!installingRuntime}
-                >
-                  {runtimeInstalled ? "Reinstall" : "Install now"}
-                </Button>
+                  );
+                })}
               </div>
-            </AdvancedSection>
-          </CardContent>
-        </Card>
-      )}
+            </div>
+          )}
 
-      {kind === "local-parakeet" && <ParakeetSection />}
-
-      <CleanupSection />
-
-      {/* One menu owns everything model-related, including verifying it
-          works — moved here from Advanced (doc 02, user-tweaked scope). */}
-      <Card className="mt-3">
-        <CardContent className="p-5 pt-5">
-          <SettingRow
-            id="test-ai"
-            title="Test AI connection"
-            description="Checks that the transcription and cleanup providers picked above actually respond."
-          >
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={async () => {
-                const provider = getActiveProvider();
-                if (!provider) {
-                  toast.error("No provider configured");
-                  return;
-                }
-                toast.info("Pinging…");
-                const h = await provider.health();
-                if (h.ok) {
-                  toast.success(`Connected (${h.latencyMs ?? "?"} ms)`);
-                } else {
-                  toast.error("Connection failed", {
-                    description: h.message ?? "Unknown",
-                    duration: 12000,
-                  });
-                }
-              }}
-            >
-              Test
-            </Button>
-          </SettingRow>
+          {kind === "local-parakeet" && <ParakeetSection />}
         </CardContent>
       </Card>
+
+      <CleanupSection />
     </div>
   );
 }
@@ -952,10 +1092,11 @@ function formatBytes(b: number): string {
 function ParakeetSection() {
   const [runtimeInstalled, setRuntimeInstalled] = useState<boolean>(false);
   const [models, setModels] = useState<ParakeetModelInfo[]>([]);
-  const [selectedVariant, setSelectedVariant] =
-    useState<ParakeetVariant>(getParakeetVariant());
-  const [installingRuntime, setInstallingRuntime] =
-    useState<{ downloaded: number; total: number } | null>(null);
+  const [selectedVariant, setSelectedVariant] = useState<ParakeetVariant>(getParakeetVariant());
+  const [installingRuntime, setInstallingRuntime] = useState<{
+    downloaded: number;
+    total: number;
+  } | null>(null);
   const [downloading, setDownloading] = useState<
     Record<ParakeetVariant, { downloaded: number; total: number } | undefined>
   >({} as Record<ParakeetVariant, { downloaded: number; total: number } | undefined>);
@@ -963,10 +1104,7 @@ function ParakeetSection() {
 
   const refresh = async () => {
     try {
-      const [rt, m] = await Promise.all([
-        isParakeetRuntimeInstalled(),
-        listParakeetModels(),
-      ]);
+      const [rt, m] = await Promise.all([isParakeetRuntimeInstalled(), listParakeetModels()]);
       setRuntimeInstalled(rt);
       setModels(m);
     } catch (e) {
@@ -1082,147 +1220,133 @@ function ParakeetSection() {
       : undefined;
 
   return (
-    <Card>
-      <CardContent className="p-5 pt-5">
-        <div className="mb-3 text-sm font-medium">Parakeet TDT (NVIDIA)</div>
-        <div className="mb-4 text-xs text-text-muted">
-          On-device transcription via the sherpa-onnx runtime. Pick a model variant — v2 for English-only with the
-          best WER, or v3 for 25 European languages. Runs on CPU. Windows x64 and Apple Silicon only.
-        </div>
+    <div className="mt-5 border-t border-border-subtle pt-5">
+      <div className="mb-3 text-sm font-medium">Parakeet TDT (NVIDIA)</div>
+      <div className="mb-4 text-xs text-text-muted">
+        On-device transcription via the sherpa-onnx runtime. Pick a model variant — v2 for
+        English-only with the best WER, or v3 for 25 European languages. Runs on CPU. Windows x64
+        and Apple Silicon only.
+      </div>
 
-        {installingRuntime && (
-          <div className="mb-3 rounded-md border border-border-subtle bg-bg-elevated/40 p-3">
-            <div className="mb-1 flex items-center gap-2 text-xs text-text-secondary">
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              Setting up the on-device engine (one time, ~50 MB)…
-            </div>
-            {rtPct !== undefined && <ProgressBar value={rtPct} />}
+      {installingRuntime && (
+        <div className="mb-3 rounded-md border border-border-subtle bg-bg-elevated/40 p-3">
+          <div className="mb-1 flex items-center gap-2 text-xs text-text-secondary">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            Setting up the on-device engine (one time, ~50 MB)…
           </div>
-        )}
-
-        {/* Model variants */}
-        <div className="mb-3 text-sm font-medium">Models</div>
-        <div className="mb-4 text-xs text-text-muted">
-          Pick the variant that fits your needs. Both can be installed; the selected one is used for
-          new recordings. Everything needed to run them is set up automatically with your first download.
+          {rtPct !== undefined && <ProgressBar value={rtPct} />}
         </div>
-        <div className="flex flex-col gap-2">
-          {PARAKEET_VARIANTS.map((meta) => {
-            const info = models.find((m) => m.variant === meta.variant);
-            const installed = !!info?.installed;
-            const isSelected = selectedVariant === meta.variant;
-            const dl = downloading[meta.variant];
-            const dlPct =
-              dl && dl.total > 0 ? Math.round((dl.downloaded / dl.total) * 100) : undefined;
-            return (
-              <div
-                key={meta.variant}
-                className={`flex flex-col gap-2 rounded-md border p-3 ${
-                  isSelected ? "border-accent bg-accent/5" : "border-border-subtle"
-                }`}
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex flex-col gap-0.5">
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-medium">{meta.label}</span>
-                      <span className="text-xs text-text-muted">·</span>
-                      <span className="text-xs text-text-muted">~{meta.approxSizeMB} MB</span>
-                      {installed && (
-                        <span className="inline-flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
-                          <CheckCircle2 className="h-3.5 w-3.5" /> installed
-                        </span>
-                      )}
-                    </div>
-                    <div className="text-xs text-text-muted">{meta.blurb}</div>
-                    <div className="text-xs text-text-muted">Best for: {meta.recommendedFor}</div>
-                  </div>
-                  <div className="flex shrink-0 items-center gap-2">
-                    {installed ? (
-                      <>
-                        <Button
-                          variant={isSelected ? "primary" : "secondary"}
-                          size="sm"
-                          onClick={() => handleVariantChange(meta.variant)}
-                          disabled={isSelected}
-                        >
-                          {isSelected ? "In use" : "Use this"}
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => handleDelete(meta.variant)}
-                          title="Remove model file"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </>
-                    ) : dl ? (
-                      <Button variant="secondary" size="sm" disabled>
-                        <Loader2 className="mr-1 h-4 w-4 animate-spin" />
-                        {dlPct !== undefined ? `${dlPct}%` : "Starting…"}
-                      </Button>
-                    ) : (
-                      <Button
-                        variant="primary"
-                        size="sm"
-                        onClick={() => handleDownload(meta.variant)}
-                      >
-                        <Download className="mr-1 h-4 w-4" /> Download
-                      </Button>
+      )}
+
+      {/* Model variants */}
+      <div className="mb-3 text-sm font-medium">Models</div>
+      <div className="mb-4 text-xs text-text-muted">
+        Pick the variant that fits your needs. Both can be installed; the selected one is used for
+        new recordings. Everything needed to run them is set up automatically with your first
+        download.
+      </div>
+      <div className="flex flex-col gap-2">
+        {PARAKEET_VARIANTS.map((meta) => {
+          const info = models.find((m) => m.variant === meta.variant);
+          const installed = !!info?.installed;
+          const isSelected = selectedVariant === meta.variant;
+          const dl = downloading[meta.variant];
+          const dlPct =
+            dl && dl.total > 0 ? Math.round((dl.downloaded / dl.total) * 100) : undefined;
+          return (
+            <div
+              key={meta.variant}
+              className={`flex flex-col gap-2 rounded-md border p-3 ${
+                isSelected ? "border-accent bg-accent/5" : "border-border-subtle"
+              }`}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex flex-col gap-0.5">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium">{meta.label}</span>
+                    <span className="text-xs text-text-muted">·</span>
+                    <span className="text-xs text-text-muted">~{meta.approxSizeMB} MB</span>
+                    {installed && (
+                      <span className="inline-flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
+                        <CheckCircle2 className="h-3.5 w-3.5" /> installed
+                      </span>
                     )}
                   </div>
+                  <div className="text-xs text-text-muted">{meta.blurb}</div>
+                  <div className="text-xs text-text-muted">Best for: {meta.recommendedFor}</div>
                 </div>
-                {dl && dlPct !== undefined && <ProgressBar value={dlPct} />}
+                <div className="flex shrink-0 items-center gap-2">
+                  {installed ? (
+                    <>
+                      <Button
+                        variant={isSelected ? "primary" : "secondary"}
+                        size="sm"
+                        onClick={() => handleVariantChange(meta.variant)}
+                        disabled={isSelected}
+                      >
+                        {isSelected ? "In use" : "Use this"}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handleDelete(meta.variant)}
+                        title="Remove model file"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </>
+                  ) : dl ? (
+                    <Button variant="secondary" size="sm" disabled>
+                      <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+                      {dlPct !== undefined ? `${dlPct}%` : "Starting…"}
+                    </Button>
+                  ) : (
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      onClick={() => handleDownload(meta.variant)}
+                    >
+                      <Download className="mr-1 h-4 w-4" /> Download
+                    </Button>
+                  )}
+                </div>
               </div>
-            );
-          })}
-        </div>
-
-        {/* Language */}
-        <div className="pt-3">
-          <SettingRow
-            id="transcription-language"
-            title="Language"
-            description="Pick a specific language for best accuracy, or let the model auto-detect. (v2 is English-only regardless.)"
-          >
-            <Select value={language} onValueChange={handleLanguageChange}>
-              <SelectTrigger className="w-56"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                {PARAKEET_LANGUAGES.map((l) => (
-                  <SelectItem key={l.code} value={l.code}>{l.label}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </SettingRow>
-        </div>
-
-        <AdvancedSection>
-          <div className="flex items-center justify-between rounded-md border border-border-subtle p-3">
-            <div className="flex flex-col gap-0.5">
-              <div className="text-sm">
-                sherpa-onnx runtime:{" "}
-                {runtimeInstalled ? (
-                  <span className="inline-flex items-center gap-1 text-green-600 dark:text-green-400">
-                    <CheckCircle2 className="h-4 w-4" /> Installed
-                  </span>
-                ) : (
-                  <span className="text-text-muted">Not installed — installs automatically with the first model download</span>
-                )}
-              </div>
-              <div className="text-xs text-text-muted">sherpa-onnx v1.13.2 · CPU build (~50 MB)</div>
+              {dl && dlPct !== undefined && <ProgressBar value={dlPct} />}
             </div>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={handleInstallRuntime}
-              disabled={!!installingRuntime}
-            >
-              {runtimeInstalled ? "Reinstall" : "Install now"}
-            </Button>
-          </div>
-        </AdvancedSection>
-      </CardContent>
-    </Card>
+          );
+        })}
+      </div>
+
+      {/* Language */}
+      <div className="pt-3">
+        <SettingRow
+          id="transcription-language"
+          title="Language"
+          description="Pick a specific language for best accuracy, or let the model auto-detect. (v2 is English-only regardless.)"
+        >
+          <Select value={language} onValueChange={handleLanguageChange}>
+            <SelectTrigger className="w-56">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {PARAKEET_LANGUAGES.map((l) => (
+                <SelectItem key={l.code} value={l.code}>
+                  {l.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </SettingRow>
+      </div>
+
+      <RuntimeRow
+        title="Runtime"
+        description="Downloads the sherpa-onnx sidecar used for Parakeet transcription."
+        installed={runtimeInstalled}
+        installing={!!installingRuntime}
+        onInstall={handleInstallRuntime}
+      />
+    </div>
   );
 }
 
@@ -1240,6 +1364,14 @@ function CleanupSection() {
   const [models, setModels] = useState<OllamaModelInfo[]>([]);
   const [ping, setPing] = useState<PingResult | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [llamaModel, setLlamaModel] = useState<string>(getLlamaCppModel());
+  const [llamaRuntimeInstalled, setLlamaRuntimeInstalled] = useState(false);
+  const [installingLlamaRuntime, setInstallingLlamaRuntime] = useState<{
+    downloaded: number;
+    total: number;
+  } | null>(null);
+  const [cleanupTest, setCleanupTest] = useState<ProviderTestStatus | null>(null);
+  const [testingCleanup, setTestingCleanup] = useState(false);
   const reachable = ping?.kind === "ok";
 
   const refresh = async () => {
@@ -1275,6 +1407,89 @@ function CleanupSection() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [kind, host]);
 
+  const refreshLlamaRuntime = async () => {
+    try {
+      setLlamaRuntimeInstalled(await isLlamaCppRuntimeInstalled());
+    } catch (e) {
+      toast.error("Couldn't read llama.cpp state", {
+        description: e instanceof Error ? e.message : String(e),
+      });
+    }
+  };
+
+  useEffect(() => {
+    if (kind === "local-llama-cpp") void refreshLlamaRuntime();
+  }, [kind]);
+
+  useEffect(() => {
+    const offRtProg = listen<{ downloaded: number; total: number }>(
+      "llama-cpp:runtime:progress",
+      (e) => setInstallingLlamaRuntime(e.payload),
+    );
+    const offRtDone = listen<string>("llama-cpp:runtime:complete", () => {
+      setInstallingLlamaRuntime(null);
+      void refreshLlamaRuntime();
+    });
+    return () => {
+      void offRtProg.then((fn) => fn());
+      void offRtDone.then((fn) => fn());
+    };
+  }, []);
+
+  const handleInstallLlamaRuntime = async () => {
+    setInstallingLlamaRuntime({ downloaded: 0, total: 0 });
+    try {
+      await installLlamaCppRuntime();
+      toast.success("llama.cpp runtime installed");
+    } catch (e) {
+      setInstallingLlamaRuntime(null);
+      toast.error("Couldn't install llama.cpp", {
+        description: e instanceof Error ? e.message : String(e),
+      });
+    }
+  };
+
+  const handleOpenOllamaInstaller = async () => {
+    try {
+      const { openUrl } = await import("@tauri-apps/plugin-opener");
+      await openUrl("https://ollama.com/download");
+      toast.info("Opened Ollama download", {
+        description: "Install Ollama, start it, then refresh the Runtime status.",
+      });
+    } catch (e) {
+      toast.error("Couldn't open Ollama download", {
+        description: e instanceof Error ? e.message : String(e),
+      });
+    }
+  };
+
+  const handleTestCleanup = async () => {
+    setTestingCleanup(true);
+    setCleanupTest(null);
+    try {
+      if (kind === "none") {
+        setCleanupTest(
+          providerTestStatus("cleanup", {
+            ok: true,
+            message: "Cleanup is disabled. Raw transcript mode is ready.",
+          }),
+        );
+        return;
+      }
+      const health = await testCleanupProvider();
+      setCleanupTest(providerTestStatus("cleanup", health));
+    } catch (e) {
+      setCleanupTest(
+        providerTestStatus("cleanup", {
+          ok: false,
+          message: e instanceof Error ? e.message : String(e),
+        }),
+      );
+    } finally {
+      setTestingCleanup(false);
+    }
+  };
+
   const handleKind = (next: CleanupChoice) => {
     if (next === "none") {
       setAiImproveDisabled(true);
@@ -1288,37 +1503,72 @@ function CleanupSection() {
         ? "Cleanup: using cloud"
         : next === "local-ollama"
           ? "Cleanup: using local Ollama"
-          : "Cleanup off — you'll get the raw transcript",
+          : next === "local-llama-cpp"
+            ? "Cleanup: using local llama.cpp"
+            : "Cleanup off — you'll get the raw transcript",
     );
   };
 
   return (
-    <>
-      <Card>
-        <CardContent className="p-5 pt-5">
-          <SettingRow
-            id="cleanup-provider"
-            title="Cleanup provider"
-            description="Where tone polish and grammar fix runs — or none to keep the raw transcript (vocabulary fixes still apply). Independent from transcription."
-          >
-            <Select value={kind} onValueChange={(v) => handleKind(v as CleanupChoice)}>
-              <SelectTrigger className="w-56"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="cloud">Cloud — Azure GPT</SelectItem>
-                <SelectItem value="local-ollama">Local — Ollama</SelectItem>
-                <SelectItem value="none">None — raw transcript</SelectItem>
-              </SelectContent>
-            </Select>
-          </SettingRow>
-        </CardContent>
-      </Card>
+    <Card>
+      <CardContent className="p-5 pt-5">
+        <StageHeader
+          eyebrow="Step 2"
+          title="Cleanup"
+          description="Turn the transcript into the final text. Pick the cleanup engine first, then choose the model or raw-output behavior inside the same section."
+        />
+        <SettingRow
+          id="cleanup-provider"
+          title="Cleanup engine"
+          description="Where tone polish and grammar fixes run. This is text cleanup only, independent from transcription."
+        >
+          <Select value={kind} onValueChange={(v) => handleKind(v as CleanupChoice)}>
+            <SelectTrigger className="w-56">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="cloud">Cloud — Azure GPT</SelectItem>
+              <SelectItem value="local-ollama">Local — Ollama</SelectItem>
+              <SelectItem value="local-llama-cpp">Local — llama.cpp</SelectItem>
+              <SelectItem value="none">None — raw transcript</SelectItem>
+            </SelectContent>
+          </Select>
+        </SettingRow>
 
-      {kind === "local-ollama" && (
-        <Card>
-          <CardContent className="p-5 pt-5">
-            <div className="mb-3 text-sm font-medium">Ollama</div>
-            <div className="mb-4 text-xs text-text-muted">
-              Verbatim AI talks to a local Ollama server. Install Ollama once from{" "}
+        {kind === "cloud" && (
+          <div className="mt-5 rounded-md border border-border-subtle bg-bg-base/40 p-4">
+            <div className="text-sm font-medium">Azure GPT cleanup</div>
+            <div className="mt-1 text-xs leading-relaxed text-text-muted">
+              Uses the active Mode to fix grammar, remove fillers, and shape tone in the cloud. No
+              local model setup is required.
+            </div>
+          </div>
+        )}
+
+        {kind === "none" && (
+          <div className="mt-5 rounded-md border border-border-subtle bg-bg-base/40 p-4">
+            <div className="text-sm font-medium">Raw transcript</div>
+            <div className="mt-1 text-xs leading-relaxed text-text-muted">
+              Skips the LLM polish step entirely. Vocabulary replacements still apply before the
+              text is pasted.
+            </div>
+          </div>
+        )}
+
+        <ProviderTestControl
+          id="test-cleanup"
+          label="Test cleanup"
+          testing={testingCleanup}
+          status={cleanupTest}
+          onTest={handleTestCleanup}
+        />
+
+        {kind === "local-ollama" && (
+          <div className="mt-5 border-t border-border-subtle pt-5">
+            <div className="mb-3 text-sm font-medium">Ollama cleanup models</div>
+            <div className="mb-4 text-xs leading-relaxed text-text-muted">
+              Verbatim AI talks to a local Ollama server for text cleanup, not audio transcription.
+              Install Ollama once from{" "}
               <a
                 href="https://ollama.com"
                 target="_blank"
@@ -1327,8 +1577,17 @@ function CleanupSection() {
               >
                 ollama.com <ExternalLink className="h-3 w-3" />
               </a>{" "}
-              and pull a model in a terminal: <code className="text-text-primary">ollama pull qwen2.5:7b</code>.
+              and pull a model in a terminal:{" "}
+              <code className="text-text-primary">ollama pull qwen2.5:7b</code>.
             </div>
+
+            <RuntimeRow
+              title="Runtime"
+              description="Uses the official Ollama app/server. Install it once, start it, then refresh the status."
+              installed={reachable}
+              installing={false}
+              onInstall={handleOpenOllamaInstaller}
+            />
 
             <SettingRow
               title="Status"
@@ -1374,11 +1633,24 @@ function CleanupSection() {
 
             {ping?.kind === "forbidden" && (
               <div className="mt-3 rounded-md border border-danger/30 bg-danger/5 p-3 text-xs text-text-secondary">
-                <div className="mb-1 font-medium text-danger">Ollama is rejecting requests from this app (HTTP 403).</div>
+                <div className="mb-1 font-medium text-danger">
+                  Ollama is rejecting requests from this app (HTTP 403).
+                </div>
                 Ollama only allows requests from specific origins. Add Verbatim AI to the allowlist:
                 <ol className="mt-2 list-decimal space-y-1 pl-5">
                   <li>Quit Ollama from the system tray.</li>
-                  <li>Open a terminal and run: <code className="text-text-primary">setx OLLAMA_ORIGINS "tauri://localhost,https://tauri.localhost"</code> (on macOS/Linux: <code className="text-text-primary">launchctl setenv OLLAMA_ORIGINS "tauri://localhost,https://tauri.localhost"</code>). Avoid <code className="text-text-primary">"*"</code> — it lets any website reach your Ollama.</li>
+                  <li>
+                    Open a terminal and run:{" "}
+                    <code className="text-text-primary">
+                      setx OLLAMA_ORIGINS "tauri://localhost,https://tauri.localhost"
+                    </code>{" "}
+                    (on macOS/Linux:{" "}
+                    <code className="text-text-primary">
+                      launchctl setenv OLLAMA_ORIGINS "tauri://localhost,https://tauri.localhost"
+                    </code>
+                    ). Avoid <code className="text-text-primary">"*"</code> — it lets any website
+                    reach your Ollama.
+                  </li>
                   <li>Start Ollama again, then click the refresh icon.</li>
                 </ol>
               </div>
@@ -1386,27 +1658,135 @@ function CleanupSection() {
 
             {ping?.kind === "unreachable" && (
               <div className="mt-3 rounded-md border border-border-subtle bg-bg-elevated/40 p-3 text-xs text-text-muted">
-                Couldn't reach Ollama at <code className="text-text-primary">{host}</code>.
-                Make sure it's installed and running. On {osName()} it should auto-start after install.
+                Couldn't reach Ollama at <code className="text-text-primary">{host}</code>. Make
+                sure it's installed and running. On {osName()} it should auto-start after install.
               </div>
             )}
-          </CardContent>
-        </Card>
-      )}
 
-      {kind === "local-ollama" && reachable && (
-        <OllamaModelList
-          host={host}
-          installed={models}
-          currentModel={model}
-          onPulled={refresh}
-          onPick={(name) => {
-            setOllamaModel(name);
-            setModelState(name);
-          }}
-        />
-      )}
-    </>
+            {reachable && (
+              <OllamaModelList
+                host={host}
+                installed={models}
+                currentModel={model}
+                onPulled={refresh}
+                onPick={(name) => {
+                  setOllamaModel(name);
+                  setModelState(name);
+                }}
+              />
+            )}
+          </div>
+        )}
+
+        {kind === "local-llama-cpp" && (
+          <div className="mt-5 border-t border-border-subtle pt-5">
+            <div className="mb-3 text-sm font-medium">llama.cpp cleanup models</div>
+            <div className="mb-4 text-xs leading-relaxed text-text-muted">
+              llama.cpp runs a local GGUF LLM directly from Verbatim AI for text cleanup. It does
+              not transcribe audio; use Whisper or Parakeet above for speech-to-text. Models use
+              llama.cpp's Hugging Face shorthand, for example{" "}
+              <code className="text-text-primary">ggml-org/gemma-3-1b-it-GGUF</code>.
+            </div>
+
+            {installingLlamaRuntime && (
+              <div className="mb-3 rounded-md border border-border-subtle bg-bg-elevated/40 p-3">
+                <div className="mb-1 flex items-center gap-2 text-xs text-text-secondary">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  Installing llama.cpp runtime…
+                </div>
+                {installingLlamaRuntime.total > 0 && (
+                  <ProgressBar
+                    value={Math.round(
+                      (installingLlamaRuntime.downloaded / installingLlamaRuntime.total) * 100,
+                    )}
+                  />
+                )}
+              </div>
+            )}
+
+            <SettingRow
+              title="Runtime"
+              description="Downloads the official prebuilt llama-cli from ggml-org/llama.cpp releases."
+            >
+              <div className="flex items-center gap-2">
+                {llamaRuntimeInstalled ? (
+                  <span className="inline-flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
+                    <CheckCircle2 className="h-3.5 w-3.5" /> Installed
+                  </span>
+                ) : (
+                  <span className="text-xs text-text-muted">Not installed</span>
+                )}
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={handleInstallLlamaRuntime}
+                  disabled={!!installingLlamaRuntime}
+                >
+                  {llamaRuntimeInstalled ? "Reinstall" : "Install"}
+                </Button>
+              </div>
+            </SettingRow>
+
+            <SettingRow
+              title="Model"
+              description="Pick a suggested GGUF model or paste any llama.cpp-compatible Hugging Face reference."
+            >
+              <Input
+                className="w-80"
+                value={llamaModel}
+                onChange={(e) => {
+                  setLlamaModel(e.target.value);
+                  setLlamaCppModel(e.target.value);
+                }}
+                placeholder="ggml-org/gemma-3-1b-it-GGUF"
+              />
+            </SettingRow>
+
+            <div className="mt-3 flex flex-col gap-2">
+              {LLAMA_CPP_MODELS.map((m) => {
+                const selected = llamaModel === m.id;
+                return (
+                  <div
+                    key={m.id}
+                    className={`flex items-start justify-between gap-3 rounded-md border p-3 ${
+                      selected ? "border-accent bg-accent/5" : "border-border-subtle"
+                    }`}
+                  >
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-sm font-medium">{m.label}</span>
+                        {m.recommended && (
+                          <span className="rounded bg-accent/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-accent-start">
+                            Recommended
+                          </span>
+                        )}
+                        <span className="text-xs text-text-muted">·</span>
+                        <span className="text-xs text-text-muted">~{formatMB(m.approxDiskMB)}</span>
+                      </div>
+                      <div className="mt-0.5 truncate font-mono text-[11px] text-text-muted">
+                        {m.id}
+                      </div>
+                      <div className="mt-1 text-xs text-text-muted">{m.blurb}</div>
+                    </div>
+                    <Button
+                      variant={selected ? "primary" : "secondary"}
+                      size="sm"
+                      onClick={() => {
+                        setLlamaModel(m.id);
+                        setLlamaCppModel(m.id);
+                      }}
+                      disabled={selected}
+                    >
+                      {selected ? "In use" : "Use this"}
+                    </Button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -1435,7 +1815,9 @@ function OllamaModelList({
   onPulled: () => void | Promise<void>;
   onPick: (name: string) => void;
 }) {
-  const [pulling, setPulling] = useState<Record<string, { completed: number; total: number; status: string } | undefined>>({});
+  const [pulling, setPulling] = useState<
+    Record<string, { completed: number; total: number; status: string } | undefined>
+  >({});
 
   const handlePull = async (tag: string) => {
     setPulling((p) => ({ ...p, [tag]: { completed: 0, total: 0, status: "starting" } }));
@@ -1497,79 +1879,79 @@ function OllamaModelList({
   ];
 
   return (
-    <Card>
-      <CardContent className="p-5 pt-5">
-        <div className="mb-3 text-sm font-medium">Ollama models</div>
-        <div className="mb-4 text-xs text-text-muted">
-          Pick the model used for polish. Downloads go straight into Ollama — or pull anything else with{" "}
-          <code className="text-text-primary">ollama pull &lt;tag&gt;</code> in a terminal.
-        </div>
-        <div className="flex flex-col gap-2">
-          {rows.map((m) => {
-            const selected = currentModel === m.tag;
-            const p = pulling[m.tag];
-            const pct = p && p.total > 0 ? Math.round((p.completed / p.total) * 100) : undefined;
-            return (
-              <div
-                key={m.tag}
-                className={`flex flex-col gap-2 rounded-md border p-3 ${
-                  selected ? "border-accent bg-accent/5" : "border-border-subtle"
-                }`}
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex flex-col gap-0.5">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-sm font-medium">{m.label}</span>
-                      {m.recommended && (
-                        <span className="rounded bg-accent/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-accent-start">
-                          Recommended
+    <div className="mt-5 border-t border-border-subtle pt-5">
+      <div className="mb-3 text-sm font-medium">Ollama models</div>
+      <div className="mb-4 text-xs text-text-muted">
+        Pick the model used for polish. Downloads go straight into Ollama — or pull anything else
+        with <code className="text-text-primary">ollama pull &lt;tag&gt;</code> in a terminal.
+      </div>
+      <div className="flex flex-col gap-2">
+        {rows.map((m) => {
+          const selected = currentModel === m.tag;
+          const p = pulling[m.tag];
+          const pct = p && p.total > 0 ? Math.round((p.completed / p.total) * 100) : undefined;
+          return (
+            <div
+              key={m.tag}
+              className={`flex flex-col gap-2 rounded-md border p-3 ${
+                selected ? "border-accent bg-accent/5" : "border-border-subtle"
+              }`}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex flex-col gap-0.5">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-sm font-medium">{m.label}</span>
+                    {m.recommended && (
+                      <span className="rounded bg-accent/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-accent-start">
+                        Recommended
+                      </span>
+                    )}
+                    {m.label !== m.tag && (
+                      <>
+                        <span className="text-xs text-text-muted">·</span>
+                        <span className="text-xs text-text-muted">
+                          <code>{m.tag}</code>
                         </span>
-                      )}
-                      {m.label !== m.tag && (
-                        <>
-                          <span className="text-xs text-text-muted">·</span>
-                          <span className="text-xs text-text-muted"><code>{m.tag}</code></span>
-                        </>
-                      )}
-                      <span className="text-xs text-text-muted">·</span>
-                      <span className="text-xs text-text-muted">{m.meta}</span>
-                      {m.isInstalled && (
-                        <span className="inline-flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
-                          <CheckCircle2 className="h-3.5 w-3.5" /> installed
-                        </span>
-                      )}
-                    </div>
-                    <div className="text-xs text-text-muted">{m.blurb}</div>
-                  </div>
-                  <div className="flex shrink-0 items-center gap-2">
-                    {m.isInstalled ? (
-                      <Button
-                        variant={selected ? "primary" : "secondary"}
-                        size="sm"
-                        onClick={() => onPick(m.tag)}
-                        disabled={selected}
-                      >
-                        {selected ? "In use" : "Use this"}
-                      </Button>
-                    ) : p ? (
-                      <Button variant="secondary" size="sm" disabled>
-                        <Loader2 className="mr-1 h-4 w-4 animate-spin" />
-                        {pct !== undefined ? `${pct}%` : "Starting…"}
-                      </Button>
-                    ) : (
-                      <Button variant="secondary" size="sm" onClick={() => handlePull(m.tag)}>
-                        <Download className="mr-1 h-4 w-4" />
-                        Download
-                      </Button>
+                      </>
+                    )}
+                    <span className="text-xs text-text-muted">·</span>
+                    <span className="text-xs text-text-muted">{m.meta}</span>
+                    {m.isInstalled && (
+                      <span className="inline-flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
+                        <CheckCircle2 className="h-3.5 w-3.5" /> installed
+                      </span>
                     )}
                   </div>
+                  <div className="text-xs text-text-muted">{m.blurb}</div>
                 </div>
-                {p && pct !== undefined && <ProgressBar value={pct} />}
+                <div className="flex shrink-0 items-center gap-2">
+                  {m.isInstalled ? (
+                    <Button
+                      variant={selected ? "primary" : "secondary"}
+                      size="sm"
+                      onClick={() => onPick(m.tag)}
+                      disabled={selected}
+                    >
+                      {selected ? "In use" : "Use this"}
+                    </Button>
+                  ) : p ? (
+                    <Button variant="secondary" size="sm" disabled>
+                      <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+                      {pct !== undefined ? `${pct}%` : "Starting…"}
+                    </Button>
+                  ) : (
+                    <Button variant="secondary" size="sm" onClick={() => handlePull(m.tag)}>
+                      <Download className="mr-1 h-4 w-4" />
+                      Download
+                    </Button>
+                  )}
+                </div>
               </div>
-            );
-          })}
-        </div>
-      </CardContent>
-    </Card>
+              {p && pct !== undefined && <ProgressBar value={pct} />}
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }

@@ -1,6 +1,6 @@
 [package]
 name = "verbatim-ai"
-version = "0.5.5"
+version = "0.5.6"
 description = "Verbatim AI — voice transcription for Windows"
 authors = ["Verbatim AI contributors"]
 edition = "2021"
@@ -38,6 +38,8 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 # tar + bzip2 in addition to the `zip` crate used for whisper-cli.
 tar = "0.4"
 bzip2 = "0.4"
+flate2 = "1"
+sha2 = "0.10"
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-single-instance = "2"
@@ -71,4 +73,3 @@ objc2-app-kit = { version = "0.2", features = [
     "NSPanel",
     "NSResponder",
 ] }
-

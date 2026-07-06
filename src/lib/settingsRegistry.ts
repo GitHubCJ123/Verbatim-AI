@@ -12,12 +12,7 @@
  * to the row.
  */
 
-export type SettingsTab =
-  | "general"
-  | "model"
-  | "recording"
-  | "privacy"
-  | "advanced";
+export type SettingsTab = "general" | "model" | "recording" | "privacy" | "advanced";
 
 export interface SettingsSearchEntry {
   id: string;
@@ -66,16 +61,44 @@ export const SETTINGS_ENTRIES: SettingsSearchEntry[] = [
   // AI model
   {
     id: "transcription-provider",
-    title: "Transcription provider",
+    title: "Transcription engine",
     description: "Where speech-to-text runs: cloud, local Whisper, or Parakeet.",
-    keywords: ["ai", "whisper", "parakeet", "local", "cloud", "offline", "speech to text", "model", "privacy"],
+    keywords: [
+      "ai",
+      "whisper",
+      "parakeet",
+      "local",
+      "cloud",
+      "offline",
+      "speech to text",
+      "model",
+      "privacy",
+    ],
     tab: "model",
   },
   {
     id: "cleanup-provider",
-    title: "Cleanup provider",
-    description: "Where tone polish and grammar fixes run: cloud or local Ollama.",
-    keywords: ["ai", "ollama", "polish", "llm", "grammar", "local", "cloud", "improve", "none", "raw", "off", "skip", "disable"],
+    title: "Cleanup engine",
+    description:
+      "Where tone polish and grammar fixes run: cloud, local Ollama, llama.cpp, or none.",
+    keywords: [
+      "ai",
+      "ollama",
+      "llama.cpp",
+      "llama",
+      "gguf",
+      "polish",
+      "llm",
+      "grammar",
+      "local",
+      "cloud",
+      "improve",
+      "none",
+      "raw",
+      "off",
+      "skip",
+      "disable",
+    ],
     tab: "model",
   },
   {
@@ -133,7 +156,15 @@ export const SETTINGS_ENTRIES: SettingsSearchEntry[] = [
     id: "history-retention",
     title: "History retention",
     description: "Auto-delete transcripts older than 7/30/90 days.",
-    keywords: ["privacy", "retention", "auto delete", "purge", "cleanup", "expire", "old transcripts"],
+    keywords: [
+      "privacy",
+      "retention",
+      "auto delete",
+      "purge",
+      "cleanup",
+      "expire",
+      "old transcripts",
+    ],
     tab: "privacy",
   },
   {
@@ -152,10 +183,35 @@ export const SETTINGS_ENTRIES: SettingsSearchEntry[] = [
     tab: "advanced",
   },
   {
-    id: "test-ai",
-    title: "Test AI connection",
-    description: "Verify the transcription and cleanup backends respond.",
-    keywords: ["connection", "health", "ping", "azure", "ollama", "debug", "not working"],
+    id: "test-transcription",
+    title: "Test transcription",
+    description: "Verify the selected speech-to-text engine is ready.",
+    keywords: [
+      "connection",
+      "health",
+      "ping",
+      "azure",
+      "whisper",
+      "parakeet",
+      "debug",
+      "not working",
+    ],
+    tab: "model",
+  },
+  {
+    id: "test-cleanup",
+    title: "Test cleanup",
+    description: "Verify the selected cleanup engine is ready.",
+    keywords: [
+      "connection",
+      "health",
+      "ping",
+      "azure",
+      "ollama",
+      "llama.cpp",
+      "debug",
+      "not working",
+    ],
     tab: "model",
   },
   {

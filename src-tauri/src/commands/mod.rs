@@ -2,6 +2,7 @@ pub mod active_window;
 pub mod devtools;
 pub mod fn_hotkey;
 pub mod hotkey;
+pub mod llama_cpp;
 pub mod local_whisper;
 pub mod parakeet;
 pub mod paste;

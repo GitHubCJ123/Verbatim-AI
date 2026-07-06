@@ -36,7 +36,10 @@ function withOllamaHeaders(init?: RequestInit): RequestInit {
 // fetch, not the webview's native fetch (which is subject to
 // mixed-content blocks against http://localhost in production).
 const fetch = (input: string | URL | Request, init?: RequestInit) => {
-  if (typeof window !== "undefined" && !(window as unknown as { __ollamaFetchLogged?: boolean }).__ollamaFetchLogged) {
+  if (
+    typeof window !== "undefined" &&
+    !(window as unknown as { __ollamaFetchLogged?: boolean }).__ollamaFetchLogged
+  ) {
     (window as unknown as { __ollamaFetchLogged?: boolean }).__ollamaFetchLogged = true;
     console.info(
       `[ollama:fetch] using @tauri-apps/plugin-http fetch (typeof tauriFetch=${typeof tauriFetch})`,
@@ -57,12 +60,12 @@ const LS_CLEANUP_PROVIDER = "sw.ai.cleanupProvider";
 const LS_OLLAMA_HOST = "sw.ai.ollamaHost";
 const LS_OLLAMA_MODEL = "sw.ai.ollamaModel";
 
-export type CleanupProviderKind = "cloud" | "local-ollama";
+export type CleanupProviderKind = "cloud" | "local-ollama" | "local-llama-cpp";
 
 export function getCleanupProviderKind(): CleanupProviderKind {
-  return localStorage.getItem(LS_CLEANUP_PROVIDER) === "local-ollama"
-    ? "local-ollama"
-    : "cloud";
+  const v = localStorage.getItem(LS_CLEANUP_PROVIDER);
+  if (v === "local-ollama" || v === "local-llama-cpp") return v;
+  return "cloud";
 }
 export function setCleanupProviderKind(v: CleanupProviderKind): void {
   localStorage.setItem(LS_CLEANUP_PROVIDER, v);
@@ -145,8 +148,7 @@ export const SUGGESTED_OLLAMA_MODELS: SuggestedModel[] = [
     label: "Qwen 3.5 — 9B",
     approxDiskMB: 5500,
     approxVramMB: 7000,
-    blurb:
-      "Current sweet spot for cleanup on a modern GPU. Newest Qwen, editing-friendly.",
+    blurb: "Current sweet spot for cleanup on a modern GPU. Newest Qwen, editing-friendly.",
   },
   {
     tag: "llama3.1:8b",
@@ -167,8 +169,7 @@ export const SUGGESTED_OLLAMA_MODELS: SuggestedModel[] = [
     label: "Qwen 3 — 14B",
     approxDiskMB: 9000,
     approxVramMB: 11000,
-    blurb:
-      "Top pick if you have ≥12 GB VRAM. Near closed-model quality.",
+    blurb: "Top pick if you have ≥12 GB VRAM. Near closed-model quality.",
   },
 
   // ---- Large (5080 / 5090 / workstation) ----
@@ -362,9 +363,7 @@ export class OllamaProvider implements AIProvider {
       });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      throw new Error(
-        `Couldn't reach Ollama at ${this.cfg.host}. Is it running? (${msg})`,
-      );
+      throw new Error(`Couldn't reach Ollama at ${this.cfg.host}. Is it running? (${msg})`);
     }
     if (!res.ok || !res.body) {
       const text = await res.text().catch(() => "");

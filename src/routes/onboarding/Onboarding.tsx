@@ -49,7 +49,14 @@ import {
   type Tone,
 } from "../../lib/store/useOnboarding";
 import { osName, micPermissionPath } from "../../lib/os";
-import { applyHotkey, saveHotkeyConfig, loadHotkeyConfig, hotkeyDisplayParts, DEFAULT_SPEC, IS_MAC } from "../../lib/hotkey";
+import {
+  applyHotkey,
+  saveHotkeyConfig,
+  loadHotkeyConfig,
+  hotkeyDisplayParts,
+  DEFAULT_SPEC,
+  IS_MAC,
+} from "../../lib/hotkey";
 import { cn } from "../../lib/utils";
 import { useAuth } from "../../lib/store/useAuth";
 import { isLocalMode } from "../../lib/appMode";
@@ -100,25 +107,40 @@ import {
   type ParakeetVariant,
 } from "../../lib/ai";
 import { listen } from "@tauri-apps/api/event";
-import { Cloud, Cpu, ShieldCheck, Download, CheckCircle2, Wand2, ExternalLink, MessageCircle, Smile, GraduationCap, List, Hash, Briefcase, ClipboardList } from "lucide-react";
+import {
+  Cloud,
+  Cpu,
+  ShieldCheck,
+  Download,
+  CheckCircle2,
+  Wand2,
+  ExternalLink,
+  MessageCircle,
+  Smile,
+  GraduationCap,
+  List,
+  Hash,
+  Briefcase,
+  ClipboardList,
+} from "lucide-react";
 import { ProgressBar } from "../../components/ui/ProgressBar";
 
 const TOTAL_STEPS = 13;
 
 const HUE_PER_STEP = [
-  "168, 85, 247",   // 0 welcome
-  "34, 211, 238",   // 1 mic
-  "52, 211, 153",   // 2 sign-in
-  "56, 189, 248",   // 3 AI model — sky
-  "217, 70, 239",   // 4 modes — fuchsia
-  "251, 191, 36",   // 5 hotkey — amber
-  "244, 114, 182",  // 6 apps pick — pink
-  "139, 92, 246",   // 7 tones — indigo
-  "234, 179, 8",    // 8 vocab — yellow
-  "59, 130, 246",   // 9 history — blue
-  "168, 162, 158",  // 10 prefs — stone
-  "236, 72, 153",   // 11 generate — rose
-  "16, 185, 129",   // 12 done — green
+  "168, 85, 247", // 0 welcome
+  "34, 211, 238", // 1 mic
+  "52, 211, 153", // 2 sign-in
+  "56, 189, 248", // 3 AI model — sky
+  "217, 70, 239", // 4 modes — fuchsia
+  "251, 191, 36", // 5 hotkey — amber
+  "244, 114, 182", // 6 apps pick — pink
+  "139, 92, 246", // 7 tones — indigo
+  "234, 179, 8", // 8 vocab — yellow
+  "59, 130, 246", // 9 history — blue
+  "168, 162, 158", // 10 prefs — stone
+  "236, 72, 153", // 11 generate — rose
+  "16, 185, 129", // 12 done — green
 ];
 
 export default function Onboarding() {
@@ -174,20 +196,34 @@ function ProgressDots() {
 
 function StepBody({ step }: { step: number }) {
   switch (step) {
-    case 0: return <Welcome />;
-    case 1: return <Permissions />;
-    case 2: return <SignInStep />;
-    case 3: return <AIStep />;
-    case 4: return <ModesIntro />;
-    case 5: return <HotkeyStep />;
-    case 6: return <AppsPick />;
-    case 7: return <ToneEach />;
-    case 8: return <VocabStep />;
-    case 9: return <HistoryStep />;
-    case 10: return <PreferencesStep />;
-    case 11: return <Generate />;
-    case 12: return <TestRecording />;
-    default: return null;
+    case 0:
+      return <Welcome />;
+    case 1:
+      return <Permissions />;
+    case 2:
+      return <SignInStep />;
+    case 3:
+      return <AIStep />;
+    case 4:
+      return <ModesIntro />;
+    case 5:
+      return <HotkeyStep />;
+    case 6:
+      return <AppsPick />;
+    case 7:
+      return <ToneEach />;
+    case 8:
+      return <VocabStep />;
+    case 9:
+      return <HistoryStep />;
+    case 10:
+      return <PreferencesStep />;
+    case 11:
+      return <Generate />;
+    case 12:
+      return <TestRecording />;
+    default:
+      return null;
   }
 }
 
@@ -323,10 +359,9 @@ function Welcome() {
         </Button>
       </div>
       <p className="mx-auto mt-6 max-w-md text-xs text-text-muted">
-        Quick start uses our defaults: cloud AI (audio is sent to our cloud
-        just long enough to transcribe), hold-to-talk hotkey, and transcript
-        history on. Everything can be changed later in Settings — including
-        switching to fully-local AI.
+        Quick start uses our defaults: cloud AI (audio is sent to our cloud just long enough to
+        transcribe), hold-to-talk hotkey, and transcript history on. Everything can be changed later
+        in Settings — including switching to fully-local AI.
       </p>
     </div>
   );
@@ -407,11 +442,7 @@ function Permissions() {
           </Button>
         </CardContent>
       </Card>
-      <NavRow
-        onBack={back}
-        onPrimary={next}
-        primaryDisabled={permission !== "granted"}
-      />
+      <NavRow onBack={back} onPrimary={next} primaryDisabled={permission !== "granted"} />
     </div>
   );
 }
@@ -461,7 +492,9 @@ function SignInStep() {
           </div>
           <div className="flex-1">
             <div className="text-sm font-medium">{user?.email ?? "Signed in"}</div>
-            <div className="text-xs text-text-muted">Sign in on another machine to pick up where you left off.</div>
+            <div className="text-xs text-text-muted">
+              Sign in on another machine to pick up where you left off.
+            </div>
           </div>
           <Badge variant="success">Synced</Badge>
         </CardContent>
@@ -528,10 +561,14 @@ function HotkeyStep() {
           <div className="flex items-center justify-between rounded-md border border-border-subtle bg-bg-elevated px-4 py-3">
             <div>
               <div className="text-sm font-medium">Recording pill position</div>
-              <div className="text-xs text-text-muted">Where the little overlay sits while you talk.</div>
+              <div className="text-xs text-text-muted">
+                Where the little overlay sits while you talk.
+              </div>
             </div>
             <Select value={pos} onValueChange={(v) => setPos(v as OverlayPosition)}>
-              <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
+              <SelectTrigger className="w-40">
+                <SelectValue />
+              </SelectTrigger>
               <SelectContent>
                 <SelectItem value="bottom-center">Bottom center</SelectItem>
                 <SelectItem value="top-center">Top center</SelectItem>
@@ -628,7 +665,10 @@ function ToneEach() {
   if (chosen.length === 0) {
     return (
       <div>
-        <StepHeading title="No apps picked" subtitle="You can add app rules later from Modes → Apps." />
+        <StepHeading
+          title="No apps picked"
+          subtitle="You can add app rules later from Modes → Apps."
+        />
         <NavRow onBack={back} onPrimary={next} />
       </div>
     );
@@ -739,9 +779,7 @@ function Generate() {
       <motion.div
         animate={{ rotate: stage < 3 ? 360 : 0, scale: stage === 3 ? [1, 1.1, 1] : 1 }}
         transition={
-          stage < 3
-            ? { duration: 1.5, repeat: Infinity, ease: "linear" }
-            : { duration: 0.4 }
+          stage < 3 ? { duration: 1.5, repeat: Infinity, ease: "linear" } : { duration: 0.4 }
         }
         className="mx-auto mb-8 flex h-16 w-16 items-center justify-center rounded-pill bg-gradient-to-br from-accent-start to-accent-end shadow-glow"
       >
@@ -786,8 +824,8 @@ function TestRecording() {
             <Kbd>{KEY_LABEL[k] ?? k}</Kbd>
           </span>
         ))}{" "}
-        anywhere on {osName()} and say something. The pill will
-        appear, your voice will type itself wherever your cursor is.
+        anywhere on {osName()} and say something. The pill will appear, your voice will type itself
+        wherever your cursor is.
       </p>
       <p className="mt-2 text-xs text-text-muted">
         Tweak your modes, vocabulary, and per-app tones any time from the sidebar.
@@ -887,10 +925,9 @@ function AIStep() {
             <ShieldCheck className="h-4 w-4" />
           </span>
           <div className="text-xs leading-relaxed text-text-secondary">
-            <span className="font-medium text-text-primary">Privacy:</span> cloud
-            mode sends audio to our Azure endpoint just long enough to transcribe
-            — we never store the raw recording. Local mode keeps everything on
-            your computer, even when you're offline.
+            <span className="font-medium text-text-primary">Privacy:</span> cloud mode sends audio
+            to our Azure endpoint just long enough to transcribe — we never store the raw recording.
+            Local mode keeps everything on your computer, even when you're offline.
           </div>
         </CardContent>
       </Card>
@@ -916,7 +953,9 @@ function AIStep() {
               <span
                 className={cn(
                   "flex h-9 w-9 shrink-0 items-center justify-center rounded-md",
-                  selected ? "bg-accent-solid/20 text-accent-solid" : "bg-bg-base text-text-secondary",
+                  selected
+                    ? "bg-accent-solid/20 text-accent-solid"
+                    : "bg-bg-base text-text-secondary",
                 )}
               >
                 <opt.Icon className="h-4 w-4" />
@@ -935,7 +974,9 @@ function AIStep() {
               <span
                 className={cn(
                   "mt-1 flex h-4 w-4 shrink-0 items-center justify-center rounded-pill border",
-                  selected ? "border-transparent bg-accent-solid text-white" : "border-border-strong",
+                  selected
+                    ? "border-transparent bg-accent-solid text-white"
+                    : "border-border-strong",
                 )}
               >
                 {selected && <Check className="h-3 w-3" strokeWidth={3} />}
@@ -957,10 +998,10 @@ function AIStep() {
             <Wand2 className="h-4 w-4" />
           </span>
           <div className="text-xs leading-relaxed text-text-secondary">
-            After transcription, a language model rewrites the raw text using
-            the active Mode — fixing grammar, removing fillers, and shaping the
-            tone. Cloud uses Azure GPT and is fastest. Local uses your own
-            Ollama install so the polish step also stays on your machine.
+            After transcription, a language model rewrites the raw text using the active Mode —
+            fixing grammar, removing fillers, and shaping the tone. Cloud uses Azure GPT and is
+            fastest. Local uses your own Ollama install so the polish step also stays on your
+            machine.
           </div>
         </CardContent>
       </Card>
@@ -973,14 +1014,19 @@ function AIStep() {
                 ? "Azure GPT — fastest, no setup."
                 : cleanup === "local-ollama"
                   ? "Local Ollama on this machine."
-                  : "No AI polish — you get the raw transcript as spoken."}
+                  : cleanup === "local-llama-cpp"
+                    ? "Local llama.cpp on this machine."
+                    : "No AI polish — you get the raw transcript as spoken."}
             </div>
           </div>
           <Select value={cleanup} onValueChange={(v) => chooseCleanup(v as CleanupChoice)}>
-            <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
+            <SelectTrigger className="w-44">
+              <SelectValue />
+            </SelectTrigger>
             <SelectContent>
               <SelectItem value="cloud">Cloud (Azure)</SelectItem>
               <SelectItem value="local-ollama">Local Ollama</SelectItem>
+              <SelectItem value="local-llama-cpp">Local llama.cpp</SelectItem>
               <SelectItem value="none">None — raw text</SelectItem>
             </SelectContent>
           </Select>
@@ -998,7 +1044,9 @@ function OllamaConfig() {
   const [host, setHost] = useState(getOllamaHost());
   const [model, setModel] = useState(getOllamaModel());
   const [models, setModels] = useState<OllamaModelInfo[]>([]);
-  const [status, setStatus] = useState<"idle" | "ok" | "unreachable" | "forbidden" | "http-error">("idle");
+  const [status, setStatus] = useState<"idle" | "ok" | "unreachable" | "forbidden" | "http-error">(
+    "idle",
+  );
   const [checking, setChecking] = useState(false);
 
   const check = async (h: string) => {
@@ -1045,8 +1093,8 @@ function OllamaConfig() {
             <div className="text-sm font-medium">Ollama setup</div>
             <div className="text-xs text-text-muted">
               Install Ollama from ollama.com, then{" "}
-              <span className="font-mono text-text-secondary">ollama pull qwen3.5:4b</span>{" "}
-              (or any other model).
+              <span className="font-mono text-text-secondary">ollama pull qwen3.5:4b</span> (or any
+              other model).
             </div>
           </div>
           <a
@@ -1066,7 +1114,12 @@ function OllamaConfig() {
             placeholder="http://localhost:11434"
             className="font-mono text-xs"
           />
-          <Button variant="secondary" size="sm" onClick={() => void check(host)} disabled={checking}>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => void check(host)}
+            disabled={checking}
+          >
             {checking && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
             Test
           </Button>
@@ -1076,22 +1129,26 @@ function OllamaConfig() {
           <div className="text-xs">
             {status === "ok" && (
               <span className="inline-flex items-center gap-1 text-success">
-                <CheckCircle2 className="h-3.5 w-3.5" /> Reachable · {models.length} model{models.length === 1 ? "" : "s"} installed
+                <CheckCircle2 className="h-3.5 w-3.5" /> Reachable · {models.length} model
+                {models.length === 1 ? "" : "s"} installed
               </span>
             )}
             {status === "unreachable" && (
               <span className="inline-flex items-center gap-1 text-danger">
-                <AlertTriangle className="h-3.5 w-3.5" /> Can't reach Ollama — is it running? Troubleshoot in Settings → AI.
+                <AlertTriangle className="h-3.5 w-3.5" /> Can't reach Ollama — is it running?
+                Troubleshoot in Settings → AI.
               </span>
             )}
             {status === "forbidden" && (
               <span className="inline-flex items-center gap-1 text-danger">
-                <AlertTriangle className="h-3.5 w-3.5" /> Ollama rejected the origin (allow tauri://localhost). Fix steps in Settings → AI model.
+                <AlertTriangle className="h-3.5 w-3.5" /> Ollama rejected the origin (allow
+                tauri://localhost). Fix steps in Settings → AI model.
               </span>
             )}
             {status === "http-error" && (
               <span className="inline-flex items-center gap-1 text-danger">
-                <AlertTriangle className="h-3.5 w-3.5" /> Ollama responded with an error. Check details in Settings → AI.
+                <AlertTriangle className="h-3.5 w-3.5" /> Ollama responded with an error. Check
+                details in Settings → AI.
               </span>
             )}
             {status === "idle" && <span className="text-text-muted">Checking…</span>}
@@ -1102,7 +1159,9 @@ function OllamaConfig() {
           <div>
             <div className="mb-1 text-xs font-medium text-text-secondary">Model</div>
             <Select value={model} onValueChange={commitModel}>
-              <SelectTrigger><SelectValue placeholder="Pick an installed model" /></SelectTrigger>
+              <SelectTrigger>
+                <SelectValue placeholder="Pick an installed model" />
+              </SelectTrigger>
               <SelectContent>
                 {models.map((m) => (
                   <SelectItem key={m.name} value={m.name}>
@@ -1182,7 +1241,9 @@ function LocalWhisperInstaller() {
       await installWhisperRuntime();
       toast.success("Runtime installed");
     } catch (e) {
-      toast.error("Couldn't install runtime", { description: e instanceof Error ? e.message : String(e) });
+      toast.error("Couldn't install runtime", {
+        description: e instanceof Error ? e.message : String(e),
+      });
       setRtProgress(null);
     }
   };
@@ -1224,7 +1285,9 @@ function LocalWhisperInstaller() {
             ) : rtProgress ? (
               <Button variant="secondary" size="sm" disabled>
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                {rtProgress.total > 0 ? `${Math.round((rtProgress.downloaded / rtProgress.total) * 100)}%` : "Starting…"}
+                {rtProgress.total > 0
+                  ? `${Math.round((rtProgress.downloaded / rtProgress.total) * 100)}%`
+                  : "Starting…"}
               </Button>
             ) : (
               <Button variant="primary" size="sm" onClick={() => void installRuntime()}>
@@ -1241,7 +1304,9 @@ function LocalWhisperInstaller() {
 
         <div className="border-t border-border-subtle pt-3">
           <div className="text-sm font-medium">Model</div>
-          <div className="text-xs text-text-muted">Bigger = more accurate, slower. Download once, use forever.</div>
+          <div className="text-xs text-text-muted">
+            Bigger = more accurate, slower. Download once, use forever.
+          </div>
           <div className="mt-3 grid grid-cols-2 gap-1.5">
             {WHISPER_TIERS.map((meta) => {
               const isInstalled = !!models.find((m) => m.tier === meta.tier)?.installed;
@@ -1274,7 +1339,9 @@ function LocalWhisperInstaller() {
           <div className="mt-3 flex items-center justify-between gap-3 rounded-md border border-border-subtle bg-bg-elevated px-3 py-2">
             <div className="min-w-0 text-xs">
               <div className="font-medium">{WHISPER_TIERS.find((t) => t.tier === tier)?.blurb}</div>
-              <div className="text-text-muted">Best for: {WHISPER_TIERS.find((t) => t.tier === tier)?.recommendedFor}</div>
+              <div className="text-text-muted">
+                Best for: {WHISPER_TIERS.find((t) => t.tier === tier)?.recommendedFor}
+              </div>
             </div>
             {installed ? (
               <Badge variant="success" className="inline-flex items-center gap-1">
@@ -1283,7 +1350,9 @@ function LocalWhisperInstaller() {
             ) : dlProgress ? (
               <Button variant="secondary" size="sm" disabled>
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                {dlProgress.total > 0 ? `${Math.round((dlProgress.downloaded / dlProgress.total) * 100)}%` : "Starting…"}
+                {dlProgress.total > 0
+                  ? `${Math.round((dlProgress.downloaded / dlProgress.total) * 100)}%`
+                  : "Starting…"}
               </Button>
             ) : (
               <Button variant="primary" size="sm" onClick={() => void downloadModel()}>
@@ -1311,10 +1380,7 @@ function LocalParakeetInstaller() {
 
   const refresh = async () => {
     try {
-      const [rt, m] = await Promise.all([
-        isParakeetRuntimeInstalled(),
-        listParakeetModels(),
-      ]);
+      const [rt, m] = await Promise.all([isParakeetRuntimeInstalled(), listParakeetModels()]);
       setRuntimeInstalled(rt);
       setModels(m.map((x) => ({ variant: x.variant, installed: x.installed })));
     } catch {
@@ -1324,9 +1390,8 @@ function LocalParakeetInstaller() {
 
   useEffect(() => {
     void refresh();
-    const offRtP = listen<{ downloaded: number; total: number }>(
-      "parakeet:runtime:progress",
-      (e) => setRtProgress(e.payload),
+    const offRtP = listen<{ downloaded: number; total: number }>("parakeet:runtime:progress", (e) =>
+      setRtProgress(e.payload),
     );
     const offRtD = listen<string>("parakeet:runtime:complete", () => {
       setRtProgress(null);
@@ -1354,7 +1419,9 @@ function LocalParakeetInstaller() {
       await installParakeetRuntime();
       toast.success("Sherpa-onnx runtime installed");
     } catch (e) {
-      toast.error("Couldn't install runtime", { description: e instanceof Error ? e.message : String(e) });
+      toast.error("Couldn't install runtime", {
+        description: e instanceof Error ? e.message : String(e),
+      });
       setRtProgress(null);
     }
   };
@@ -1455,7 +1522,9 @@ function InstallRow({
         ) : progress ? (
           <Button variant="secondary" size="sm" disabled>
             <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            {progress.total > 0 ? `${Math.round((progress.downloaded / progress.total) * 100)}%` : "Starting…"}
+            {progress.total > 0
+              ? `${Math.round((progress.downloaded / progress.total) * 100)}%`
+              : "Starting…"}
           </Button>
         ) : (
           <Button variant="primary" size="sm" onClick={onInstall} disabled={disabled}>
@@ -1475,19 +1544,51 @@ function InstallRow({
 // ─── Step: Modes intro ───────────────────────────────────────────────────
 
 const DEFAULT_MODES: Array<{ name: string; description: string; Icon: typeof Mail }> = [
-  { name: "Default", description: "Light cleanup — fixes fillers and grammar, preserves tone.", Icon: Sparkles },
-  { name: "Casual", description: "Clear, friendly sentences. No formalities.", Icon: MessageCircle },
-  { name: "Very Casual", description: "Texting energy — lowercase, minimal punctuation.", Icon: Smile },
-  { name: "Formal", description: "Professional prose. Polished but not email-shaped.", Icon: GraduationCap },
+  {
+    name: "Default",
+    description: "Light cleanup — fixes fillers and grammar, preserves tone.",
+    Icon: Sparkles,
+  },
+  {
+    name: "Casual",
+    description: "Clear, friendly sentences. No formalities.",
+    Icon: MessageCircle,
+  },
+  {
+    name: "Very Casual",
+    description: "Texting energy — lowercase, minimal punctuation.",
+    Icon: Smile,
+  },
+  {
+    name: "Formal",
+    description: "Professional prose. Polished but not email-shaped.",
+    Icon: GraduationCap,
+  },
   { name: "Formal Email", description: "Greeting, body, sign-off — the full shape.", Icon: Mail },
   { name: "Slack Message", description: "Short, casual, optional emoji.", Icon: MessageSquare },
   { name: "Code Comment", description: "Imperative, concise, ~80 char wrap.", Icon: CodeIcon },
-  { name: "Notes", description: "Brain-dump friendly. Bullets where they help.", Icon: NotebookPen },
+  {
+    name: "Notes",
+    description: "Brain-dump friendly. Bullets where they help.",
+    Icon: NotebookPen,
+  },
   { name: "Bullet Points", description: "Clean bulleted list, one idea per bullet.", Icon: List },
   { name: "Tweet / X Post", description: "Punchy, under 280 chars, no hashtag spam.", Icon: Hash },
-  { name: "LinkedIn Post", description: "Professional but warm. Short paragraphs.", Icon: Briefcase },
-  { name: "Meeting Note", description: "Decisions + action items, stripped of filler.", Icon: ClipboardList },
-  { name: "Translate → English", description: "Speak any language, get clean English back.", Icon: Languages },
+  {
+    name: "LinkedIn Post",
+    description: "Professional but warm. Short paragraphs.",
+    Icon: Briefcase,
+  },
+  {
+    name: "Meeting Note",
+    description: "Decisions + action items, stripped of filler.",
+    Icon: ClipboardList,
+  },
+  {
+    name: "Translate → English",
+    description: "Speak any language, get clean English back.",
+    Icon: Languages,
+  },
 ];
 
 function ModesIntro() {
@@ -1541,10 +1642,9 @@ function VocabStep() {
   const remove = useVocabulary((s) => s.remove);
   const [draft, setDraft] = useState({ term: "", replacement: "" });
 
-  const has = (term: string) =>
-    terms.some((t) => t.term.toLowerCase() === term.toLowerCase());
+  const has = (term: string) => terms.some((t) => t.term.toLowerCase() === term.toLowerCase());
 
-  const addSuggested = async (s: typeof SUGGESTED_VOCAB[number]) => {
+  const addSuggested = async (s: (typeof SUGGESTED_VOCAB)[number]) => {
     if (has(s.term)) return;
     await add({ term: s.term, replacement: s.replacement, notes: s.notes });
   };
@@ -1581,7 +1681,11 @@ function VocabStep() {
                       : "border-border-subtle bg-bg-elevated text-text-secondary hover:border-accent-solid/60 hover:text-text-primary",
                   )}
                 >
-                  {added ? <Check className="h-3 w-3" strokeWidth={3} /> : <Plus className="h-3 w-3" />}
+                  {added ? (
+                    <Check className="h-3 w-3" strokeWidth={3} />
+                  ) : (
+                    <Plus className="h-3 w-3" />
+                  )}
                   <span className="font-mono">{s.term}</span>
                   {s.replacement ? (
                     <>
@@ -1614,7 +1718,12 @@ function VocabStep() {
               onChange={(e) => setDraft((d) => ({ ...d, replacement: e.target.value }))}
               onKeyDown={(e) => e.key === "Enter" && void addDraft()}
             />
-            <Button variant="secondary" size="sm" onClick={() => void addDraft()} disabled={!draft.term.trim()}>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => void addDraft()}
+              disabled={!draft.term.trim()}
+            >
               <Plus className="h-3.5 w-3.5" /> Add
             </Button>
           </div>
@@ -1645,12 +1754,7 @@ function VocabStep() {
           )}
         </CardContent>
       </Card>
-      <NavRow
-        onBack={back}
-        onPrimary={next}
-        secondaryLabel="Skip"
-        onSecondary={next}
-      />
+      <NavRow onBack={back} onPrimary={next} secondaryLabel="Skip" onSecondary={next} />
     </div>
   );
 }
@@ -1678,9 +1782,9 @@ function HistoryStep() {
             <HistoryIcon className="h-4 w-4" />
           </span>
           <div className="text-xs leading-relaxed text-text-secondary">
-            Good for finding "that thing I dictated yesterday," reusing common
-            messages, or pasting an old transcript into a different app. We
-            never store the raw audio — only the cleaned-up text.
+            Good for finding "that thing I dictated yesterday," reusing common messages, or pasting
+            an old transcript into a different app. We never store the raw audio — only the
+            cleaned-up text.
           </div>
         </CardContent>
       </Card>
@@ -1739,13 +1843,11 @@ function PreferencesStep() {
           >
             <Switch checked={autostart} onCheckedChange={(v) => void toggleAutostart(v)} />
           </PrefRow>
-          <PrefRow
-            Icon={Palette}
-            title="Theme"
-            description="Match your system or pick a side."
-          >
+          <PrefRow Icon={Palette} title="Theme" description="Match your system or pick a side.">
             <Select value={theme} onValueChange={(v) => setTheme(v as Theme)}>
-              <SelectTrigger className="w-32"><SelectValue /></SelectTrigger>
+              <SelectTrigger className="w-32">
+                <SelectValue />
+              </SelectTrigger>
               <SelectContent>
                 <SelectItem value="dark">Dark</SelectItem>
                 <SelectItem value="light">Light</SelectItem>

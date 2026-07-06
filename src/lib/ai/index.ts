@@ -18,17 +18,19 @@ import {
   getLocalWhisperTier,
   type WhisperTier,
 } from "./localWhisper";
+import { OllamaProvider, getCleanupProviderKind, getOllamaHost, getOllamaModel } from "./ollama";
+import { LlamaCppProvider, getLlamaCppModel } from "./llamaCpp";
 import {
-  OllamaProvider,
-  getCleanupProviderKind,
-  getOllamaHost,
-  getOllamaModel,
-} from "./ollama";
-import { ParakeetProvider, getParakeetLanguage, getParakeetVariant, type ParakeetVariant } from "./parakeet";
+  ParakeetProvider,
+  getParakeetLanguage,
+  getParakeetVariant,
+  type ParakeetVariant,
+} from "./parakeet";
 import type { Mode } from "../../types/mode";
 
 export * from "./localWhisper";
 export * from "./ollama";
+export * from "./llamaCpp";
 export * from "./parakeet";
 
 const TRANSCRIBE_TIMEOUT_MS = 10 * 60 * 1000; // 10 min — covers long recordings; whisper auto-chunks anyway.
@@ -210,6 +212,7 @@ export class SupabaseAIProvider implements AIProvider {
 let cloudCache: SupabaseAIProvider | null = null;
 const localWhisperByTier = new Map<WhisperTier, LocalWhisperProvider>();
 const ollamaByKey = new Map<string, OllamaProvider>();
+const llamaCppByModel = new Map<string, LlamaCppProvider>();
 const parakeetByKey = new Map<string, ParakeetProvider>();
 
 function getCloud(): SupabaseAIProvider {
@@ -247,6 +250,15 @@ function transcribeProvider(mode?: Mode | null): AIProvider {
 function cleanupProvider(mode?: Mode | null): AIProvider {
   const kind = mode?.cleanupProviderOverride ?? getCleanupProviderKind();
   if (kind === "cloud") return getCloud();
+  if (kind === "local-llama-cpp") {
+    const model = getLlamaCppModel();
+    let p = llamaCppByModel.get(model);
+    if (!p) {
+      p = new LlamaCppProvider({ model });
+      llamaCppByModel.set(model, p);
+    }
+    return p;
+  }
   const host = getOllamaHost();
   const model = mode?.ollamaModelOverride ?? getOllamaModel();
   const key = `${host}|${model}`;
@@ -256,6 +268,14 @@ function cleanupProvider(mode?: Mode | null): AIProvider {
     ollamaByKey.set(key, p);
   }
   return p;
+}
+
+export async function testTranscriptionProvider(mode?: Mode | null): Promise<ProviderHealth> {
+  return transcribeProvider(mode).health();
+}
+
+export async function testCleanupProvider(mode?: Mode | null): Promise<ProviderHealth> {
+  return cleanupProvider(mode).health();
 }
 
 /**

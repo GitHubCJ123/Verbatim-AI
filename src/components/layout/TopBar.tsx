@@ -6,6 +6,9 @@ import { Avatar, AvatarFallback, AvatarImage } from "../ui/Avatar";
 import { Kbd } from "../ui/Kbd";
 import { useProfile, initials } from "../../lib/store/useProfile";
 import { useTheme } from "../../lib/theme";
+import { useModes } from "../../lib/store/useModes";
+import { startRecording } from "../../lib/recording-bridge";
+import { hotkeyDisplayParts, loadHotkeyConfig } from "../../lib/hotkey";
 
 const routeLabels: Record<string, string> = {
   "": "Home",
@@ -24,6 +27,9 @@ export function TopBar() {
   const initialsText = profile ? initials() : "SW";
   const segments = pathname.split("/").filter(Boolean);
   const crumbs = segments.length === 0 ? ["Home"] : segments.map((s) => routeLabels[s] ?? s);
+  const modes = useModes((s) => s.modes);
+  const defaultModeId = useModes((s) => s.defaultModeId);
+  const defaultMode = modes.find((m) => m.id === defaultModeId) ?? modes[0];
 
   return (
     <header className="flex h-14 shrink-0 items-center justify-between border-b border-border-subtle bg-bg-base/60 px-6 backdrop-blur-xl">
@@ -49,10 +55,17 @@ export function TopBar() {
       {/* Right cluster */}
       <div className="flex items-center gap-2">
         <ThemeToggle />
-        <Button variant="secondary" size="sm" className="gap-1.5">
+        <Button
+          variant="secondary"
+          size="sm"
+          className="gap-1.5"
+          onClick={() =>
+            void startRecording(defaultMode?.name ?? "Default", defaultMode?.id ?? null)
+          }
+        >
           <Mic className="h-3.5 w-3.5" />
           <span>Record now</span>
-          <Kbd className="ml-1">Ctrl Space</Kbd>
+          <Kbd className="ml-1">{hotkeyDisplayParts(loadHotkeyConfig().spec).join(" ")}</Kbd>
         </Button>
         <Avatar className="h-8 w-8">
           {profile?.avatar_url && <AvatarImage src={profile.avatar_url} alt={initialsText} />}

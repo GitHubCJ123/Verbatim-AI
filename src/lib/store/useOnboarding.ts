@@ -95,13 +95,22 @@ for (const a of COMMON_APPS) {
 
 const TOTAL_STEPS = 13;
 
+// Platform default hotkey. Duplicated from lib/hotkey.ts rather than
+// imported — hotkey.ts imports this module (isOnboardingComplete), and
+// this value is read at store creation, so an import would be a
+// module-init cycle. Keep in sync with DEFAULT_SPEC there.
+const DEFAULT_HOTKEY =
+  typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform)
+    ? "Control+Shift+Space"
+    : "CommandOrControl+Space";
+
 export const useOnboarding = create<OnboardingState>((set, get) => {
   const initial = loadProgress();
   return {
     step: initial.step,
     completed: initial.completed,
     micPermission: "unknown",
-    hotkey: "CommandOrControl+Space",
+    hotkey: DEFAULT_HOTKEY,
     pushToTalk: true,
     picks: defaultPicks,
     tones: defaultTones,

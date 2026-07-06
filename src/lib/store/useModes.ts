@@ -80,7 +80,7 @@ interface RemoteMode {
   updated_at: string;
   transcribe_provider: "cloud" | "local-whisper" | "local-parakeet" | null;
   whisper_tier: "tiny" | "base" | "small" | "turbo" | "large-v3" | null;
-  cleanup_provider: "cloud" | "local-ollama" | null;
+  cleanup_provider: "cloud" | "local-ollama" | "local-llama-cpp" | null;
   ollama_model: string | null;
 }
 
@@ -203,9 +203,7 @@ export const useModes = create<ModesState>((set, get) => ({
           }
         }
         const stored = localStorage.getItem(LS_DEFAULT_MODE);
-        const defId = modes.some((m) => m.id === stored)
-          ? stored
-          : (modes[0]?.id ?? null);
+        const defId = modes.some((m) => m.id === stored) ? stored : (modes[0]?.id ?? null);
         if (defId) localStorage.setItem(LS_DEFAULT_MODE, defId);
         set({ modes, defaultModeId: defId, loading: false });
         return;
@@ -218,9 +216,7 @@ export const useModes = create<ModesState>((set, get) => ({
       const modes = (data as RemoteMode[]).map(rowToMode);
       saveModesCache(modes);
       const stored = localStorage.getItem(LS_DEFAULT_MODE);
-      const defId = modes.some((m) => m.id === stored)
-        ? stored
-        : (modes[0]?.id ?? null);
+      const defId = modes.some((m) => m.id === stored) ? stored : (modes[0]?.id ?? null);
       if (defId) localStorage.setItem(LS_DEFAULT_MODE, defId);
       set({ modes, defaultModeId: defId, loading: false });
     } catch (e) {
@@ -286,10 +282,7 @@ export const useModes = create<ModesState>((set, get) => ({
       return;
     }
     const userId = requireUserId();
-    const { error } = await supabase
-      .from("modes")
-      .update(modeToRow(merged, userId))
-      .eq("id", id);
+    const { error } = await supabase.from("modes").update(modeToRow(merged, userId)).eq("id", id);
     if (error) throw new Error(error.message);
     const next = get().modes.map((m) => (m.id === id ? merged : m));
     saveModesCache(next);
@@ -361,7 +354,9 @@ interface VocabularyState {
   add: (input: Pick<VocabularyTerm, "term"> & Partial<VocabularyTerm>) => Promise<VocabularyTerm>;
   update: (id: string, patch: Partial<VocabularyTerm>) => Promise<void>;
   remove: (id: string) => Promise<void>;
-  importMany: (inputs: Array<Pick<VocabularyTerm, "term"> & Partial<VocabularyTerm>>) => Promise<number>;
+  importMany: (
+    inputs: Array<Pick<VocabularyTerm, "term"> & Partial<VocabularyTerm>>,
+  ) => Promise<number>;
 }
 
 export const useVocabulary = create<VocabularyState>((set, get) => ({

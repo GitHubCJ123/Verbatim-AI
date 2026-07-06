@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { Mic, Loader2, Sparkles, Check, AlertCircle } from "lucide-react";
+import { Mic, Loader2, Sparkles, Check, AlertCircle, ShieldCheck, Cloud } from "lucide-react";
 import { Waveform } from "./Waveform";
 import type { AudioController } from "../../lib/audio";
 import type { RecordingState } from "../../lib/store/useRecording";
+import type { DataLocality } from "../../lib/privacyStatus";
 import { cn } from "../../lib/utils";
 
 interface RecordingPillProps {
@@ -13,6 +14,8 @@ interface RecordingPillProps {
   controller?: AudioController | null;
   /** Optional error message for the error state. */
   error?: string | null;
+  /** Where this recording's content goes (resolved per-mode). */
+  privacy?: DataLocality | null;
 }
 
 function formatDuration(ms: number) {
@@ -43,7 +46,7 @@ function useElapsed(active: boolean) {
   return elapsed;
 }
 
-export function RecordingPill({ state, modeName, controller, error }: RecordingPillProps) {
+export function RecordingPill({ state, modeName, controller, error, privacy }: RecordingPillProps) {
   const elapsed = useElapsed(state === "recording");
 
   // Stable getter for the waveform that survives controller swaps.
@@ -128,7 +131,20 @@ export function RecordingPill({ state, modeName, controller, error }: RecordingP
             <div className="font-mono text-xs tabular-nums text-text-primary">
               {state === "recording" ? formatDuration(elapsed) : ""}
             </div>
-            <div className="max-w-[110px] truncate text-[10px] text-text-muted">{modeName}</div>
+            <div className="flex items-center gap-1 text-[10px] text-text-muted">
+              {privacy === "local" ? (
+                <ShieldCheck
+                  className="h-3 w-3 shrink-0 text-success"
+                  aria-label="Fully on-device"
+                />
+              ) : privacy ? (
+                <Cloud
+                  className="h-3 w-3 shrink-0"
+                  aria-label={privacy === "cloud" ? "Cloud processing" : "Partly cloud processing"}
+                />
+              ) : null}
+              <span className="max-w-[96px] truncate">{modeName}</span>
+            </div>
           </div>
         </motion.div>
       )}

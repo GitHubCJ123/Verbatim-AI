@@ -58,30 +58,41 @@ async function getOverlay(): Promise<Window | null> {
   }
 }
 
-export async function startRecording(modeName = "Default", modeId: string | null = null) {
+export async function startRecording(
+  modeName = "Default",
+  modeId: string | null = null,
+  pressedAt: number = Date.now(),
+) {
   const overlay = await getOverlay();
   if (!overlay) return;
-  const targetMonitor = await getCursorMonitor();
 
-  // Capture the foreground window *before* showing the overlay, so we
-  // can paste back into it. The overlay has `focus: false` so showing
-  // it shouldn't steal focus — but Windows isn't always cooperative,
-  // and capturing first is the safest pattern (plan §14).
-  try {
-    await invoke("capture_target_window");
-  } catch {
-    /* ignore */
-  }
-
-  try {
-    await overlay.setSize(new PhysicalSize(OVERLAY_PILL_SIZE.width, OVERLAY_PILL_SIZE.height));
-    await positionOverlay(overlay, targetMonitor);
-  } catch {
-    /* best-effort */
-  }
-  await overlay.show();
+  // Latency is the product: tell the overlay to open the mic FIRST.
+  // The overlay window exists hidden and can run getUserMedia before it
+  // is visible, so audio capture doesn't wait on window chrome
+  // (docs/improvement-plan/04-performance-latency.md, Fix 1).
   await waitForOverlayReady();
-  await emit("recording:start", { modeName, modeId });
+  const audioStarted = emit("recording:start", { modeName, modeId, pressedAt });
+
+  // Window chrome runs concurrently with mic acquisition. Within this
+  // chain the order still matters: capture the foreground window
+  // *before* showing the overlay so we can paste back into it (plan §14).
+  const chrome = (async () => {
+    try {
+      await invoke("capture_target_window");
+    } catch {
+      /* ignore */
+    }
+    try {
+      const targetMonitor = await getCursorMonitor();
+      await overlay.setSize(new PhysicalSize(OVERLAY_PILL_SIZE.width, OVERLAY_PILL_SIZE.height));
+      await positionOverlay(overlay, targetMonitor);
+    } catch {
+      /* best-effort */
+    }
+    await overlay.show();
+  })();
+
+  await Promise.all([audioStarted, chrome]);
 }
 
 export async function stopRecording() {

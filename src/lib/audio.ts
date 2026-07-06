@@ -8,6 +8,7 @@
  *
  * Spec: plan §12 (Audio Pipeline).
  */
+import { isPerfDebugEnabled } from "./preferences";
 
 export interface AudioControllerOptions {
   deviceId?: string;
@@ -34,6 +35,69 @@ export interface AudioController {
   cancel: () => void;
 }
 
+/**
+ * Keep-warm mic cache (docs/improvement-plan/04-performance-latency.md,
+ * Fix 2). Acquiring a MediaStream cold costs 300–1000 ms — the dominant
+ * chunk of hotkey→listening latency. After a recording ends we park the
+ * stream + AudioContext for a short window and reuse them if the next
+ * dictation starts soon after, making back-to-back dictations instant.
+ * Trade-off: the OS mic-in-use indicator stays on for the window.
+ */
+const KEEP_WARM_MS = 30_000;
+
+interface WarmMic {
+  stream: MediaStream;
+  ctx: AudioContext;
+  /** Device key the stream was opened with ("" = system default). */
+  deviceKey: string;
+  timer: ReturnType<typeof setTimeout>;
+}
+
+let warm: WarmMic | null = null;
+
+function discardWarm() {
+  if (!warm) return;
+  clearTimeout(warm.timer);
+  warm.stream.getTracks().forEach((t) => t.stop());
+  void warm.ctx.close().catch(() => {});
+  warm = null;
+}
+
+function takeWarm(deviceKey: string): { stream: MediaStream; ctx: AudioContext } | null {
+  if (!warm) return null;
+  const usable =
+    warm.deviceKey === deviceKey &&
+    warm.stream.getAudioTracks().some((t) => t.readyState === "live");
+  if (!usable) {
+    discardWarm();
+    return null;
+  }
+  clearTimeout(warm.timer);
+  const { stream, ctx } = warm;
+  warm = null;
+  return { stream, ctx };
+}
+
+function parkWarm(stream: MediaStream, ctx: AudioContext, deviceKey: string) {
+  discardWarm();
+  if (!stream.getAudioTracks().some((t) => t.readyState === "live")) {
+    stream.getTracks().forEach((t) => t.stop());
+    void ctx.close().catch(() => {});
+    return;
+  }
+  warm = {
+    stream,
+    ctx,
+    deviceKey,
+    timer: setTimeout(discardWarm, KEEP_WARM_MS),
+  };
+}
+
+/** Stop the cached mic immediately (OS indicator turns off). */
+export function releaseWarmMic() {
+  discardWarm();
+}
+
 function pickMimeType(): string {
   const candidates = [
     "audio/webm;codecs=opus",
@@ -48,42 +112,60 @@ function pickMimeType(): string {
 }
 
 export async function startRecording(opts: AudioControllerOptions = {}): Promise<AudioController> {
+  const requestedKey = opts.deviceId ?? "";
+  let usedKey = requestedKey;
   let stream: MediaStream;
-  const buildAudioConstraints = (deviceId?: string): MediaTrackConstraints => {
-    const audio: MediaTrackConstraints = {
-      channelCount: { ideal: 1 },
-      sampleRate: { ideal: 16000 },
-      echoCancellation: true,
-      noiseSuppression: true,
-      autoGainControl: true,
+  let audioCtx: AudioContext;
+
+  const acquireStart = performance.now();
+  const warmHit = takeWarm(requestedKey);
+  if (warmHit) {
+    ({ stream, ctx: audioCtx } = warmHit);
+    if (audioCtx.state === "suspended") void audioCtx.resume().catch(() => {});
+  } else {
+    const buildAudioConstraints = (deviceId?: string): MediaTrackConstraints => {
+      const audio: MediaTrackConstraints = {
+        channelCount: { ideal: 1 },
+        sampleRate: { ideal: 16000 },
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      };
+      if (deviceId) audio.deviceId = { exact: deviceId };
+      return audio;
     };
-    if (deviceId) audio.deviceId = { exact: deviceId };
-    return audio;
-  };
-  try {
-    stream = await navigator.mediaDevices.getUserMedia({
-      audio: buildAudioConstraints(opts.deviceId),
-    });
-  } catch (err) {
-    if (opts.deviceId) {
-      try {
-        console.warn("Selected microphone was unavailable; falling back to system default.", err);
-        stream = await navigator.mediaDevices.getUserMedia({
-          audio: buildAudioConstraints(),
-        });
-      } catch {
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: buildAudioConstraints(opts.deviceId),
+      });
+    } catch (err) {
+      if (opts.deviceId) {
+        try {
+          console.warn("Selected microphone was unavailable; falling back to system default.", err);
+          stream = await navigator.mediaDevices.getUserMedia({
+            audio: buildAudioConstraints(),
+          });
+          usedKey = "";
+        } catch {
+          const e = err instanceof Error ? err : new Error(String(err));
+          opts.onError?.(e);
+          throw e;
+        }
+      } else {
         const e = err instanceof Error ? err : new Error(String(err));
         opts.onError?.(e);
         throw e;
       }
-    } else {
-      const e = err instanceof Error ? err : new Error(String(err));
-      opts.onError?.(e);
-      throw e;
     }
+    audioCtx = new AudioContext();
   }
 
-  const audioCtx = new AudioContext();
+  if (isPerfDebugEnabled()) {
+    console.info(
+      `[perf] mic acquire ${Math.round(performance.now() - acquireStart)}ms (${warmHit ? "warm" : "cold"})`,
+    );
+  }
+
   const source = audioCtx.createMediaStreamSource(stream);
   const analyser = audioCtx.createAnalyser();
   analyser.fftSize = 256;
@@ -145,8 +227,14 @@ export async function startRecording(opts: AudioControllerOptions = {}): Promise
   let cancelled = false;
 
   const cleanup = () => {
-    stream.getTracks().forEach((t) => t.stop());
-    void audioCtx.close().catch(() => {});
+    // Park instead of tearing down — the next dictation inside the
+    // keep-warm window reuses the stream and skips getUserMedia.
+    try {
+      source.disconnect();
+    } catch {
+      /* already disconnected */
+    }
+    parkWarm(stream, audioCtx, usedKey);
   };
 
   const stop = () =>

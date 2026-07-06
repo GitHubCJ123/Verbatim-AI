@@ -10,7 +10,7 @@ import {
   type TranscribeInput,
   type TranscribeResult,
 } from "./AIProvider";
-import { supabase, supabaseAnonKey, supabaseUrl } from "../supabase";
+import { supabase, supabaseAnonKey, supabaseUrl, isSupabaseConfigured } from "../supabase";
 import { isLocalMode } from "../appMode";
 import {
   LocalWhisperProvider,
@@ -18,17 +18,19 @@ import {
   getLocalWhisperTier,
   type WhisperTier,
 } from "./localWhisper";
+import { OllamaProvider, getCleanupProviderKind, getOllamaHost, getOllamaModel } from "./ollama";
+import { LlamaCppProvider, getLlamaCppModel } from "./llamaCpp";
 import {
-  OllamaProvider,
-  getCleanupProviderKind,
-  getOllamaHost,
-  getOllamaModel,
-} from "./ollama";
-import { ParakeetProvider, getParakeetLanguage, getParakeetVariant, type ParakeetVariant } from "./parakeet";
+  ParakeetProvider,
+  getParakeetLanguage,
+  getParakeetVariant,
+  type ParakeetVariant,
+} from "./parakeet";
 import type { Mode } from "../../types/mode";
 
 export * from "./localWhisper";
 export * from "./ollama";
+export * from "./llamaCpp";
 export * from "./parakeet";
 
 const TRANSCRIBE_TIMEOUT_MS = 10 * 60 * 1000; // 10 min — covers long recordings; whisper auto-chunks anyway.
@@ -36,6 +38,16 @@ const CLEANUP_TIMEOUT_MS = 10 * 60 * 1000; // 10 min — long transcripts can st
 const MAX_RETRIES = 3;
 
 async function getAuthHeaders(): Promise<Record<string, string>> {
+  // Cloud AI proxies through Supabase Edge Functions — a fully-local
+  // setup (no .env.local) can reach this only if the user explicitly
+  // picks the cloud provider. Fail with a clear message instead of a
+  // raw network error against an empty URL.
+  if (!isSupabaseConfigured) {
+    throw new Error(
+      "Cloud AI needs Supabase configured (VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY in .env.local). " +
+        "Switch to Local Whisper or Parakeet in Settings → AI model to run fully offline instead.",
+    );
+  }
   const anon = supabaseAnonKey();
   // Local mode: no session, send anon key as bearer (Edge Functions are
   // deployed --no-verify-jwt so this works).
@@ -200,6 +212,7 @@ export class SupabaseAIProvider implements AIProvider {
 let cloudCache: SupabaseAIProvider | null = null;
 const localWhisperByTier = new Map<WhisperTier, LocalWhisperProvider>();
 const ollamaByKey = new Map<string, OllamaProvider>();
+const llamaCppByModel = new Map<string, LlamaCppProvider>();
 const parakeetByKey = new Map<string, ParakeetProvider>();
 
 function getCloud(): SupabaseAIProvider {
@@ -237,6 +250,15 @@ function transcribeProvider(mode?: Mode | null): AIProvider {
 function cleanupProvider(mode?: Mode | null): AIProvider {
   const kind = mode?.cleanupProviderOverride ?? getCleanupProviderKind();
   if (kind === "cloud") return getCloud();
+  if (kind === "local-llama-cpp") {
+    const model = getLlamaCppModel();
+    let p = llamaCppByModel.get(model);
+    if (!p) {
+      p = new LlamaCppProvider({ model });
+      llamaCppByModel.set(model, p);
+    }
+    return p;
+  }
   const host = getOllamaHost();
   const model = mode?.ollamaModelOverride ?? getOllamaModel();
   const key = `${host}|${model}`;
@@ -246,6 +268,14 @@ function cleanupProvider(mode?: Mode | null): AIProvider {
     ollamaByKey.set(key, p);
   }
   return p;
+}
+
+export async function testTranscriptionProvider(mode?: Mode | null): Promise<ProviderHealth> {
+  return transcribeProvider(mode).health();
+}
+
+export async function testCleanupProvider(mode?: Mode | null): Promise<ProviderHealth> {
+  return cleanupProvider(mode).health();
 }
 
 /**

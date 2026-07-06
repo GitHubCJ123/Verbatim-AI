@@ -131,6 +131,13 @@ export const SETTINGS_ENTRIES: SettingsSearchEntry[] = [
     tab: "recording",
   },
   {
+    id: "insert-only",
+    title: "Insert only",
+    description: "Paste dictated text without leaving it on the clipboard.",
+    keywords: ["clipboard", "paste", "copy", "privacy", "insert", "output"],
+    tab: "recording",
+  },
+  {
     id: "overlay-position",
     title: "Recording pill position",
     description: "Where the floating pill appears while you talk.",

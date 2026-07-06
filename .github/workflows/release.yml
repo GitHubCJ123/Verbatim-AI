@@ -95,12 +95,44 @@ jobs:
 
       # --- Whisper runtime zips, attached to the same draft release ---
 
+      - name: (Windows) Fetch whisper.cpp CPU build
+        if: matrix.platform == 'windows-latest' && startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        run: |
+          $url = "https://github.com/ggml-org/whisper.cpp/releases/download/${{ env.WHISPER_CPP_VERSION }}/whisper-bin-x64.zip"
+          Invoke-WebRequest -Uri $url -OutFile whisper-bin-windows-x64-cpu.zip
+
       - name: (Windows) Fetch whisper.cpp CUDA build
         if: matrix.platform == 'windows-latest' && startsWith(github.ref, 'refs/tags/')
         shell: pwsh
         run: |
           $url = "https://github.com/ggml-org/whisper.cpp/releases/download/${{ env.WHISPER_CPP_VERSION }}/whisper-cublas-12.4.0-bin-x64.zip"
-          Invoke-WebRequest -Uri $url -OutFile whisper-bin-windows-x64.zip
+          Invoke-WebRequest -Uri $url -OutFile whisper-bin-windows-x64-cuda.zip
+
+      - name: (Windows) Build whisper.cpp Vulkan build
+        if: matrix.platform == 'windows-latest' && startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $vkVersion = "1.3.290.0"
+          choco install vulkan-sdk --version=$vkVersion -y --no-progress
+          $env:VULKAN_SDK = "C:\VulkanSDK\$vkVersion"
+          $env:PATH = "$env:VULKAN_SDK\Bin;$env:PATH"
+
+          git clone --depth 1 --branch "${{ env.WHISPER_CPP_VERSION }}" https://github.com/ggml-org/whisper.cpp.git whisper-vulkan
+          cmake -S whisper-vulkan -B whisper-vulkan/build -A x64 `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DGGML_VULKAN=ON `
+            -DGGML_NATIVE=OFF `
+            -DGGML_BACKEND_DL=ON `
+            -DBUILD_SHARED_LIBS=ON `
+            -DWHISPER_BUILD_TESTS=OFF `
+            -DWHISPER_BUILD_EXAMPLES=ON
+          cmake --build whisper-vulkan/build --config Release --parallel
+
+          New-Item -ItemType Directory -Force whisper-vulkan-stage | Out-Null
+          Copy-Item whisper-vulkan/build/bin/Release/* whisper-vulkan-stage/ -Recurse -Force
+          Compress-Archive -Path whisper-vulkan-stage/* -DestinationPath whisper-bin-windows-x64-vulkan.zip -Force
 
       - name: (macOS) Build whisper.cpp with Metal
         if: matrix.platform == 'macos-latest' && startsWith(github.ref, 'refs/tags/')
@@ -184,17 +216,35 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          RELEASE_TAG: ${{ github.ref_name }}
         # `gh release upload` targets the existing draft release that
         # tauri-action created for this tag and adds our extra assets to
-        # it. `--clobber` lets a re-run overwrite a previously uploaded
-        # file with the same name. The bash conditional skips a file if
-        # the platform-specific build step didn't produce it.
+        # it. The bash conditional skips a file if the platform-specific
+        # build step didn't produce it. Runtime checksums are bundled into
+        # a minisign-signed manifest verified by the app before extraction.
         run: |
           files=()
-          [ -f whisper-bin-windows-x64.zip ] && files+=("whisper-bin-windows-x64.zip")
+          [ -f whisper-bin-windows-x64-cpu.zip ] && files+=("whisper-bin-windows-x64-cpu.zip")
+          [ -f whisper-bin-windows-x64-vulkan.zip ] && files+=("whisper-bin-windows-x64-vulkan.zip")
+          [ -f whisper-bin-windows-x64-cuda.zip ] && files+=("whisper-bin-windows-x64-cuda.zip")
           [ -f whisper-bin-macos-arm64.zip ] && files+=("whisper-bin-macos-arm64.zip")
           if [ ${#files[@]} -gt 0 ]; then
-            gh release upload "${{ github.ref_name }}" "${files[@]}" --clobber
+            python3 - "${files[@]}" > whisper-runtimes.json <<'PY'
+          import hashlib, json, os, pathlib, sys
+          assets = {}
+          for name in sys.argv[1:]:
+              p = pathlib.Path(name)
+              assets[p.name] = {
+                  "sha256": hashlib.sha256(p.read_bytes()).hexdigest(),
+                  "size": p.stat().st_size,
+              }
+          print(json.dumps({"version": os.environ["RELEASE_TAG"], "assets": assets}, indent=2, sort_keys=True))
+          PY
+            pnpm tauri signer sign whisper-runtimes.json > whisper-runtimes.json.sig
+            upload=("${files[@]}" whisper-runtimes.json whisper-runtimes.json.sig)
+            gh release upload "$RELEASE_TAG" "${upload[@]}"
           else
             echo "No whisper runtime artifacts produced on this platform."
           fi
@@ -283,7 +333,6 @@ jobs:
           if-no-files-found: warn
           retention-days: 1
 
-
   publish-latest-json:
     needs: build
     if: startsWith(github.ref, 'refs/tags/')
@@ -320,5 +369,7 @@ jobs:
       - name: Upload latest.json to release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ github.ref_name }}
+          REPOSITORY: ${{ github.repository }}
         run: |
-          gh release upload "${{ github.ref_name }}" latest.json --clobber --repo ${{ github.repository }}
+          gh release upload "$VERSION" latest.json --clobber --repo "$REPOSITORY"

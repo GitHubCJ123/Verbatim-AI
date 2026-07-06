@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { createMemoryRouter, RouterProvider, Navigate } from "react-router-dom";
+import { listen } from "@tauri-apps/api/event";
 import { AppShell } from "./components/layout/AppShell";
 import Home from "./routes/Home";
 import Modes from "./routes/Modes";
@@ -22,7 +23,7 @@ import { isMigrationPending } from "./lib/migration";
 import { pruneExpiredTranscriptions } from "./lib/history";
 import MigrationPicker from "./routes/MigrationPicker";
 import { Loader2, AlertTriangle } from "lucide-react";
-import { Toaster } from "./components/ui/Toast";
+import { toast, Toaster } from "./components/ui/Toast";
 import { UpdateBanner } from "./components/layout/UpdateBanner";
 import { checkForUpdate } from "./lib/updater";
 
@@ -37,9 +38,8 @@ function FatalConfig() {
         <p className="mt-3 text-sm text-text-secondary">
           Account sync needs <code className="font-mono text-xs">VITE_SUPABASE_URL</code> and{" "}
           <code className="font-mono text-xs">VITE_SUPABASE_ANON_KEY</code> in{" "}
-          <code className="font-mono text-xs">.env.local</code>. Set them and restart, or clear
-          your browser storage and choose "Use locally" instead — that path doesn't need Supabase
-          at all.
+          <code className="font-mono text-xs">.env.local</code>. Set them and restart, or clear your
+          browser storage and choose "Use locally" instead — that path doesn't need Supabase at all.
         </p>
       </div>
     </div>
@@ -62,7 +62,9 @@ const router = createMemoryRouter(
       path: "/migrate",
       element: (
         <MigrationPicker
-          onDone={() => router.navigate(isOnboardingComplete() ? "/" : "/onboarding", { replace: true })}
+          onDone={() =>
+            router.navigate(isOnboardingComplete() ? "/" : "/onboarding", { replace: true })
+          }
         />
       ),
     },
@@ -102,11 +104,7 @@ export default function App() {
     void (async () => {
       // One-time wipe of legacy keys from the local-mode era.
       if (localStorage.getItem("sw.online.migrated") !== "v2") {
-        for (const k of [
-          "sw.azure.config",
-          "sw.supabase.config",
-          "sw.history",
-        ]) {
+        for (const k of ["sw.azure.config", "sw.supabase.config", "sw.history"]) {
           localStorage.removeItem(k);
         }
         localStorage.setItem("sw.online.migrated", "v2");
@@ -217,6 +215,20 @@ export default function App() {
 
     return () => {
       cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    const off = listen<{ from: string; to: string; reason?: string }>(
+      "local-whisper:runtime:fallback",
+      (e) => {
+        toast.info("GPU unavailable, using CPU", {
+          description: `Local Whisper fell back from ${e.payload.from} to ${e.payload.to}.`,
+        });
+      },
+    );
+    return () => {
+      void off.then((u) => u());
     };
   }, []);
 

@@ -10,7 +10,8 @@ use commands::{
         cleanup_llama_cpp, install_llama_cpp_runtime, is_llama_cpp_runtime_installed,
     },
     local_whisper::{
-        delete_local_model, download_local_model, install_whisper_runtime,
+        delete_local_model, detect_whisper_compute_backend, download_local_model,
+        get_active_whisper_runtime_variant, install_whisper_runtime,
         is_whisper_runtime_installed, list_local_models, transcribe_local,
     },
     parakeet::{
@@ -91,6 +92,8 @@ pub fn run() {
             delete_local_model,
             transcribe_local,
             is_whisper_runtime_installed,
+            detect_whisper_compute_backend,
+            get_active_whisper_runtime_variant,
             install_whisper_runtime,
             is_parakeet_runtime_installed,
             install_parakeet_runtime,

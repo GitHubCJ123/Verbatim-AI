@@ -878,7 +878,7 @@ const PROVIDER_OPTIONS: ProviderOption[] = [
   {
     kind: "local-parakeet",
     title: "Parakeet TDT",
-    subtitle: "On-device · NVIDIA",
+    subtitle: "On-device · CPU",
     Icon: Cpu,
     bullets: [
       "Audio never leaves your machine",

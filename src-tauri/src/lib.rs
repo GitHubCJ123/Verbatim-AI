@@ -4,7 +4,11 @@ mod tray;
 use commands::{
     active_window::get_active_window,
     devtools::{open_devtools, open_main_devtools},
+    fn_hotkey::{open_input_monitoring_settings, FnHotkeyState},
     hotkey::{clear_hotkey, handle_event as handle_hotkey_event, install_default, set_hotkey, HotkeyState},
+    llama_cpp::{
+        cleanup_llama_cpp, install_llama_cpp_runtime, is_llama_cpp_runtime_installed,
+    },
     local_whisper::{
         delete_local_model, download_local_model, install_whisper_runtime,
         is_whisper_runtime_installed, list_local_models, transcribe_local,
@@ -55,6 +59,7 @@ pub fn run() {
 
     builder
         .manage(HotkeyState::default())
+        .manage(FnHotkeyState::default())
         .manage(TargetWindowState::default())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
@@ -94,8 +99,12 @@ pub fn run() {
             download_parakeet_model,
             delete_parakeet_model,
             transcribe_parakeet,
+            is_llama_cpp_runtime_installed,
+            install_llama_cpp_runtime,
+            cleanup_llama_cpp,
             open_devtools,
             open_main_devtools,
+            open_input_monitoring_settings,
         ])
         .setup(|app| {
             install_default(&app.handle());

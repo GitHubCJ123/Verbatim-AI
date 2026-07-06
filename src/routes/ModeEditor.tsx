@@ -152,10 +152,7 @@ function FormColumn({
           <Input value={draft.description} onChange={(e) => set("description", e.target.value)} />
         </Row>
 
-        <Row
-          label="System prompt"
-          help={`~${estimateTokens(draft.systemPrompt)} tokens`}
-        >
+        <Row label="System prompt" help={`~${estimateTokens(draft.systemPrompt)} tokens`}>
           <Textarea
             rows={9}
             className="font-mono text-xs"
@@ -197,10 +194,7 @@ function FormColumn({
         </Row>
 
         <Row label="Mode hotkey" help="Optional — overrides global when this mode is set">
-          <HotkeyRecorder
-            value={draft.hotkey ?? ""}
-            onChange={(spec) => set("hotkey", spec)}
-          />
+          <HotkeyRecorder value={draft.hotkey ?? ""} onChange={(spec) => set("hotkey", spec)} />
         </Row>
 
         <ToggleRow
@@ -365,9 +359,7 @@ function TestColumn({ draft }: { draft: Mode }) {
               <div className="text-sm font-medium">Test this mode</div>
             </div>
             {state !== "idle" && (
-              <Badge variant={state === "error" ? "danger" : "accent"}>
-                {labelFor(state)}
-              </Badge>
+              <Badge variant={state === "error" ? "danger" : "accent"}>{labelFor(state)}</Badge>
             )}
           </div>
 
@@ -393,12 +385,7 @@ function TestColumn({ draft }: { draft: Mode }) {
                   Stop
                 </Button>
               ) : (
-                <Button
-                  variant="primary"
-                  size="sm"
-                  onClick={start}
-                  disabled={busy}
-                >
+                <Button variant="primary" size="sm" onClick={start} disabled={busy}>
                   {state === "processing" || state === "polishing" ? (
                     <Loader2 className="h-3.5 w-3.5 animate-spin" />
                   ) : (
@@ -511,7 +498,8 @@ function AiOverridesSection({
         <div>
           <div className="text-sm font-medium">AI overrides (advanced)</div>
           <div className="text-xs text-text-muted">
-            Pin this Mode to a specific transcription / cleanup model. Leave on "Use global default" to inherit Settings → AI model.
+            Pin this Mode to a specific transcription / cleanup model. Leave on "Use global default"
+            to inherit Settings → AI model.
           </div>
         </div>
         <span className="text-xs text-text-muted">{open ? "Hide" : "Show"}</span>
@@ -528,7 +516,9 @@ function AiOverridesSection({
                 )
               }
             >
-              <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+              <SelectTrigger className="w-full">
+                <SelectValue />
+              </SelectTrigger>
               <SelectContent>
                 <SelectItem value={INHERIT}>Use global default</SelectItem>
                 <SelectItem value="cloud">Cloud (Azure Whisper)</SelectItem>
@@ -543,13 +533,12 @@ function AiOverridesSection({
               <Select
                 value={draft.whisperTierOverride ?? INHERIT}
                 onValueChange={(v) =>
-                  set(
-                    "whisperTierOverride",
-                    v === INHERIT ? null : (v as WhisperTierKind),
-                  )
+                  set("whisperTierOverride", v === INHERIT ? null : (v as WhisperTierKind))
                 }
               >
-                <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
                 <SelectContent>
                   <SelectItem value={INHERIT}>Use global tier</SelectItem>
                   {WHISPER_TIERS.map((t) => (
@@ -566,20 +555,28 @@ function AiOverridesSection({
             <Select
               value={draft.cleanupProviderOverride ?? INHERIT}
               onValueChange={(v) =>
-                set(
-                  "cleanupProviderOverride",
-                  v === INHERIT ? null : (v as CleanupProviderKind),
-                )
+                set("cleanupProviderOverride", v === INHERIT ? null : (v as CleanupProviderKind))
               }
             >
-              <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+              <SelectTrigger className="w-full">
+                <SelectValue />
+              </SelectTrigger>
               <SelectContent>
                 <SelectItem value={INHERIT}>Use global default</SelectItem>
                 <SelectItem value="cloud">Cloud (Azure GPT)</SelectItem>
                 <SelectItem value="local-ollama">Local (Ollama)</SelectItem>
+                <SelectItem value="local-llama-cpp">Local (llama.cpp)</SelectItem>
               </SelectContent>
             </Select>
           </Row>
+
+          {draft.cleanupProviderOverride === "local-llama-cpp" && (
+            <Row label="llama.cpp model">
+              <div className="text-xs text-text-muted">
+                Uses the global llama.cpp model from Settings → AI model.
+              </div>
+            </Row>
+          )}
 
           {draft.cleanupProviderOverride === "local-ollama" && (
             <Row label="Ollama model">
@@ -594,15 +591,17 @@ function AiOverridesSection({
               ) : (
                 <Select
                   value={draft.ollamaModelOverride ?? INHERIT}
-                  onValueChange={(v) =>
-                    set("ollamaModelOverride", v === INHERIT ? null : v)
-                  }
+                  onValueChange={(v) => set("ollamaModelOverride", v === INHERIT ? null : v)}
                 >
-                  <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                  <SelectTrigger className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
                   <SelectContent>
                     <SelectItem value={INHERIT}>Use global model</SelectItem>
                     {ollamaModels.map((m) => (
-                      <SelectItem key={m.name} value={m.name}>{m.name}</SelectItem>
+                      <SelectItem key={m.name} value={m.name}>
+                        {m.name}
+                      </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>

@@ -43,9 +43,25 @@ pub fn handle_event<R: Runtime>(app: &AppHandle<R>, shortcut: &Shortcut, event: 
 pub fn set_hotkey<R: Runtime>(
     app: AppHandle<R>,
     state: State<'_, HotkeyState>,
+    fn_state: State<'_, super::fn_hotkey::FnHotkeyState>,
     spec: String,
 ) -> Result<(), String> {
     let manager = app.global_shortcut();
+
+    // Sentinel: the macOS fn key can't be a plugin shortcut — it's
+    // handled by a flags-changed event tap (commands/fn_hotkey.rs).
+    if spec == super::fn_hotkey::FN_SPEC {
+        super::fn_hotkey::start(app.clone(), &fn_state)?;
+        // The tap owns the hotkey now; release any plugin registration.
+        let mut current = state.current.lock().map_err(|e| e.to_string())?;
+        if let Some(prev) = current.take() {
+            let _ = manager.unregister(prev);
+        }
+        return Ok(());
+    }
+    // Switching from fn back to a normal shortcut tears the tap down.
+    super::fn_hotkey::stop(&fn_state);
+
     let parsed = Shortcut::from_str(&spec).map_err(|e| format!("Invalid shortcut: {e}"))?;
 
     // Idempotent: if the same shortcut is already current, no-op.
@@ -90,7 +106,12 @@ pub fn set_hotkey<R: Runtime>(
 }
 
 #[tauri::command]
-pub fn clear_hotkey<R: Runtime>(app: AppHandle<R>, state: State<'_, HotkeyState>) -> Result<(), String> {
+pub fn clear_hotkey<R: Runtime>(
+    app: AppHandle<R>,
+    state: State<'_, HotkeyState>,
+    fn_state: State<'_, super::fn_hotkey::FnHotkeyState>,
+) -> Result<(), String> {
+    super::fn_hotkey::stop(&fn_state);
     let manager = app.global_shortcut();
     let mut current = state.current.lock().map_err(|e| e.to_string())?;
     if let Some(prev) = current.take() {

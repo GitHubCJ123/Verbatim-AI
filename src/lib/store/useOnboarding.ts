@@ -145,6 +145,11 @@ export function isOnboardingComplete(): boolean {
   return loadProgress().completed;
 }
 
+export function markOnboardingComplete(): void {
+  saveProgress(TOTAL_STEPS - 1, true);
+  useOnboarding.setState({ step: TOTAL_STEPS - 1, completed: true });
+}
+
 // ─── Auto-generation ────────────────────────────────────────────────────
 
 const TONE_SYSTEM_PROMPTS: Record<Tone, { name: string; description: string; prompt: string }> = {

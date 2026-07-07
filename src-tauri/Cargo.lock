@@ -5193,7 +5193,7 @@ dependencies = [
 
 [[package]]
 name = "verbatim-ai"
-version = "0.5.7"
+version = "0.5.9"
 dependencies = [
  "bzip2",
  "core-foundation 0.10.1",

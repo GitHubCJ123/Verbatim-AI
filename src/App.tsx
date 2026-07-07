@@ -12,10 +12,10 @@ import Account from "./routes/Account";
 import Onboarding from "./routes/onboarding/Onboarding";
 import AuthGate from "./routes/AuthGate";
 import ModePicker from "./routes/ModePicker";
-import { isOnboardingComplete } from "./lib/store/useOnboarding";
+import { isOnboardingComplete, markOnboardingComplete } from "./lib/store/useOnboarding";
 import { isSupabaseConfigured } from "./lib/supabase";
 import { useAuth } from "./lib/store/useAuth";
-import { hydrateAll, clearAllCaches } from "./lib/store/useModes";
+import { hydrateAll, clearAllCaches, loadModes, useModes } from "./lib/store/useModes";
 import { useAppMappings } from "./lib/store/useAppMappings";
 import { useProfile } from "./lib/store/useProfile";
 import { getAppMode } from "./lib/appMode";
@@ -25,6 +25,7 @@ import MigrationPicker from "./routes/MigrationPicker";
 import { Loader2, AlertTriangle } from "lucide-react";
 import { toast, Toaster } from "./components/ui/Toast";
 import { UpdateBanner } from "./components/layout/UpdateBanner";
+import { WhatsNewModal } from "./components/layout/WhatsNewModal";
 import { checkForUpdate } from "./lib/updater";
 
 function FatalConfig() {
@@ -54,6 +55,24 @@ function BootSpinner() {
   );
 }
 
+function onboardingDestination(hasExistingConfig: boolean): "/" | "/onboarding" {
+  if (isOnboardingComplete()) return "/";
+  if (hasExistingConfig) {
+    markOnboardingComplete();
+    return "/";
+  }
+  return "/onboarding";
+}
+
+function hasExistingCloudConfig(): boolean {
+  return (
+    useModes
+      .getState()
+      .modes.some((mode) => !mode.isBuiltin || mode.updatedAt !== mode.createdAt) ||
+    useAppMappings.getState().mappings.length > 0
+  );
+}
+
 const router = createMemoryRouter(
   [
     { path: "/picker", element: <ModePicker /> },
@@ -63,7 +82,9 @@ const router = createMemoryRouter(
       element: (
         <MigrationPicker
           onDone={() =>
-            router.navigate(isOnboardingComplete() ? "/" : "/onboarding", { replace: true })
+            router.navigate(onboardingDestination(hasExistingCloudConfig()), {
+              replace: true,
+            })
           }
         />
       ),
@@ -121,6 +142,7 @@ export default function App() {
       }
 
       if (mode === "local") {
+        const hadExistingLocalConfig = loadModes().length > 0;
         // Local mode: no auth, hydrate from localStorage (seeds built-ins).
         try {
           await hydrateAll();
@@ -130,7 +152,7 @@ export default function App() {
         }
         void pruneExpiredTranscriptions().catch(() => {});
         if (!cancelled) {
-          router.navigate(isOnboardingComplete() ? "/" : "/onboarding", { replace: true });
+          router.navigate(onboardingDestination(hadExistingLocalConfig), { replace: true });
           setPhase("ready");
         }
         return;
@@ -165,7 +187,9 @@ export default function App() {
             } catch (e) {
               setHydrationError(e instanceof Error ? e.message : String(e));
             }
-            router.navigate(isOnboardingComplete() ? "/" : "/onboarding", { replace: true });
+            router.navigate(onboardingDestination(hasExistingCloudConfig()), {
+              replace: true,
+            });
           })();
         }
         if (!state.user && prev.user) {
@@ -198,7 +222,9 @@ export default function App() {
         }
         void pruneExpiredTranscriptions().catch(() => {});
         if (!cancelled) {
-          router.navigate(isOnboardingComplete() ? "/" : "/onboarding", { replace: true });
+          router.navigate(onboardingDestination(hasExistingCloudConfig()), {
+            replace: true,
+          });
         }
       } else if (!cancelled) {
         // Cloud mode, signed out — go to auth gate.
@@ -242,6 +268,7 @@ export default function App() {
       <Toaster />
       <UpdateBanner />
       <RouterProvider router={router} />
+      <WhatsNewModal navigate={(to, state) => void router.navigate(to, { state })} />
     </>
   );
 }

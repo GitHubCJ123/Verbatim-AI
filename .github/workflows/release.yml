@@ -115,7 +115,15 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           $vkVersion = "1.3.290.0"
-          choco install vulkan-sdk --version=$vkVersion -y --no-progress
+          $vkInstaller = "VulkanSDK-$vkVersion-Installer.exe"
+          $vkUrl = "https://sdk.lunarg.com/sdk/download/$vkVersion/windows/$vkInstaller"
+          $vkSha256 = "0ba0392a78157b82354157c5c988d74ddc6bc15573cc9c8653aa60245355fe8a"
+          Invoke-WebRequest $vkUrl -OutFile $vkInstaller
+          $actualSha256 = (Get-FileHash -Algorithm SHA256 -Path $vkInstaller).Hash.ToLower()
+          if ($actualSha256 -ne $vkSha256) {
+            throw "Vulkan SDK installer SHA256 mismatch: expected $vkSha256, got $actualSha256"
+          }
+          Start-Process -FilePath ".\$vkInstaller" -ArgumentList "--accept-licenses --default-answer --confirm-command install" -Wait -NoNewWindow
           $env:VULKAN_SDK = "C:\VulkanSDK\$vkVersion"
           $env:PATH = "$env:VULKAN_SDK\Bin;$env:PATH"
 
@@ -216,8 +224,6 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           RELEASE_TAG: ${{ github.ref_name }}
         # `gh release upload` targets the existing draft release that
         # tauri-action created for this tag and adds our extra assets to
@@ -231,8 +237,9 @@ jobs:
           [ -f whisper-bin-windows-x64-cuda.zip ] && files+=("whisper-bin-windows-x64-cuda.zip")
           [ -f whisper-bin-macos-arm64.zip ] && files+=("whisper-bin-macos-arm64.zip")
           if [ ${#files[@]} -gt 0 ]; then
-            python3 - "${files[@]}" > whisper-runtimes.json <<'PY'
-          import hashlib, json, os, pathlib, sys
+            mkdir -p _runtime
+            python3 - "${files[@]}" > "_runtime/whisper-runtime-fragment-${RUNNER_OS}.json" <<'PY'
+          import hashlib, json, pathlib, sys
           assets = {}
           for name in sys.argv[1:]:
               p = pathlib.Path(name)
@@ -240,14 +247,21 @@ jobs:
                   "sha256": hashlib.sha256(p.read_bytes()).hexdigest(),
                   "size": p.stat().st_size,
               }
-          print(json.dumps({"version": os.environ["RELEASE_TAG"], "assets": assets}, indent=2, sort_keys=True))
+          print(json.dumps({"assets": assets}, indent=2, sort_keys=True))
           PY
-            pnpm tauri signer sign whisper-runtimes.json > whisper-runtimes.json.sig
-            upload=("${files[@]}" whisper-runtimes.json whisper-runtimes.json.sig)
-            gh release upload "$RELEASE_TAG" "${upload[@]}"
+            gh release upload "$RELEASE_TAG" "${files[@]}" --clobber
           else
             echo "No whisper runtime artifacts produced on this platform."
           fi
+
+      - name: Upload runtime manifest fragment
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-fragment-${{ matrix.platform }}
+          path: _runtime/*.json
+          if-no-files-found: warn
+          retention-days: 1
 
       # tauri-action's auto-generated `latest.json` upload is racy: it
       # scans for `.sig` files before all bundles finish, then "skips
@@ -340,11 +354,34 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install frontend deps
+        run: pnpm install --frozen-lockfile
+
       - name: Download fragments
         uses: actions/download-artifact@v4
         with:
           path: fragments
           pattern: updater-fragment-*
+          merge-multiple: true
+
+      - name: Download runtime fragments
+        uses: actions/download-artifact@v4
+        with:
+          path: runtime-fragments
+          pattern: runtime-fragment-*
           merge-multiple: true
 
       - name: Build merged latest.json
@@ -373,3 +410,25 @@ jobs:
           REPOSITORY: ${{ github.repository }}
         run: |
           gh release upload "$VERSION" latest.json --clobber --repo "$REPOSITORY"
+
+      - name: Build and upload signed Whisper runtime manifest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ github.ref_name }}
+          REPOSITORY: ${{ github.repository }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          python3 - runtime-fragments/*.json > whisper-runtimes.json <<'PY'
+          import json, os, pathlib, sys
+          assets = {}
+          for name in sys.argv[1:]:
+              fragment = json.loads(pathlib.Path(name).read_text())
+              assets.update(fragment.get("assets", {}))
+          if not assets:
+              raise SystemExit("No Whisper runtime assets found in runtime fragments")
+          print(json.dumps({"version": os.environ["VERSION"], "assets": assets}, indent=2, sort_keys=True))
+          PY
+          pnpm tauri signer sign whisper-runtimes.json > whisper-runtimes.json.sig
+          gh release upload "$VERSION" whisper-runtimes.json whisper-runtimes.json.sig --clobber --repo "$REPOSITORY"

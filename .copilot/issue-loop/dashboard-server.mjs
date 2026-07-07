@@ -20,6 +20,8 @@ import {
   runtimeDirFor,
   saveDashboardState,
   statePathFor,
+  startAction,
+  finishAction,
 } from "./lib/dashboard.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -103,15 +105,18 @@ async function handlePost(req, res, url, ctx) {
     const issue = dashboard.issues.find((item) => item.id === issueId);
     if (!issue) return sendJson(res, 404, { error: "Issue not found" });
     const phase = issue.phases.find((item) => item.id === phaseId);
-    const prompt = feedbackPrompt(issue, phaseId, body.feedback ?? "", phase?.output ?? "");
-    const agentResult = await runTextAgent({
-      prompt,
-      allowAgentRuns: Boolean(ctx.args.allowAgentRuns && body.runAgent),
-      agentCommand: ctx.args.agentCommand,
-    });
-    recordFeedback(ctx.state, issueId, phaseId, body.feedback ?? "", agentResult);
+    const action = startAction(ctx.state, issueId, phaseId, "feedback-agent", "Processing human feedback");
     await saveDashboardState(ctx.statePath, ctx.state);
-    sendJson(res, 200, { ok: true, agentResult, state: await buildState(ctx) });
+    sendJson(res, 202, { ok: true, action, state: await buildState(ctx) });
+    void runFeedbackJob(ctx, {
+      issue,
+      issueId,
+      phaseId,
+      phase,
+      actionId: action.id,
+      feedback: body.feedback ?? "",
+      runAgent: Boolean(body.runAgent),
+    });
     return;
   }
 
@@ -121,15 +126,10 @@ async function handlePost(req, res, url, ctx) {
     const dashboard = await buildState(ctx);
     const issue = dashboard.issues.find((item) => item.id === issueId);
     if (!issue) return sendJson(res, 404, { error: "Issue not found" });
-    const prompt = reflectionPrompt(issue, issue.phases, issue.local.feedback ?? []);
-    const result = await runTextAgent({
-      prompt,
-      allowAgentRuns: Boolean(ctx.args.allowAgentRuns && body.runAgent),
-      agentCommand: ctx.args.agentCommand,
-    });
-    recordReflection(ctx.state, issueId, result);
+    const action = startAction(ctx.state, issueId, "self-reflection", "Running loop self-reflection");
     await saveDashboardState(ctx.statePath, ctx.state);
-    sendJson(res, 200, { ok: true, result, state: await buildState(ctx) });
+    sendJson(res, 202, { ok: true, action, state: await buildState(ctx) });
+    void runReflectionJob(ctx, { issue, issueId, actionId: action.id, runAgent: Boolean(body.runAgent) });
     return;
   }
 
@@ -141,6 +141,56 @@ async function handlePost(req, res, url, ctx) {
   }
 
   sendJson(res, 404, { error: "Unknown endpoint" });
+}
+
+async function runFeedbackJob(ctx, { issue, issueId, phaseId, phase, actionId, feedback, runAgent }) {
+  try {
+    const prompt = feedbackPrompt(issue, phaseId, feedback, phase?.output ?? "");
+    const agentResult = await runTextAgent({
+      prompt,
+      allowAgentRuns: Boolean(ctx.args.allowAgentRuns && runAgent),
+      agentCommand: ctx.args.agentCommand,
+    });
+    recordFeedback(ctx.state, issueId, phaseId, feedback, agentResult);
+    if (actionId) finishAction(ctx.state, issueId, actionId, "complete", "Feedback processed");
+  } catch (error) {
+    if (actionId) {
+      finishAction(
+        ctx.state,
+        issueId,
+        actionId,
+        "failed",
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+  } finally {
+    await saveDashboardState(ctx.statePath, ctx.state);
+  }
+}
+
+async function runReflectionJob(ctx, { issue, issueId, actionId, runAgent }) {
+  try {
+    const prompt = reflectionPrompt(issue, issue.phases, issue.local.feedback ?? []);
+    const result = await runTextAgent({
+      prompt,
+      allowAgentRuns: Boolean(ctx.args.allowAgentRuns && runAgent),
+      agentCommand: ctx.args.agentCommand,
+    });
+    recordReflection(ctx.state, issueId, result);
+    if (actionId) finishAction(ctx.state, issueId, actionId, "complete", "Self-reflection complete");
+  } catch (error) {
+    if (actionId) {
+      finishAction(
+        ctx.state,
+        issueId,
+        actionId,
+        "failed",
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+  } finally {
+    await saveDashboardState(ctx.statePath, ctx.state);
+  }
 }
 
 async function buildState(ctx) {

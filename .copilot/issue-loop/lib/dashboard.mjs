@@ -54,6 +54,7 @@ export function runtimeDirFor(root) {
 
 export function applyApproval(state, issueId, phaseId, context) {
   const issue = issueState(state, issueId);
+  const previous = issue.overrides[phaseId] ?? "ready";
   const spec = context?.spec ?? {};
   issue.approvals[phaseId] = {
     id: randomUUID(),
@@ -64,9 +65,19 @@ export function applyApproval(state, issueId, phaseId, context) {
     specSha: spec.sha ?? null,
     createdAt: new Date().toISOString(),
   };
-  issue.overrides[phaseId] = "approved";
+  setPhaseStatus(issue, phaseId, "approved", {
+    from: previous,
+    source: "human-approval",
+    message: `Approved ${phaseId}`,
+  });
+  markDownstreamNeedsRedo(issue, phaseId, "Upstream phase was approved by a human reviewer.");
   const next = nextPhase(phaseId);
-  if (next && !issue.overrides[next]) issue.overrides[next] = "ready";
+  if (next) {
+    setPhaseStatus(issue, next, "ready", {
+      source: "state-machine",
+      message: `Ready after ${phaseId} approval`,
+    });
+  }
   issue.events.push({
     id: randomUUID(),
     type: "approval",
@@ -88,7 +99,11 @@ export function recordFeedback(state, issueId, phaseId, feedback, agentResult) {
     createdAt: new Date().toISOString(),
   };
   issue.feedback.push(entry);
-  issue.overrides[phaseId] = "needs-revision";
+  setPhaseStatus(issue, phaseId, "needs-revision", {
+    source: "human-feedback",
+    message: "Human feedback requires revision",
+  });
+  markDownstreamNeedsRedo(issue, phaseId, "Human feedback changed an upstream phase.");
   issue.events.push({
     id: randomUUID(),
     type: "feedback",
@@ -108,7 +123,10 @@ export function recordReflection(state, issueId, result) {
     createdAt: new Date().toISOString(),
   };
   issue.reflections.push(entry);
-  issue.overrides["self-reflection"] = "complete";
+  setPhaseStatus(issue, "self-reflection", "complete", {
+    source: "self-reflection",
+    message: "Self-reflection completed",
+  });
   issue.events.push({
     id: randomUUID(),
     type: "reflection",
@@ -122,21 +140,28 @@ export function recordReflection(state, issueId, result) {
 export function buildPhaseView(issue, stateIssue, derived) {
   return PHASES.map((phase, index) => {
     const base = derived[phase.id] ?? { status: index === 0 ? "ready" : "blocked", output: "" };
+    const activeActions = Object.values(stateIssue?.activeActions ?? {}).filter(
+      (action) => action.phaseId === phase.id && action.status === "running",
+    );
     const override = stateIssue?.overrides?.[phase.id];
+    const status = activeActions.length > 0 ? "running" : (override ?? base.status);
     const feedback = (stateIssue?.feedback ?? []).filter((item) => item.phaseId === phase.id);
     const approvals = stateIssue?.approvals?.[phase.id] ? [stateIssue.approvals[phase.id]] : [];
+    const transitions = (stateIssue?.transitions ?? []).filter((item) => item.phaseId === phase.id);
     return {
       ...phase,
-      status: override ?? base.status,
+      status,
       output: base.output,
       path: base.path ?? null,
       sideEffect: phase.sideEffect,
       feedback,
       approvals,
-      canApprove: ["ready", "needs-revision"].includes(override ?? base.status),
-      canGiveFeedback: ["ready", "complete", "approved", "needs-revision"].includes(
-        override ?? base.status,
-      ),
+      transitions,
+      activeActions,
+      canApprove: activeActions.length === 0 && ["ready", "needs-revision"].includes(status),
+      canGiveFeedback:
+        activeActions.length === 0 &&
+        ["ready", "complete", "approved", "needs-revision", "needs-redo"].includes(status),
     };
   });
 }
@@ -197,8 +222,82 @@ export function issueState(state, issueId) {
     feedback: [],
     reflections: [],
     events: [],
+    transitions: [],
+    activeActions: {},
   };
+  state.issues[issueId].transitions ??= [];
+  state.issues[issueId].activeActions ??= {};
   return state.issues[issueId];
+}
+
+export function startAction(state, issueId, phaseId, type, message) {
+  const issue = issueState(state, issueId);
+  const id = randomUUID();
+  const action = {
+    id,
+    issueId,
+    phaseId,
+    type,
+    status: "running",
+    message,
+    startedAt: new Date().toISOString(),
+  };
+  issue.activeActions[id] = action;
+  issue.events.push({
+    id: randomUUID(),
+    type: "action-started",
+    phaseId,
+    message,
+    createdAt: action.startedAt,
+  });
+  return action;
+}
+
+export function finishAction(state, issueId, actionId, status, result) {
+  const issue = issueState(state, issueId);
+  const action = issue.activeActions[actionId];
+  if (!action) return null;
+  action.status = status;
+  action.finishedAt = new Date().toISOString();
+  action.result = String(result ?? "").slice(0, 12000);
+  issue.events.push({
+    id: randomUUID(),
+    type: status === "complete" ? "action-completed" : "action-failed",
+    phaseId: action.phaseId,
+    message: action.result || action.message,
+    createdAt: action.finishedAt,
+  });
+  delete issue.activeActions[actionId];
+  return action;
+}
+
+export function setPhaseStatus(issue, phaseId, status, { from, source, message } = {}) {
+  const previous = from ?? issue.overrides[phaseId] ?? null;
+  issue.overrides[phaseId] = status;
+  issue.transitions.push({
+    id: randomUUID(),
+    phaseId,
+    from: previous,
+    to: status,
+    source: source ?? "state-machine",
+    message: message ?? `${phaseId} -> ${status}`,
+    createdAt: new Date().toISOString(),
+  });
+}
+
+export function markDownstreamNeedsRedo(issue, phaseId, reason) {
+  const start = PHASES.findIndex((phase) => phase.id === phaseId);
+  if (start < 0) return [];
+  const changed = [];
+  for (const phase of PHASES.slice(start + 1)) {
+    if (phase.id === "self-reflection") continue;
+    setPhaseStatus(issue, phase.id, "needs-redo", {
+      source: "downstream-invalidation",
+      message: reason,
+    });
+    changed.push(phase.id);
+  }
+  return changed;
 }
 
 export async function runTextAgent({ prompt, allowAgentRuns, agentCommand, timeoutMs = 90_000 }) {

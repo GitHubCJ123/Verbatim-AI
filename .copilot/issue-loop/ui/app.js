@@ -10,10 +10,12 @@ const actionHeaders = {
   "x-dashboard-action": "1",
   "content-type": "application/json",
 };
+const openPhases = new Set();
 
 document.getElementById("refreshBtn").addEventListener("click", load);
+setInterval(() => void load({ preserveOpen: true }), 2000);
 
-async function load() {
+async function load(_options = {}) {
   const res = await fetch("/api/state", { headers });
   state = await res.json();
   selectedId ??= state.issues[0]?.id;
@@ -32,13 +34,15 @@ function renderIssues() {
   const list = document.getElementById("issueList");
   list.textContent = "";
   for (const issue of state.issues) {
+    const running = issue.phases.some((phase) => phase.status === "running");
+    const redo = issue.phases.filter((phase) => phase.status === "needs-redo").length;
     const btn = el("button", { className: `issue-item ${issue.id === selectedId ? "active" : ""}` });
     btn.append(
       el("span", { className: "issue-number", text: `#${issue.number}` }),
       el("span", { className: "issue-title", text: issue.title }),
       el("div", {
         className: "issue-meta",
-        text: `${issue.source} · ${issue.phases.filter((p) => ["complete", "approved"].includes(p.status)).length}/${issue.phases.length} phases`,
+        text: `${issue.source} · ${issue.phases.filter((p) => ["complete", "approved"].includes(p.status)).length}/${issue.phases.length} phases${running ? " · running" : ""}${redo ? ` · ${redo} redo` : ""}`,
       }),
     );
     btn.addEventListener("click", () => {
@@ -75,6 +79,8 @@ function renderDetail() {
 function renderPhase(issue, phase, index) {
   const template = document.getElementById("phaseTemplate").content.cloneNode(true);
   const card = template.querySelector(".phase-card");
+  const phaseKey = `${issue.id}:${phase.id}`;
+  if (openPhases.has(phaseKey)) card.classList.add("open");
   template.querySelector(".phase-index").textContent = String(index + 1).padStart(2, "0");
   template.querySelector(".phase-title").textContent = phase.title;
   const status = template.querySelector(".phase-status");
@@ -82,7 +88,15 @@ function renderPhase(issue, phase, index) {
   status.classList.add(phase.status);
   template.querySelector(".phase-output").textContent = phase.output || "(no output yet)";
   const header = template.querySelector(".phase-header");
-  header.addEventListener("click", () => card.classList.toggle("open"));
+  header.addEventListener("click", () => {
+    card.classList.toggle("open");
+    if (card.classList.contains("open")) openPhases.add(phaseKey);
+    else openPhases.delete(phaseKey);
+  });
+  if (phase.status === "running") {
+    template.querySelector(".phase-output").textContent =
+      `${phase.activeActions.map((action) => action.message).join("\n")}\n\n${phase.output || ""}`;
+  }
 
   const approve = template.querySelector(".approve-btn");
   approve.disabled = !phase.canApprove;
@@ -113,9 +127,13 @@ function renderPhase(issue, phase, index) {
   const log = template.querySelector(".phase-log");
   const feedback = phase.feedback ?? [];
   const approvals = phase.approvals ?? [];
+  const transitions = phase.transitions ?? [];
+  const actions = phase.activeActions ?? [];
   log.textContent = [
+    ...actions.map((item) => `Running ${item.type}: ${item.message}`),
     ...approvals.map((item) => `Approved by ${item.approver} at ${item.createdAt}`),
     ...feedback.map((item) => `Feedback ${item.createdAt}: ${item.feedback}\n${item.agentResult}`),
+    ...transitions.map((item) => `Transition ${item.from ?? "derived"} -> ${item.to}: ${item.message}`),
   ].join("\n\n");
 
   return template;

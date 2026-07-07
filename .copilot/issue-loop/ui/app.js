@@ -25,7 +25,7 @@ async function load(_options = {}) {
 function render() {
   document.getElementById("modeBadge").textContent = state.mode.agentRunsEnabled
     ? "Local + Copilot text runs"
-    : "Local demo-safe";
+    : "Local read-only";
   renderIssues();
   renderDetail();
 }

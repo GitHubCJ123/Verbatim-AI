@@ -8,7 +8,6 @@ import { ghJson } from "./lib/github.mjs";
 import {
   applyApproval,
   buildPhaseView,
-  demoIssue,
   deriveIssueState,
   ensureDashboardState,
   feedbackPrompt,
@@ -133,13 +132,6 @@ async function handlePost(req, res, url, ctx) {
     return;
   }
 
-  if (url.pathname === "/api/demo/reset") {
-    delete ctx.state.issues["demo-9001"];
-    await saveDashboardState(ctx.statePath, ctx.state);
-    sendJson(res, 200, { ok: true, state: await buildState(ctx) });
-    return;
-  }
-
   sendJson(res, 404, { error: "Unknown endpoint" });
 }
 
@@ -194,7 +186,7 @@ async function runReflectionJob(ctx, { issue, issueId, actionId, runAgent }) {
 }
 
 async function buildState(ctx) {
-  const issues = [demoIssue()];
+  const issues = [];
   const prs = await safeGhPRs();
   const ghIssues = await safeGhIssues();
   issues.push(...ghIssues.map((issue) => ({
@@ -229,7 +221,7 @@ async function buildState(ctx) {
     mode: {
       writeEnabled: false,
       agentRunsEnabled: Boolean(ctx.args.allowAgentRuns),
-      demoEnabled: true,
+      demoEnabled: false,
       host: "127.0.0.1",
     },
     phases: PHASES,
@@ -249,7 +241,7 @@ async function safeGhIssues() {
       "--limit",
       "50",
       "--json",
-      "number,title,body,labels,url",
+      "number,title,body,labels,comments,url",
     ]);
   } catch {
     return [];

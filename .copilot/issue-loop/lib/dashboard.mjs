@@ -4,6 +4,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { spawnFile } from "./process.mjs";
 import { redactSecrets } from "./redaction.mjs";
 import { issueFolderName } from "./markers.mjs";
+import { critiqueRequirements, requirementsReview } from "./requirements.mjs";
 
 export const PHASES = [
   { id: "requirements", title: "Requirements critique", sideEffect: "local state only" },
@@ -15,17 +16,6 @@ export const PHASES = [
   { id: "finalization", title: "Ready for review", sideEffect: "GitHub PR metadata when enabled" },
   { id: "self-reflection", title: "Self-reflection", sideEffect: "local state only" },
 ];
-
-export const DEMO_ISSUE = {
-  id: "demo-9001",
-  number: "DEMO-9001",
-  title: "Demo: add a low-risk settings tooltip",
-  url: null,
-  labels: ["automate", "demo"],
-  body:
-    "A local-only demo issue for testing approvals, feedback, and self-reflection without touching GitHub.",
-  source: "demo",
-};
 
 export async function ensureDashboardState(runtimeDir) {
   await fs.mkdir(runtimeDir, { recursive: true });
@@ -56,6 +46,8 @@ export function applyApproval(state, issueId, phaseId, context) {
   const issue = issueState(state, issueId);
   const previous = issue.overrides[phaseId] ?? "ready";
   const spec = context?.spec ?? {};
+  const isGithubIssue = String(issueId).startsWith("gh-");
+  const status = isGithubIssue && phaseId === "approval" ? "local-approved" : "approved";
   issue.approvals[phaseId] = {
     id: randomUUID(),
     issueId,
@@ -65,14 +57,19 @@ export function applyApproval(state, issueId, phaseId, context) {
     specSha: spec.sha ?? null,
     createdAt: new Date().toISOString(),
   };
-  setPhaseStatus(issue, phaseId, "approved", {
+  setPhaseStatus(issue, phaseId, status, {
     from: previous,
     source: "human-approval",
-    message: `Approved ${phaseId}`,
+    message:
+      status === "local-approved"
+        ? `Recorded local approval for ${phaseId}; trusted GitHub marker is still required`
+        : `Approved ${phaseId}`,
   });
-  markDownstreamNeedsRedo(issue, phaseId, "Upstream phase was approved by a human reviewer.");
+  if (!(isGithubIssue && phaseId === "approval")) {
+    markDownstreamNeedsRedo(issue, phaseId, "Upstream phase was approved by a human reviewer.");
+  }
   const next = nextPhase(phaseId);
-  if (next) {
+  if (next && !(isGithubIssue && phaseId === "approval")) {
     setPhaseStatus(issue, next, "ready", {
       source: "state-machine",
       message: `Ready after ${phaseId} approval`,
@@ -158,7 +155,7 @@ export function buildPhaseView(issue, stateIssue, derived) {
       approvals,
       transitions,
       activeActions,
-      canApprove: activeActions.length === 0 && ["ready", "needs-revision"].includes(status),
+      canApprove: activeActions.length === 0 && ["ready", "needs-revision", "local-approved"].includes(status),
       canGiveFeedback:
         activeActions.length === 0 &&
         ["ready", "complete", "approved", "needs-revision", "needs-redo"].includes(status),
@@ -168,6 +165,7 @@ export function buildPhaseView(issue, stateIssue, derived) {
 
 export async function deriveIssueState({ root, issue, prs, localIssue }) {
   const spec = await specInfo(root, issue);
+  const requirements = critiqueRequirements(issue);
   const linkedPr = prs.find((pr) =>
     pr.closingIssuesReferences?.some((ref) => String(ref.number) === String(issue.number)),
   );
@@ -175,8 +173,8 @@ export async function deriveIssueState({ root, issue, prs, localIssue }) {
   const hasReview = Boolean(spec.adversarialReview && !/Pending\./i.test(spec.adversarialReview));
   const derived = {
     requirements: {
-      status: issue.body && issue.body.length > 120 ? "complete" : "needs-revision",
-      output: issue.body ?? "",
+      status: requirements.status === "clear" ? "complete" : "needs-revision",
+      output: requirementsReview(issue, requirements),
     },
     spec: {
       status: hasSpec ? "complete" : "ready",
@@ -189,15 +187,16 @@ export async function deriveIssueState({ root, issue, prs, localIssue }) {
       path: spec.adversarialPath,
     },
     approval: {
-      status: localIssue?.approvals?.approval ? "approved" : hasReview ? "ready" : "blocked",
-      output: "Requires a trusted, hash-bound approval marker before implementation.",
+      status: localIssue?.overrides?.approval ?? (hasReview ? "ready" : "blocked"),
+      output:
+        "Requires a trusted, hash-bound spec-approval marker before implementation. Dashboard approvals are local review notes only for GitHub issues.",
       path: spec.path,
     },
     implementation: {
-      status: linkedPr ? "complete" : localIssue?.approvals?.approval ? "ready" : "blocked",
+      status: linkedPr ? "complete" : "blocked",
       output: linkedPr
         ? `PR #${linkedPr.number}: ${linkedPr.title}`
-        : "No implementation PR linked yet.",
+        : "No implementation PR linked yet. The loop requires trusted spec approval before implementation.",
     },
     verification: {
       status: linkedPr?.mergeStateStatus === "CLEAN" ? "complete" : linkedPr ? "ready" : "blocked",
@@ -351,27 +350,12 @@ export function reflectionPrompt(issue, phases, feedback) {
   ].join("\n");
 }
 
-export function demoIssue() {
-  return { ...DEMO_ISSUE };
-}
-
 function nextPhase(phaseId) {
   const index = PHASES.findIndex((phase) => phase.id === phaseId);
   return index >= 0 ? PHASES[index + 1]?.id : null;
 }
 
 async function specInfo(root, issue) {
-  if (String(issue.number).startsWith("DEMO")) {
-    return {
-      path: "docs/automation/specs/demo-9001/spec.md",
-      sha: "demo-spec",
-      content:
-        "# Demo spec\n\nAdd a tooltip in Settings. This is local demo content and will not touch GitHub.",
-      adversarialPath: "docs/automation/specs/demo-9001/adversarial-review.md",
-      adversarialReview:
-        "# Demo adversarial review\n\nBlocking concern: tooltip copy should be accessible and concise.",
-    };
-  }
   const folder = issueFolderName(issue);
   const specPath = path.join(root, "docs/automation/specs", folder, "spec.md");
   const reviewPath = path.join(root, "docs/automation/specs", folder, "adversarial-review.md");

@@ -110,7 +110,7 @@ To trigger it:
 
 The loop first critiques requirements and creates a repo-tracked spec in `docs/automation/specs/`. Implementation does not start until the spec is approved by a trusted, hash-bound approval marker. Any PR it opens starts as a draft, must pass verification, and still requires human review/merge.
 
-For a visual workflow, run `pnpm automation:dashboard` and open the printed localhost URL. The dashboard includes a local demo issue so you can test phase approvals, feedback, and self-reflection without writing to GitHub.
+For a visual workflow, run `pnpm automation:dashboard` and open the printed localhost URL. The dashboard shows real open issues, requirements critique status, phase approvals, feedback, and self-reflection without writing to GitHub by default. There is no demo issue; use a real issue and the `automate` label when you want implementation to become eligible.
 
 ## License
 

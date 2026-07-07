@@ -9,6 +9,7 @@ export const DEFAULT_CONFIG = {
   pollIntervalSeconds: 300,
   maxConcurrentIssues: 1,
   maxIssuesPerTick: 1,
+  triageAllOpenIssues: false,
   requiredLabels: ["automate"],
   excludedLabels: ["wontfix", "blocked", "needs-human"],
   automationLabels: {

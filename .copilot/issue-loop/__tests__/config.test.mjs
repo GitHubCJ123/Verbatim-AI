@@ -14,4 +14,8 @@ describe("issue loop config", () => {
     expect(modelFamily("claude-opus-4.8")).toBe("anthropic");
     expect(modelFamily("gemini-3.1-pro")).toBe("google");
   });
+
+  it("keeps all-open requirements triage disabled by default", () => {
+    expect(DEFAULT_CONFIG.triageAllOpenIssues).toBe(false);
+  });
 });

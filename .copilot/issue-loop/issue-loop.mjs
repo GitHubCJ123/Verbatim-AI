@@ -23,6 +23,12 @@ import {
 } from "./lib/github.mjs";
 import { ensureRuntimeDir, remoteBranchExists } from "./lib/git.mjs";
 import { assertArchitectReviewerDiversity, architectPrompt, runCopilot } from "./lib/copilot.mjs";
+import {
+  critiqueRequirements,
+  latestRequirementsMarker,
+  requirementsMarker,
+  requirementsReview,
+} from "./lib/requirements.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 
@@ -64,6 +70,9 @@ async function tick(config, args) {
   const [issues, prs] = await Promise.all([listOpenIssues(config), listOpenPRs(config)]);
   const selected = [];
   for (const issue of issues) {
+    if (config.triageAllOpenIssues && canRequirementsTriage(config, issue)) {
+      await maybeProcessRequirementsOnly(config, issue);
+    }
     if (selected.length >= config.maxIssuesPerTick) break;
     if (await isEligible(config, issue, prs)) selected.push(issue);
   }
@@ -104,6 +113,13 @@ async function isEligible(config, issue, prs) {
   return true;
 }
 
+function canRequirementsTriage(config, issue) {
+  const labels = issue.labels.map((label) => label.name);
+  if (labels.some((label) => config.excludedLabels.includes(label))) return false;
+  if (labels.some((label) => config.stop?.labels?.includes(label))) return false;
+  return true;
+}
+
 async function processIssue(config, issue, args) {
   const branch = issueBranchName(config, issue);
   const specDir = path.join(ROOT, "docs/automation/specs", issueFolderName(issue));
@@ -113,12 +129,12 @@ async function processIssue(config, issue, args) {
 
   const critique = critiqueRequirements(issue);
   if (critique.status === "needs-human") {
-    const body = `<!-- verbatim-ai:requirements:v1 issue=${issue.number} status=needs-human -->\n\n${critique.message}`;
-    await maybeComment(config, issue.number, body);
+    await maybeCommentRequirements(config, issue, critique);
     return;
   }
 
   await writeSpecScaffold(config, issue, specDir, critique);
+  await maybeCommentRequirements(config, issue, critique, path.join(specDir, "requirements-review.md"));
   await maybeClaim(config, issue, branch);
 
   if (!config.dryRun && !args.dryRun) {
@@ -147,21 +163,9 @@ async function processIssue(config, issue, args) {
   console.log("Spec gate passed. Implementation phase is intentionally delegated to issue-implementer.");
 }
 
-function critiqueRequirements(issue) {
-  const body = issue.body ?? "";
-  if (body.trim().length < 200) {
-    return {
-      status: "needs-human",
-      message: "This issue needs more implementation detail before automation can write a spec.",
-    };
-  }
-  if (/(store|hardcode|add|expose)\s+(a\s+)?(secret|token|credential|password)/i.test(body)) {
-    return {
-      status: "needs-human",
-      message: "This issue appears to require handling secrets or credentials and requires human scoping.",
-    };
-  }
-  return { status: "clear", message: "Requirements are sufficient for a draft spec." };
+async function maybeProcessRequirementsOnly(config, issue) {
+  const critique = critiqueRequirements(issue);
+  await maybeCommentRequirements(config, issue, critique);
 }
 
 async function writeSpecScaffold(config, issue, specDir, critique) {
@@ -171,7 +175,8 @@ async function writeSpecScaffold(config, issue, specDir, critique) {
   }
   await fs.mkdir(path.join(specDir, "screenshots/before"), { recursive: true });
   await fs.mkdir(path.join(specDir, "screenshots/after"), { recursive: true });
-  await writeIfMissing(path.join(specDir, "requirements-review.md"), requirementsReview(issue, critique));
+  const reviewPath = path.join(specDir, "requirements-review.md");
+  await fs.writeFile(reviewPath, requirementsReview(issue, critique));
   await writeIfMissing(path.join(specDir, "spec.md"), specTemplate(issue));
   await writeIfMissing(path.join(specDir, "adversarial-review.md"), "# Adversarial review\n\nPending.\n");
   await writeIfMissing(path.join(specDir, "test-plan.md"), "# Test plan\n\nPending.\n");
@@ -187,10 +192,6 @@ async function writeIfMissing(file, content) {
   }
 }
 
-function requirementsReview(issue, critique) {
-  return `# Requirements review for issue #${issue.number}\n\nStatus: ${critique.status}\n\n${critique.message}\n\n## Original issue\n\n${issue.body ?? ""}\n`;
-}
-
 function specTemplate(issue) {
   return `# Spec: issue #${issue.number} ${issue.title}\n\n## Problem\n\nTBD by architect.\n\n## Non-goals\n\nTBD.\n\n## Current repo facts\n\nTBD.\n\n## Architecture\n\nTBD.\n\n## Security and privacy\n\nTBD.\n\n## Implementation waves\n\nTBD.\n\n## Acceptance criteria\n\nTBD.\n\n## Verification\n\nTBD.\n\n## UX evidence\n\nTBD.\n`;
 }
@@ -203,6 +204,44 @@ async function maybeClaim(config, issue, branch) {
     branch,
     expires,
   })}\n\nAutomation claimed this issue for spec preparation.`;
+  await maybeComment(config, issue.number, body);
+}
+
+async function maybeCommentRequirements(config, issue, critique, artifactPath = null) {
+  const comments = issue.comments ?? (await issueComments(config, issue.number));
+  const existing = latestRequirementsMarker(comments);
+  let artifactSha = null;
+  if (artifactPath && !config.dryRun) {
+    artifactSha = await fileSha256(artifactPath);
+  }
+  if (
+    existing?.attrs?.issueInputSha === critique.issueInputSha &&
+    existing?.attrs?.status === critique.status &&
+    (!artifactSha || existing?.attrs?.artifactSha === artifactSha)
+  ) {
+    return;
+  }
+  const marker = requirementsMarker({
+    issue: issue.number,
+    status: critique.status,
+    issueInputSha: critique.issueInputSha,
+    artifactSha: config.dryRun ? "dry-run" : artifactSha,
+  });
+  const body = [
+    marker,
+    "",
+    `Requirements critique: **${critique.status}**`,
+    "",
+    critique.summary,
+    "",
+    "Findings:",
+    ...(critique.findings.length ? critique.findings.map((item) => `- ${item}`) : ["- None."]),
+    "",
+    "Questions / blockers:",
+    ...(critique.questions.length ? critique.questions.map((item) => `- ${item}`) : ["- None."]),
+    "",
+    `Next action: ${critique.nextAction}`,
+  ].join("\n");
   await maybeComment(config, issue.number, body);
 }
 

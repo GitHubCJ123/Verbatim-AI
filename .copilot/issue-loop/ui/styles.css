@@ -92,6 +92,7 @@ button:hover { transform: translateY(-1px); border-color: rgba(244,255,104,.55);
 .phase-title { font-size: 22px; }
 .phase-status { border-radius: 999px; padding: 6px 9px; color: #04110e; background: var(--muted); font: 11px ui-monospace, monospace; text-transform: uppercase; }
 .phase-status.complete, .phase-status.approved { background: var(--green); }
+.phase-status.local-approved { background: #9dffdf; }
 .phase-status.ready { background: var(--blue); }
 .phase-status.needs-revision { background: var(--amber); }
 .phase-status.needs-redo { background: #ff8a3d; }

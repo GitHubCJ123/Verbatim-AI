@@ -230,12 +230,15 @@ function HistoryRow({
 
   const handlePaste = async () => {
     const pasted = await pasteCleanedText(cleaned);
+    const behavior = getOutputBehavior();
     toast.success(
       pasted
         ? "Pasted"
-        : getOutputBehavior() === "insert-only"
+        : behavior === "insert-only"
           ? "No target window; clipboard unchanged"
-          : "Copied (no target window)",
+          : behavior === "restore"
+            ? "No target window; clipboard restored"
+            : "Copied (no target window)",
     );
   };
 

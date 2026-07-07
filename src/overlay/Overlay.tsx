@@ -34,9 +34,14 @@ import { getPrivacyStatus, type DataLocality } from "../lib/privacyStatus";
 import type { Mode } from "../types/mode";
 
 function noPasteTargetMessage(): string {
-  return getOutputBehavior() === "insert-only"
-    ? "[Verbatim AI] no paste target; clipboard unchanged because insert-only is enabled"
-    : "[Verbatim AI] no paste target; copied to clipboard";
+  const behavior = getOutputBehavior();
+  if (behavior === "insert-only") {
+    return "[Verbatim AI] no paste target; clipboard unchanged because insert-only is enabled";
+  }
+  if (behavior === "restore") {
+    return "[Verbatim AI] no paste target; previous clipboard will be restored";
+  }
+  return "[Verbatim AI] no paste target; copied to clipboard";
 }
 
 type View = "pill" | "review";
@@ -198,16 +203,28 @@ export default function Overlay() {
         outputStyle: activeMode.outputStyle,
         saveHistory: activeMode.saveHistory,
       };
-      await invoke("relay_event", { name: "recording:result", payload });
 
       if (activeMode.outputStyle === "paste") {
         const pasted = await pasteCleanedText(cleaned);
+        if (!pasted && getOutputBehavior() !== "copy") {
+          console.info(noPasteTargetMessage());
+          await resizeOverlayToReview();
+          setView("review");
+          await invoke("relay_event", {
+            name: "recording:result",
+            payload: { ...payload, outputStyle: "review" },
+          });
+          setState("idle");
+          return;
+        }
+        await invoke("relay_event", { name: "recording:result", payload });
         if (!pasted) {
           console.info(noPasteTargetMessage());
         }
         setState("success");
         setTimeout(() => void reset(), 900);
       } else {
+        await invoke("relay_event", { name: "recording:result", payload });
         // Review panel stays open until user acts.
         setState("idle");
       }
@@ -270,7 +287,7 @@ export default function Overlay() {
 
   const handleReviewPaste = async (text: string) => {
     const ok = await pasteCleanedText(text);
-    if (!ok && getOutputBehavior() === "insert-only") {
+    if (!ok && getOutputBehavior() !== "copy") {
       console.info(noPasteTargetMessage());
       return;
     }

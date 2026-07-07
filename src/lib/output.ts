@@ -8,19 +8,27 @@ import { getOutputBehavior } from "./preferences";
 
 const CLIPBOARD_RESTORE_DELAY_MS = 1000;
 
+async function restoreClipboardIfUnchanged(
+  prev: string,
+  expected: string,
+  restoreOnReadFailure: boolean,
+): Promise<void> {
+  try {
+    const current = await readText();
+    if (current === expected) {
+      await writeText(prev);
+    }
+  } catch {
+    if (restoreOnReadFailure) {
+      await writeText(prev).catch(() => {});
+    }
+  }
+}
+
 function restoreClipboardSoon(prev: string, expected: string): void {
   setTimeout(() => {
-    void (async () => {
-      try {
-        const current = await readText();
-        if (current === expected) {
-          await writeText(prev);
-        }
-      } catch {
-        // If we cannot verify the clipboard still contains our text, do
-        // not overwrite whatever the user may have copied in the meantime.
-      }
-    })();
+    // Delayed restore must not clobber user clipboard activity.
+    void restoreClipboardIfUnchanged(prev, expected, false);
   }, CLIPBOARD_RESTORE_DELAY_MS);
 }
 
@@ -52,11 +60,18 @@ export async function pasteCleanedText(text: string): Promise<boolean> {
   await writeText(text);
   try {
     const ok = await invoke<boolean>("paste_to_target");
-    if (ok && behavior === "restore" && prev !== null) {
-      restoreClipboardSoon(prev, text);
+    if (behavior === "restore" && prev !== null) {
+      if (ok) {
+        restoreClipboardSoon(prev, text);
+      } else {
+        await restoreClipboardIfUnchanged(prev, text, true);
+      }
     }
     return ok;
   } catch (e) {
+    if (behavior === "restore" && prev !== null) {
+      await restoreClipboardIfUnchanged(prev, text, true);
+    }
     console.warn("[Verbatim AI] paste_to_target failed:", e);
     return false;
   }

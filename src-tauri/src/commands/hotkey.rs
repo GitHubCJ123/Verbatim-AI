@@ -39,6 +39,12 @@ pub fn handle_event<R: Runtime>(app: &AppHandle<R>, shortcut: &Shortcut, event: 
     }
 }
 
+/// Register `spec` as the active global shortcut.
+///
+/// `spec` may be a modifier + key combo (e.g. `"CommandOrControl+Space"`)
+/// *or* a single key with no modifier (e.g. `"F6"`). Single-key specs —
+/// function keys in particular — parse and register the same way on every
+/// platform, so no special handling is needed here.
 #[tauri::command]
 pub fn set_hotkey<R: Runtime>(
     app: AppHandle<R>,

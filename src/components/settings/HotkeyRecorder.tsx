@@ -11,7 +11,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { Kbd } from "../ui/Kbd";
 import { Button } from "../ui/Button";
 import { cn } from "../../lib/utils";
-import { applyHotkey, clearHotkey } from "../../lib/hotkey";
+import { applyHotkey, clearHotkey, isFunctionKey } from "../../lib/hotkey";
 import { toast } from "../ui/Toast";
 
 interface HotkeyRecorderProps {
@@ -95,7 +95,9 @@ export function HotkeyRecorder({ value, onChange }: HotkeyRecorderProps) {
       }
 
       // Non-modifier — commit if we have at least one modifier. On macOS,
-      // single-key press-and-hold is allowed for push-to-talk.
+      // single-key press-and-hold is allowed for push-to-talk; on every
+      // platform a lone function key (e.g. F6) is allowed as a single-key
+      // hotkey.
       const mainKey = mainKeyFromEvent(e);
       if (!mainKey) return;
 
@@ -108,8 +110,10 @@ export function HotkeyRecorder({ value, onChange }: HotkeyRecorderProps) {
         if (e.metaKey) all.add("Super");
         if (e.shiftKey) all.add("Shift");
         if (e.altKey) all.add("Alt");
-        if (all.size === 0 && !IS_MAC) {
-          // No modifier — not a valid global shortcut on non-macOS. Keep recording.
+        if (all.size === 0 && !IS_MAC && !isFunctionKey(mainKey)) {
+          // No modifier and not a function key — not a usable global
+          // shortcut on non-macOS (a bare letter/Space would hijack
+          // ordinary typing). Keep recording.
           return accumulated;
         }
         const spec = all.size === 0 ? mainKey : [...all, mainKey].join("+");
@@ -193,7 +197,7 @@ export function HotkeyRecorder({ value, onChange }: HotkeyRecorderProps) {
         {tokens.length === 0 ? (
           recording ? (
             <span className="text-xs text-text-secondary">
-              {IS_MAC ? "Press a key or shortcut…" : "Press your shortcut…"}
+              {IS_MAC ? "Press a key or shortcut…" : "Press a shortcut or function key (e.g. F6)…"}
             </span>
           ) : (
             <span className="text-xs text-text-muted">No shortcut</span>

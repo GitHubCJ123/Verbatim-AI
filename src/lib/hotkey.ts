@@ -68,6 +68,21 @@ export function isMacSingleKeySpec(spec: string): boolean {
   return IS_MAC && isSingleKeySpec(spec);
 }
 
+/**
+ * True for a function-key name (F1–F24). Function keys are the one class
+ * of key that is safe to bind on its own as a *global* shortcut on
+ * non-macOS: a bare letter/space would hijack ordinary typing, but a
+ * function key generally does not.
+ */
+export function isFunctionKey(key: string): boolean {
+  return /^F([1-9]|1[0-9]|2[0-4])$/.test(key.trim());
+}
+
+/** True if `spec` is a single function key, e.g. `"F6"`. */
+export function isFunctionKeySpec(spec: string): boolean {
+  return isSingleKeySpec(spec) && isFunctionKey(spec);
+}
+
 export function usesHoldToTalk(cfg: HotkeyConfig): boolean {
   return cfg.pushToTalk || isMacSingleKeySpec(cfg.spec);
 }

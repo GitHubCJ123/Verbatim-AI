@@ -1,0 +1,279 @@
+#!/usr/bin/env node
+import fs from "node:fs/promises";
+import path from "node:path";
+import { createHash } from "node:crypto";
+import { fileURLToPath } from "node:url";
+import { loadConfig, stopRequested } from "./lib/config.mjs";
+import {
+  activeClaimsFromComments,
+  claimMarker,
+  issueBranchName,
+  issueFolderName,
+  specMarker,
+  parseMarkers,
+} from "./lib/markers.mjs";
+import {
+  collaboratorPermission,
+  commentIssue,
+  gh,
+  hasWritePermission,
+  issueComments,
+  listOpenIssues,
+  listOpenPRs,
+} from "./lib/github.mjs";
+import { ensureRuntimeDir, remoteBranchExists } from "./lib/git.mjs";
+import { assertArchitectReviewerDiversity, architectPrompt, runCopilot } from "./lib/copilot.mjs";
+
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+
+async function main() {
+  const args = parseArgs(process.argv.slice(2));
+  const configPath = args.config ?? path.join(ROOT, ".copilot/issue-loop/config.example.json");
+  const config = await loadConfig(configPath);
+  assertArchitectReviewerDiversity(config);
+  await ensureRuntimeDir(ROOT);
+
+  if (!config.enabled) {
+    console.log("Issue loop is disabled. Copy config.example.json to config.local.json and set enabled=true to run it.");
+    return;
+  }
+  config.dryRun = config.dryRun || args.dryRun;
+
+  if (config.dryRun) {
+    console.log("Issue loop is in dry-run mode; no GitHub or git write actions will be taken.");
+  }
+
+  if (args.watch) {
+    while (true) {
+      await tick(config, args);
+      await sleep(config.pollIntervalSeconds * 1000);
+    }
+  } else {
+    await tick(config, args);
+  }
+}
+
+async function tick(config, args) {
+  const stopped = await stopRequested(config, ROOT);
+  if (stopped) {
+    console.log(`Stop requested by ${stopped}.`);
+    return;
+  }
+
+  await preflight(config);
+  const [issues, prs] = await Promise.all([listOpenIssues(config), listOpenPRs(config)]);
+  const selected = [];
+  for (const issue of issues) {
+    if (selected.length >= config.maxIssuesPerTick) break;
+    if (await isEligible(config, issue, prs)) selected.push(issue);
+  }
+
+  if (selected.length === 0) {
+    console.log("No eligible issues.");
+    return;
+  }
+
+  for (const issue of selected) {
+    await processIssue(config, issue, args);
+  }
+}
+
+async function preflight(config) {
+  await gh(["auth", "status"]);
+  if (config.reviewers.length === 0 && config.teamReviewers.length === 0) {
+    if (config.dryRun) {
+      console.warn("No reviewers configured; enabled runs will fail closed before finalization.");
+      return;
+    }
+    throw new Error("No reviewers configured; finalizer must fail closed.");
+  }
+}
+
+async function isEligible(config, issue, prs) {
+  const labels = issue.labels.map((label) => label.name);
+  const stopped = await stopRequested(config, ROOT, labels);
+  if (stopped) return false;
+  if (!config.requiredLabels.every((label) => labels.includes(label))) return false;
+  if (labels.some((label) => config.excludedLabels.includes(label))) return false;
+  if (prs.some((pr) => pr.closingIssuesReferences?.some((ref) => ref.number === issue.number))) {
+    return false;
+  }
+  if (await remoteBranchExists(ROOT, issueBranchName(config, issue))) return false;
+  const comments = issue.comments ?? (await issueComments(config, issue.number));
+  if (activeClaimsFromComments(comments).length > 0) return false;
+  return true;
+}
+
+async function processIssue(config, issue, args) {
+  const branch = issueBranchName(config, issue);
+  const specDir = path.join(ROOT, "docs/automation/specs", issueFolderName(issue));
+  const specPath = path.join(specDir, "spec.md");
+  console.log(`Selected issue #${issue.number}: ${issue.title}`);
+  console.log(`Spec path: ${path.relative(ROOT, specPath)}`);
+
+  const critique = critiqueRequirements(issue);
+  if (critique.status === "needs-human") {
+    const body = `<!-- verbatim-ai:requirements:v1 issue=${issue.number} status=needs-human -->\n\n${critique.message}`;
+    await maybeComment(config, issue.number, body);
+    return;
+  }
+
+  await writeSpecScaffold(config, issue, specDir, critique);
+  await maybeClaim(config, issue, branch);
+
+  if (!config.dryRun && !args.dryRun) {
+    const result = await runCopilot(config, {
+      role: "architect",
+      worktree: ROOT,
+      prompt: architectPrompt(issue, path.relative(ROOT, specPath)),
+    });
+    if (result.code !== 0) throw new Error(result.stderr);
+  }
+
+  if (config.gates.requireHumanSpecApproval) {
+    const approved = await hasTrustedSpecApproval(config, issue, specPath);
+    if (!approved) {
+      const body = `${specMarker({
+        issue: issue.number,
+        status: "needs-approval",
+        path: path.relative(ROOT, specPath),
+        sha: config.dryRun ? "dry-run" : await fileSha256(specPath),
+      })}\n\nSpec created or refreshed. Add the \`${config.automationLabels.specApproved}\` label or a trusted spec-approval marker after review to allow implementation.`;
+      await maybeComment(config, issue.number, body);
+      return;
+    }
+  }
+
+  console.log("Spec gate passed. Implementation phase is intentionally delegated to issue-implementer.");
+}
+
+function critiqueRequirements(issue) {
+  const body = issue.body ?? "";
+  if (body.trim().length < 200) {
+    return {
+      status: "needs-human",
+      message: "This issue needs more implementation detail before automation can write a spec.",
+    };
+  }
+  if (/(store|hardcode|add|expose)\s+(a\s+)?(secret|token|credential|password)/i.test(body)) {
+    return {
+      status: "needs-human",
+      message: "This issue appears to require handling secrets or credentials and requires human scoping.",
+    };
+  }
+  return { status: "clear", message: "Requirements are sufficient for a draft spec." };
+}
+
+async function writeSpecScaffold(config, issue, specDir, critique) {
+  if (config.dryRun) {
+    console.log(`[dry-run] would write spec scaffold in ${path.relative(ROOT, specDir)}`);
+    return;
+  }
+  await fs.mkdir(path.join(specDir, "screenshots/before"), { recursive: true });
+  await fs.mkdir(path.join(specDir, "screenshots/after"), { recursive: true });
+  await writeIfMissing(path.join(specDir, "requirements-review.md"), requirementsReview(issue, critique));
+  await writeIfMissing(path.join(specDir, "spec.md"), specTemplate(issue));
+  await writeIfMissing(path.join(specDir, "adversarial-review.md"), "# Adversarial review\n\nPending.\n");
+  await writeIfMissing(path.join(specDir, "test-plan.md"), "# Test plan\n\nPending.\n");
+  await writeIfMissing(path.join(specDir, "security-notes.md"), "# Security notes\n\nPending.\n");
+  await writeIfMissing(path.join(specDir, "ux-evidence.md"), "# UX evidence\n\nPending.\n");
+}
+
+async function writeIfMissing(file, content) {
+  try {
+    await fs.access(file);
+  } catch {
+    await fs.writeFile(file, content);
+  }
+}
+
+function requirementsReview(issue, critique) {
+  return `# Requirements review for issue #${issue.number}\n\nStatus: ${critique.status}\n\n${critique.message}\n\n## Original issue\n\n${issue.body ?? ""}\n`;
+}
+
+function specTemplate(issue) {
+  return `# Spec: issue #${issue.number} ${issue.title}\n\n## Problem\n\nTBD by architect.\n\n## Non-goals\n\nTBD.\n\n## Current repo facts\n\nTBD.\n\n## Architecture\n\nTBD.\n\n## Security and privacy\n\nTBD.\n\n## Implementation waves\n\nTBD.\n\n## Acceptance criteria\n\nTBD.\n\n## Verification\n\nTBD.\n\n## UX evidence\n\nTBD.\n`;
+}
+
+async function maybeClaim(config, issue, branch) {
+  const expires = new Date(Date.now() + config.claimTtlMinutes * 60_000).toISOString();
+  const body = `${claimMarker({
+    issue: issue.number,
+    runId: crypto.randomUUID(),
+    branch,
+    expires,
+  })}\n\nAutomation claimed this issue for spec preparation.`;
+  await maybeComment(config, issue.number, body);
+}
+
+async function maybeComment(config, issueNumber, body) {
+  if (config.dryRun) {
+    console.log(`[dry-run] would comment on issue #${issueNumber}:\n${body}`);
+    return;
+  }
+  await commentIssue(config, issueNumber, body);
+}
+
+async function hasTrustedSpecApproval(config, issue, specPath) {
+  const labels = issue.labels.map((label) => label.name);
+  if (labels.includes(config.automationLabels.specApproved)) {
+    console.warn(
+      `Ignoring ${config.automationLabels.specApproved} label without a trusted spec-approval marker bound to the current spec hash.`,
+    );
+  }
+  const specRelPath = path.relative(ROOT, specPath);
+  let specSha;
+  try {
+    specSha = await fileSha256(specPath);
+  } catch {
+    return false;
+  }
+  const comments = await issueComments(config, issue.number);
+  for (const comment of comments) {
+    const approvals = parseMarkers(comment.body).filter((marker) => marker.kind === "spec-approval");
+    if (approvals.length === 0) continue;
+    const login = comment.author?.login;
+    if (!login) continue;
+    const trusted =
+      config.trustedApprovers.includes(login) ||
+      hasWritePermission(await collaboratorPermission(config, login));
+    if (!trusted) continue;
+    if (
+      approvals.some(
+        (approval) =>
+          approval.attrs.issue === String(issue.number) &&
+          approval.attrs.path === specRelPath &&
+          approval.attrs.sha === specSha,
+      )
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+async function fileSha256(file) {
+  const buf = await fs.readFile(file);
+  return createHash("sha256").update(buf).digest("hex");
+}
+
+function parseArgs(argv) {
+  const args = { once: true, watch: false, dryRun: false, config: null };
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i];
+    if (arg === "--watch") args.watch = true;
+    else if (arg === "--once") args.once = true;
+    else if (arg === "--dry-run") args.dryRun = true;
+    else if (arg === "--config") args.config = argv[++i];
+  }
+  return args;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+main().catch((error) => {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exitCode = 1;
+});

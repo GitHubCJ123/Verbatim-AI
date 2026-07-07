@@ -28,3 +28,8 @@ dist-ssr
 .env.local
 .env.*.local
 src-tauri/target
+
+# Local issue automation runtime state/logs. The reusable automation lives in
+# .copilot/issue-loop and is committed; this directory is per-maintainer state.
+.copilot-issue-loop/
+.copilot/issue-loop/config.local.json

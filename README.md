@@ -91,6 +91,26 @@ Outputs to `src-tauri/target/release/bundle/`:
 | `pnpm tauri build` | Build production installers (MSI + NSIS) |
 | `pnpm lint` | Run ESLint |
 | `pnpm format` | Run Prettier |
+| `pnpm automation:issues -- --once --config .copilot/issue-loop/config.local.json` | Run one local issue automation tick |
+| `pnpm automation:issues -- --watch --config .copilot/issue-loop/config.local.json` | Poll opted-in issues continuously on a maintainer machine |
+| `pnpm automation:dashboard` | Start the local issue automation dashboard |
+| `pnpm automation:test` | Run tests for the local issue automation loop |
+
+## Local issue automation
+
+This repo includes a local, human-gated Copilot issue loop under `.copilot/issue-loop/`. It is disabled and dry-run by default, uses your local `gh` and Copilot CLI auth, and never merges PRs.
+
+To trigger it:
+
+1. Copy `.copilot/issue-loop/config.example.json` to `.copilot/issue-loop/config.local.json`.
+2. Set `enabled: true`, keep `dryRun: true`, and configure at least one reviewer.
+3. Add the `automate` label to an issue.
+4. Run `pnpm automation:issues -- --once --config .copilot/issue-loop/config.local.json`.
+5. If the dry run is correct, set `dryRun: false` and run the same command, or use `--watch` for continuous polling.
+
+The loop first critiques requirements and creates a repo-tracked spec in `docs/automation/specs/`. Implementation does not start until the spec is approved by a trusted, hash-bound approval marker. Any PR it opens starts as a draft, must pass verification, and still requires human review/merge.
+
+For a visual workflow, run `pnpm automation:dashboard` and open the printed localhost URL. The dashboard includes a local demo issue so you can test phase approvals, feedback, and self-reflection without writing to GitHub.
 
 ## License
 

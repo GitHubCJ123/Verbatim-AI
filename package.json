@@ -8,6 +8,9 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "test": "vitest run",
+    "automation:issues": "node .copilot/issue-loop/issue-loop.mjs",
+    "automation:dashboard": "node .copilot/issue-loop/dashboard-server.mjs",
+    "automation:test": "vitest run .copilot/issue-loop/__tests__",
     "tauri": "tauri",
     "lint": "eslint . --ext .ts,.tsx",
     "format": "prettier --write \"src/**/*.{ts,tsx,css,md}\""

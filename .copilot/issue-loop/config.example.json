@@ -1,0 +1,70 @@
+{
+  "enabled": false,
+  "dryRun": true,
+  "repository": "GitHubCJ123/Verbatim-AI",
+  "baseBranch": "main",
+  "pollIntervalSeconds": 300,
+  "maxConcurrentIssues": 1,
+  "maxIssuesPerTick": 1,
+  "requiredLabels": ["automate"],
+  "excludedLabels": ["wontfix", "blocked", "needs-human"],
+  "automationLabels": {
+    "inProgress": "automation-in-progress",
+    "readyForReview": "ready-for-review",
+    "needsHuman": "needs-human",
+    "specApproved": "spec-approved"
+  },
+  "branchPrefix": "copilot/issue-",
+  "reviewers": [],
+  "teamReviewers": [],
+  "trustedApprovers": [],
+  "claimTtlMinutes": 240,
+  "stop": {
+    "env": "COPILOT_ISSUE_LOOP_STOP",
+    "file": ".copilot-issue-loop/STOP",
+    "labels": ["automation-stop", "blocked"]
+  },
+  "agents": {
+    "architect": {
+      "persona": "experienced software architect",
+      "model": "gpt-5.5"
+    },
+    "adversarialReviewer": {
+      "persona": "skeptical senior reviewer focused on missed requirements, security, UX regressions, and test gaps",
+      "model": "claude-opus-4.8",
+      "mustDifferFrom": "architect"
+    },
+    "implementer": {
+      "model": "claude-sonnet-5"
+    },
+    "verifier": {
+      "model": "gpt-5.5"
+    }
+  },
+  "gates": {
+    "requireHumanSpecApproval": true,
+    "requireHumanMerge": true,
+    "requireScreenshotsForUxChanges": true
+  },
+  "verification": {
+    "installCommand": "pnpm install --frozen-lockfile --ignore-scripts",
+    "commands": ["pnpm lint", "pnpm test", "pnpm build"],
+    "heavyCommands": ["pnpm tauri build"],
+    "runHeavyCommands": false,
+    "allowHostExecution": false,
+    "sandboxCommand": "",
+    "timeoutMinutes": 45
+  },
+  "copilot": {
+    "command": "copilot",
+    "model": "auto",
+    "baseArgs": ["-p", "--add-dir", "{worktree}"],
+    "allowTools": ["view", "rg", "glob", "apply_patch"],
+    "readOnlyRoles": ["architect", "adversarialReviewer"],
+    "readOnlyTools": ["view", "rg", "glob"]
+  },
+  "triggers": {
+    "mode": "local-watch",
+    "metadataOnlyGitHubActions": true
+  }
+}

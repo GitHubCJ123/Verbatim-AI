@@ -20,6 +20,52 @@ node .copilot/issue-loop/issue-loop.mjs --once --config .copilot/issue-loop/conf
 
 The example config is disabled and dry-run by default. Add `.copilot-issue-loop/STOP` to pause all phases.
 
+## How to trigger it
+
+The loop is opt-in. It does not act on every new issue.
+
+1. Copy and edit local config:
+
+   ```bash
+   cp .copilot/issue-loop/config.example.json .copilot/issue-loop/config.local.json
+   ```
+
+2. In `config.local.json`, set:
+
+   ```json
+   {
+     "enabled": true,
+     "dryRun": true,
+     "reviewers": ["your-github-handle"]
+   }
+   ```
+
+   Keep `dryRun: true` for the first run. The default required label is `automate`.
+
+3. Add the `automate` label to the issue you want the loop to consider.
+
+4. Run one dry-run tick:
+
+   ```bash
+   pnpm automation:issues -- --once --config .copilot/issue-loop/config.local.json
+   ```
+
+5. If the dry run selects the expected issue, set `dryRun: false` and run:
+
+   ```bash
+   pnpm automation:issues -- --once --config .copilot/issue-loop/config.local.json
+   ```
+
+6. For continuous polling on a maintainer machine:
+
+   ```bash
+   pnpm automation:issues -- --watch --config .copilot/issue-loop/config.local.json
+   ```
+
+The first real run creates or refreshes the issue spec under `docs/automation/specs/`, posts a claim/spec marker, and then stops at the human spec gate.
+
+To approve implementation, add a trusted `spec-approval` marker bound to the spec hash, or use the configured approval flow described below. After implementation, the loop still opens draft PRs only and never merges.
+
 ## Workflow
 
 1. **Monitor**: find open issues with an allowlist label such as `automate`.

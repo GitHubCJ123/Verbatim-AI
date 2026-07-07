@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="dashboard-token" content="__DASHBOARD_TOKEN__" />
+    <title>Verbatim Automation Control</title>
+    <link rel="stylesheet" href="/ui/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="hero">
+        <div>
+          <p class="eyebrow">Verbatim AI</p>
+          <h1>Automation Control Room</h1>
+          <p class="subtitle">Inspect issue-loop phases, approve safe transitions, send revision feedback, and run loop self-reflection from one local cockpit.</p>
+        </div>
+        <div class="mode-panel">
+          <span id="modeBadge">Local demo-safe</span>
+          <button id="refreshBtn" type="button">Refresh</button>
+        </div>
+      </section>
+      <section class="grid">
+        <aside class="issues">
+          <div class="section-title">Issues</div>
+          <div id="issueList" class="issue-list"></div>
+        </aside>
+        <section class="detail">
+          <div id="issueDetail"></div>
+        </section>
+      </section>
+    </main>
+    <template id="phaseTemplate">
+      <article class="phase-card">
+        <button class="phase-header" type="button">
+          <span class="phase-index"></span>
+          <span class="phase-title"></span>
+          <span class="phase-status"></span>
+        </button>
+        <div class="phase-body">
+          <pre class="phase-output"></pre>
+          <div class="phase-actions">
+            <button class="approve-btn" type="button">Approve phase</button>
+            <button class="feedback-btn" type="button">Request revision</button>
+          </div>
+          <form class="feedback-form hidden">
+            <label>
+              Human feedback
+              <textarea name="feedback" placeholder="Decision, reason, requested change, acceptance criteria"></textarea>
+            </label>
+            <label class="checkline">
+              <input type="checkbox" name="runAgent" />
+              Run local Copilot text session
+            </label>
+            <button type="submit">Send feedback</button>
+          </form>
+          <div class="phase-log"></div>
+        </div>
+      </article>
+    </template>
+    <script src="/ui/app.js" type="module"></script>
+  </body>
+</html>

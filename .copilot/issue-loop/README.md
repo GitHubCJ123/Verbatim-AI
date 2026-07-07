@@ -24,6 +24,14 @@ The example config is disabled and dry-run by default. Add `.copilot-issue-loop/
 
 The loop is opt-in. It does not act on every new issue.
 
+For a visual control room, start the local dashboard:
+
+```bash
+pnpm automation:dashboard
+```
+
+Open the printed localhost URL. The dashboard includes a local demo issue (`DEMO-9001`) so you can test approvals, feedback, and self-reflection without touching GitHub.
+
 1. Copy and edit local config:
 
    ```bash
@@ -83,6 +91,40 @@ To approve implementation, add a trusted `spec-approval` marker bound to the spe
 Recommended first: run the local watcher and use the GitHub `automate` label as opt-in.
 
 Hosted GitHub Actions, if added later, should be metadata-only: `issues: write`, `contents: read`, no Copilot credentials, no implementation, no `pull_request_target`.
+
+## Local dashboard
+
+The dashboard is a dependency-free localhost app served by:
+
+```bash
+pnpm automation:dashboard -- --port 8787
+```
+
+It shows:
+
+- Real open GitHub issues from this repo, read-only by default.
+- A built-in demo issue for safe testing.
+- Each automation phase and its current artifacts.
+- Local approvals that move the demo/local state forward.
+- Feedback prompts that can run a reviewed text-only agent wrapper only when the server is started with `--allow-agent-runs --agent-command`.
+- A self-reflection phase that summarizes loop history and human feedback.
+
+Security defaults:
+
+- Binds to `127.0.0.1`.
+- Requires a per-session API token.
+- Renders GitHub/spec content as text, not HTML.
+- Does not write to GitHub.
+- Stores dashboard state in ignored `.copilot-issue-loop/dashboard-state.json`.
+- Agent runs are disabled unless an explicit reviewed text-only command template is provided. The current implementation only permits the demo-safe `cat {promptFile}` command.
+
+Example demo-only text agent:
+
+```bash
+pnpm automation:dashboard -- --allow-agent-runs --agent-command "cat {promptFile}"
+```
+
+Do not point this at Copilot directly until a dedicated text-only wrapper exists and has been reviewed. Commands that grant tools, MCP servers, shell, git, GitHub, or repository file access are intentionally rejected.
 
 ## Spec approval markers
 

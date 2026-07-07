@@ -64,6 +64,15 @@ function onboardingDestination(hasExistingConfig: boolean): "/" | "/onboarding" 
   return "/onboarding";
 }
 
+function hasExistingCloudConfig(): boolean {
+  return (
+    useModes
+      .getState()
+      .modes.some((mode) => !mode.isBuiltin || mode.updatedAt !== mode.createdAt) ||
+    useAppMappings.getState().mappings.length > 0
+  );
+}
+
 const router = createMemoryRouter(
   [
     { path: "/picker", element: <ModePicker /> },
@@ -73,7 +82,7 @@ const router = createMemoryRouter(
       element: (
         <MigrationPicker
           onDone={() =>
-            router.navigate(onboardingDestination(useModes.getState().modes.length > 0), {
+            router.navigate(onboardingDestination(hasExistingCloudConfig()), {
               replace: true,
             })
           }
@@ -178,7 +187,7 @@ export default function App() {
             } catch (e) {
               setHydrationError(e instanceof Error ? e.message : String(e));
             }
-            router.navigate(onboardingDestination(useModes.getState().modes.length > 0), {
+            router.navigate(onboardingDestination(hasExistingCloudConfig()), {
               replace: true,
             });
           })();
@@ -213,7 +222,7 @@ export default function App() {
         }
         void pruneExpiredTranscriptions().catch(() => {});
         if (!cancelled) {
-          router.navigate(onboardingDestination(useModes.getState().modes.length > 0), {
+          router.navigate(onboardingDestination(hasExistingCloudConfig()), {
             replace: true,
           });
         }

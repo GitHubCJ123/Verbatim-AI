@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { listen } from "@tauri-apps/api/event";
 import { Download, Trash2, CheckCircle2, Loader2, RefreshCw, ExternalLink } from "lucide-react";
 import { toast } from "../components/ui/Toast";
@@ -522,6 +522,7 @@ const VALID_TABS = ["general", "model", "recording", "privacy", "advanced"];
 
 export default function Settings() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [hotkey, setHotkey] = useState(() => loadHotkeyConfig());
   const [autostart, setAutostartState] = useState(false);
   const singleKeyHoldToTalk = isMacSingleKeySpec(hotkey.spec);
@@ -530,7 +531,13 @@ export default function Settings() {
   // /settings?tab=recording&highlight=hotkey
   const [searchParams, setSearchParams] = useSearchParams();
   const tabParam = searchParams.get("tab");
-  const tab = tabParam && VALID_TABS.includes(tabParam) ? tabParam : "general";
+  const stateTab = (location.state as { settingsTab?: string } | null)?.settingsTab;
+  const tab =
+    tabParam && VALID_TABS.includes(tabParam)
+      ? tabParam
+      : stateTab && VALID_TABS.includes(stateTab)
+        ? stateTab
+        : "general";
   const highlight = searchParams.get("highlight");
 
   useEffect(() => {

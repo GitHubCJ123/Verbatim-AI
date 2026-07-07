@@ -115,7 +115,15 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           $vkVersion = "1.3.290.0"
-          choco install vulkan-sdk --version=$vkVersion -y --no-progress
+          $vkInstaller = "VulkanSDK-$vkVersion-Installer.exe"
+          $vkUrl = "https://sdk.lunarg.com/sdk/download/$vkVersion/windows/$vkInstaller"
+          $vkSha256 = "0ba0392a78157b82354157c5c988d74ddc6bc15573cc9c8653aa60245355fe8a"
+          Invoke-WebRequest $vkUrl -OutFile $vkInstaller
+          $actualSha256 = (Get-FileHash -Algorithm SHA256 -Path $vkInstaller).Hash.ToLower()
+          if ($actualSha256 -ne $vkSha256) {
+            throw "Vulkan SDK installer SHA256 mismatch: expected $vkSha256, got $actualSha256"
+          }
+          Start-Process -FilePath ".\$vkInstaller" -ArgumentList "--accept-licenses --default-answer --confirm-command install" -Wait -NoNewWindow
           $env:VULKAN_SDK = "C:\VulkanSDK\$vkVersion"
           $env:PATH = "$env:VULKAN_SDK\Bin;$env:PATH"
 

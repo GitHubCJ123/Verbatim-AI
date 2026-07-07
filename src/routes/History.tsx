@@ -34,7 +34,7 @@ import { isSupabaseConfigured } from "../lib/supabase";
 import { toast } from "../components/ui/Toast";
 import { confirmDialog } from "../components/ui/confirmDialog";
 import { copyCleanedText, pasteCleanedText } from "../lib/output";
-import { isInsertOnlyEnabled } from "../lib/preferences";
+import { getOutputBehavior } from "../lib/preferences";
 import { useModes } from "../lib/store/useModes";
 import { getActiveProvider } from "../lib/ai";
 import { loadVocabulary } from "../lib/store/useModes";
@@ -233,7 +233,7 @@ function HistoryRow({
     toast.success(
       pasted
         ? "Pasted"
-        : isInsertOnlyEnabled()
+        : getOutputBehavior() === "insert-only"
           ? "No target window; clipboard unchanged"
           : "Copied (no target window)",
     );

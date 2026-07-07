@@ -160,7 +160,9 @@ pub fn insert_text_to_target(
         return Ok(false);
     };
 
-    imp::restore_foreground(hwnd);
+    if !imp::restore_foreground(hwnd) {
+        return Ok(false);
+    }
     std::thread::sleep(std::time::Duration::from_millis(60));
 
     let mut enigo = Enigo::new(&Settings::default()).map_err(|e| e.to_string())?;

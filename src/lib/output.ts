@@ -4,13 +4,23 @@
  */
 import { invoke } from "@tauri-apps/api/core";
 import { writeText, readText } from "@tauri-apps/plugin-clipboard-manager";
-import { isClipboardRestoreEnabled, isInsertOnlyEnabled } from "./preferences";
+import { getOutputBehavior } from "./preferences";
 
 const CLIPBOARD_RESTORE_DELAY_MS = 1000;
 
-function restoreClipboardSoon(prev: string | null): void {
+function restoreClipboardSoon(prev: string, expected: string): void {
   setTimeout(() => {
-    void writeText(prev ?? "").catch(() => {});
+    void (async () => {
+      try {
+        const current = await readText();
+        if (current === expected) {
+          await writeText(prev);
+        }
+      } catch {
+        // If we cannot verify the clipboard still contains our text, do
+        // not overwrite whatever the user may have copied in the meantime.
+      }
+    })();
   }, CLIPBOARD_RESTORE_DELAY_MS);
 }
 
@@ -18,15 +28,11 @@ function restoreClipboardSoon(prev: string | null): void {
  * Write `text` to the clipboard, then restore focus to the captured
  * target window and simulate Ctrl+V.
  *
- * If clipboard-restore is enabled, snapshots the user's clipboard
- * before writing and restores it ~1s after paste.
- *
- * If insert-only is enabled, the transcription is never retained on the
- * clipboard: it is typed directly into the captured target window.
+ * Output behavior is controlled by Settings -> Recording -> Clipboard behavior.
  */
 export async function pasteCleanedText(text: string): Promise<boolean> {
-  const insertOnly = isInsertOnlyEnabled();
-  if (insertOnly) {
+  const behavior = getOutputBehavior();
+  if (behavior === "insert-only") {
     try {
       return await invoke<boolean>("insert_text_to_target", { text });
     } catch (e) {
@@ -35,9 +41,8 @@ export async function pasteCleanedText(text: string): Promise<boolean> {
     }
   }
 
-  const restore = isClipboardRestoreEnabled();
   let prev: string | null = null;
-  if (restore) {
+  if (behavior === "restore") {
     try {
       prev = await readText();
     } catch {
@@ -47,8 +52,8 @@ export async function pasteCleanedText(text: string): Promise<boolean> {
   await writeText(text);
   try {
     const ok = await invoke<boolean>("paste_to_target");
-    if (restore && prev !== null) {
-      restoreClipboardSoon(prev);
+    if (ok && behavior === "restore" && prev !== null) {
+      restoreClipboardSoon(prev, text);
     }
     return ok;
   } catch (e) {

@@ -27,11 +27,17 @@ import { pasteCleanedText, copyCleanedText, clearCapturedTarget } from "../lib/o
 import {
   isAiImproveDisabled,
   getMicDeviceId,
-  isInsertOnlyEnabled,
+  getOutputBehavior,
   isPerfDebugEnabled,
 } from "../lib/preferences";
 import { getPrivacyStatus, type DataLocality } from "../lib/privacyStatus";
 import type { Mode } from "../types/mode";
+
+function noPasteTargetMessage(): string {
+  return getOutputBehavior() === "insert-only"
+    ? "[Verbatim AI] no paste target; clipboard unchanged because insert-only is enabled"
+    : "[Verbatim AI] no paste target; copied to clipboard";
+}
 
 type View = "pill" | "review";
 
@@ -197,11 +203,7 @@ export default function Overlay() {
       if (activeMode.outputStyle === "paste") {
         const pasted = await pasteCleanedText(cleaned);
         if (!pasted) {
-          console.info(
-            isInsertOnlyEnabled()
-              ? "[Verbatim AI] no paste target; clipboard unchanged because insert-only is enabled"
-              : "[Verbatim AI] no paste target; copied to clipboard",
-          );
+          console.info(noPasteTargetMessage());
         }
         setState("success");
         setTimeout(() => void reset(), 900);
@@ -268,6 +270,10 @@ export default function Overlay() {
 
   const handleReviewPaste = async (text: string) => {
     const ok = await pasteCleanedText(text);
+    if (!ok && getOutputBehavior() === "insert-only") {
+      console.info(noPasteTargetMessage());
+      return;
+    }
     const payload = {
       emitId: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       action: ok ? ("pasted" as const) : ("copied" as const),

@@ -131,13 +131,6 @@ export const SETTINGS_ENTRIES: SettingsSearchEntry[] = [
     tab: "recording",
   },
   {
-    id: "insert-only",
-    title: "Insert only",
-    description: "Paste dictated text without leaving it on the clipboard.",
-    keywords: ["clipboard", "paste", "copy", "privacy", "insert", "output"],
-    tab: "recording",
-  },
-  {
     id: "overlay-position",
     title: "Recording pill position",
     description: "Where the floating pill appears while you talk.",
@@ -145,10 +138,10 @@ export const SETTINGS_ENTRIES: SettingsSearchEntry[] = [
     tab: "recording",
   },
   {
-    id: "clipboard-restore",
-    title: "Restore clipboard after paste",
-    description: "Put your previous clipboard back after text is pasted.",
-    keywords: ["clipboard", "paste", "copy", "restore", "overlay"],
+    id: "clipboard-behavior",
+    title: "Clipboard behavior",
+    description: "Choose whether dictation stays copied, bypasses the clipboard, or restores it.",
+    keywords: ["clipboard", "paste", "copy", "restore", "privacy", "insert", "output"],
     tab: "recording",
   },
   // Privacy

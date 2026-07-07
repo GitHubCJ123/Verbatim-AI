@@ -78,7 +78,7 @@ import {
 } from "../lib/ai";
 import { providerTestStatus, type ProviderTestStatus } from "../lib/ai/healthStatus";
 import { useTheme, type Theme } from "../lib/theme";
-import { osName, clipboardHistoryHint } from "../lib/os";
+import { osName } from "../lib/os";
 import {
   checkForUpdate,
   getUpdateStatus,
@@ -90,10 +90,9 @@ import {
   loadOverlayPosition,
   setOverlayPosition,
   type OverlayPosition,
-  isClipboardRestoreEnabled,
-  setClipboardRestore,
-  isInsertOnlyEnabled,
-  setInsertOnly,
+  getOutputBehavior,
+  setOutputBehavior,
+  type OutputBehavior,
   isHistoryDisabled,
   setHistoryDisabled,
   getHistoryRetentionDays,
@@ -342,29 +341,26 @@ function MicrophoneSelect() {
   );
 }
 
-function ClipboardRestoreSwitch() {
-  const [on, setOn] = useState(isClipboardRestoreEnabled());
+function ClipboardBehaviorSelect() {
+  const [value, setValue] = useState<OutputBehavior>(() => getOutputBehavior());
   return (
-    <Switch
-      checked={on}
-      onCheckedChange={(v) => {
-        setClipboardRestore(v);
-        setOn(v);
+    <Select
+      value={value}
+      onValueChange={(next) => {
+        const behavior = next as OutputBehavior;
+        setOutputBehavior(behavior);
+        setValue(behavior);
       }}
-    />
-  );
-}
-
-function InsertOnlySwitch() {
-  const [on, setOn] = useState(isInsertOnlyEnabled());
-  return (
-    <Switch
-      checked={on}
-      onCheckedChange={(v) => {
-        setInsertOnly(v);
-        setOn(v);
-      }}
-    />
+    >
+      <SelectTrigger className="w-64">
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value="copy">Paste and keep copied</SelectItem>
+        <SelectItem value="insert-only">Paste without clipboard</SelectItem>
+        <SelectItem value="restore">Paste then restore previous clipboard</SelectItem>
+      </SelectContent>
+    </Select>
   );
 }
 
@@ -672,32 +668,18 @@ export default function Settings() {
                 />
               </SettingRow>
               <SettingRow
-                id="insert-only"
-                title="Insert only — don't copy to clipboard"
-                description="When on, dictated text is inserted into the focused app without being left on your clipboard. Off by default, so your transcription is also copied (today's behavior)."
+                id="clipboard-behavior"
+                title="Clipboard behavior"
+                description="Choose whether pasted dictation stays copied, bypasses the clipboard, or restores your previous clipboard after paste."
               >
-                <InsertOnlySwitch />
+                <ClipboardBehaviorSelect />
               </SettingRow>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="overlay">
-          <Card>
-            <CardContent className="p-5 pt-5">
               <SettingRow
                 id="overlay-position"
                 title="Recording pill position"
                 description="Where the floating pill appears while you talk."
               >
                 <OverlayPositionSelect />
-              </SettingRow>
-              <SettingRow
-                id="clipboard-restore"
-                title="Restore clipboard after paste"
-                description={`When on, Verbatim AI remembers whatever you had on the clipboard before dictating, pastes the cleaned text, then puts your original content back ~1 second later. Off by default — ${clipboardHistoryHint()}`}
-              >
-                <ClipboardRestoreSwitch />
               </SettingRow>
             </CardContent>
           </Card>

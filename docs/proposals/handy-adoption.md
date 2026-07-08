@@ -270,8 +270,10 @@ independently valuable before any capture/VAD/streaming refactor.
 3. **Scope of first PR:** the "first cut" in §5 only, or bundle VAD post-hoc trim (P4a)?
 4. **Binary-size budget & target platforms** for GPU features (Metal/CUDA/Vulkan) in an in-process
    build.
-5. **LICENSE:** this repo has none; adding one clarifies whether MIT Handy code can be reused
-   directly vs. reimplemented.
+5. **Clean-room mandate (decided):** we **reimplement Handy's design only** and do **not** copy,
+   port, or adapt any Handy source/data. Because nothing is copied, no attribution/licensing
+   obligation to Handy applies. See `handy-p0-implementation-spec.md` §0. (Adding a repo LICENSE
+   is still worthwhile, but is independent of this work.)
 
 ---
 
@@ -284,7 +286,7 @@ independently valuable before any capture/VAD/streaming refactor.
 | Native `cpal` refactor risk | Prefer AudioWorklet (3A) first; 3B later |
 | VAD auto-stop surprises PTT users | Ship post-hoc trim first; auto-stop is opt-in, default off |
 | Perceived-speed claims are multi-factor | P0.0 measurement gates every claim |
-| MIT attribution / licensing | Reimplement designs; add a LICENSE; attribute any reused code |
+| Accidentally deriving from Handy source | **Clean-room:** reimplement from behavior/design only; never copy Handy code/data; reviewers reject Handy-derived hunks (see P0 spec §0) |
 
 ---
 

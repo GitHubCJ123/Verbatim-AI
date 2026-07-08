@@ -65,14 +65,40 @@ jobs:
         shell: pwsh
         run: |
           $url = "https://github.com/ggml-org/whisper.cpp/releases/download/${{ env.WHISPER_CPP_VERSION }}/whisper-bin-x64.zip"
-          Invoke-WebRequest -Uri $url -OutFile whisper-bin-windows-x64-cpu.zip
+          Invoke-WebRequest -Uri $url -OutFile whisper-bin-windows-x64-cpu-upstream.zip
+          # The Verbatim runtime archive must contain both entrypoints:
+          # one-shot whisper-cli and warm-model whisper-server. The upstream
+          # whisper.cpp binary bundle is already built; reassemble it so CI
+          # fails loudly if either executable disappears in a future release.
+          $stage = "whisper-cpu-stage"
+          Remove-Item -Recurse -Force $stage -ErrorAction SilentlyContinue
+          Expand-Archive -Path whisper-bin-windows-x64-cpu-upstream.zip -DestinationPath $stage -Force
+          if (-not (Get-ChildItem $stage -Recurse -Filter whisper-cli.exe | Select-Object -First 1)) {
+            throw "whisper-cli.exe missing from CPU runtime archive"
+          }
+          if (-not (Get-ChildItem $stage -Recurse -Filter whisper-server.exe | Select-Object -First 1)) {
+            throw "whisper-server.exe missing from CPU runtime archive"
+          }
+          Compress-Archive -Path "$stage/*" -DestinationPath whisper-bin-windows-x64-cpu.zip -Force
 
       - name: (Windows) Fetch whisper.cpp CUDA build
         if: matrix.platform == 'windows-latest' && startsWith(github.ref, 'refs/tags/')
         shell: pwsh
         run: |
           $url = "https://github.com/ggml-org/whisper.cpp/releases/download/${{ env.WHISPER_CPP_VERSION }}/whisper-cublas-12.4.0-bin-x64.zip"
-          Invoke-WebRequest -Uri $url -OutFile whisper-bin-windows-x64-cuda.zip
+          Invoke-WebRequest -Uri $url -OutFile whisper-bin-windows-x64-cuda-upstream.zip
+          # Keep the CUDA archive layout aligned with CPU/Vulkan: both
+          # whisper-cli.exe and whisper-server.exe ship in one runtime zip.
+          $stage = "whisper-cuda-stage"
+          Remove-Item -Recurse -Force $stage -ErrorAction SilentlyContinue
+          Expand-Archive -Path whisper-bin-windows-x64-cuda-upstream.zip -DestinationPath $stage -Force
+          if (-not (Get-ChildItem $stage -Recurse -Filter whisper-cli.exe | Select-Object -First 1)) {
+            throw "whisper-cli.exe missing from CUDA runtime archive"
+          }
+          if (-not (Get-ChildItem $stage -Recurse -Filter whisper-server.exe | Select-Object -First 1)) {
+            throw "whisper-server.exe missing from CUDA runtime archive"
+          }
+          Compress-Archive -Path "$stage/*" -DestinationPath whisper-bin-windows-x64-cuda.zip -Force
 
       - name: (Windows) Build whisper.cpp Vulkan build
         if: matrix.platform == 'windows-latest' && startsWith(github.ref, 'refs/tags/')
@@ -105,6 +131,12 @@ jobs:
 
           New-Item -ItemType Directory -Force whisper-vulkan-stage | Out-Null
           Copy-Item whisper-vulkan/build/bin/Release/* whisper-vulkan-stage/ -Recurse -Force
+          if (-not (Test-Path whisper-vulkan-stage/whisper-cli.exe)) {
+            throw "whisper-cli.exe missing from Vulkan runtime build"
+          }
+          if (-not (Test-Path whisper-vulkan-stage/whisper-server.exe)) {
+            throw "whisper-server.exe missing from Vulkan runtime build"
+          }
           Compress-Archive -Path whisper-vulkan-stage/* -DestinationPath whisper-bin-windows-x64-vulkan.zip -Force
 
       - name: (macOS) Build whisper.cpp with Metal
@@ -128,6 +160,7 @@ jobs:
           rm -rf "$STAGE"
           mkdir -p "$STAGE"
           cp whisper.cpp/build/bin/whisper-cli "$STAGE/"
+          cp whisper.cpp/build/bin/whisper-server "$STAGE/"
           find whisper.cpp/build -type f -name "*.dylib" -exec cp -n {} "$STAGE/" \;
 
           cd "$STAGE"
@@ -138,7 +171,8 @@ jobs:
             install_name_tool -id "@executable_path/$dylib" "$dylib" || true
           done
 
-          # Rewrite every @rpath/<dep> reference in whisper-cli and each
+          # Rewrite every @rpath/<dep> reference in whisper-cli,
+          # whisper-server, and each
           # dylib so it points at @executable_path/<actual file>.
           # Dependencies are named like @rpath/libwhisper.1.dylib but the
           # real files have full versions like libwhisper.1.8.4.dylib —
@@ -165,7 +199,7 @@ jobs:
             done
           }
 
-          for bin in whisper-cli *.dylib; do
+          for bin in whisper-cli whisper-server *.dylib; do
             rewrite_deps "$bin"
           done
 
@@ -173,6 +207,8 @@ jobs:
           ls -lh
           echo "--- whisper-cli deps after rewriting ---"
           otool -L whisper-cli
+          echo "--- whisper-server deps after rewriting ---"
+          otool -L whisper-server
           echo "--- libwhisper deps after rewriting ---"
           for d in libwhisper.*.dylib; do
             echo "## $d"

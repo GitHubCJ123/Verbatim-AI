@@ -20,6 +20,11 @@ import { encodeWavBlob } from "../lib/audio/wav";
 import { trimSilence } from "../lib/vad/trim";
 import { AutoStopDetector } from "../lib/vad/autoStop";
 import { VAD_SAMPLE_RATE } from "../lib/vad/vad";
+import {
+  getReadyRealtimeSpeechModel,
+  getTrimSpeechModel,
+  warmupSpeechModel,
+} from "../lib/vad/speechModel";
 import { PartialSegmenter, type PartialTranscriptionPayload } from "../lib/transcribe/segmenter";
 import { TranscriptionCoordinator } from "../lib/transcribe/coordinator";
 import { mergeRollingPartialText } from "../lib/transcribe/textMerge";
@@ -199,7 +204,12 @@ export default function Overlay() {
       // Hands-free auto-stop (opt-in): feed live frames to a VAD
       // endpointer that stops the recording after a hangover of silence.
       if (isAutoStopEnabled()) {
+        // Use Silero only if already warm; never block mic capture on a
+        // cold model load. Falls back to the energy VAD (undefined ⇒
+        // SmoothedVad default) and warms up for the next recording.
+        const model = getReadyRealtimeSpeechModel();
         const detector = new AutoStopDetector({
+          model,
           onSilence: () => {
             void stop();
           },
@@ -299,7 +309,10 @@ export default function Overlay() {
     if (isSilenceTrimEnabled()) {
       try {
         const pcm = await decodeToMonoF32_16k(audio);
-        const trim = trimSilence(pcm);
+        // Prefer the Silero model (precomputed over the whole clip);
+        // falls back to the energy VAD if it can't load.
+        const model = await getTrimSpeechModel(pcm);
+        const trim = trimSilence(pcm, model ? { model } : undefined);
         if (trim.isSilent) {
           // No detectable speech and ~no energy — treat as accidental.
           void reset();
@@ -546,6 +559,9 @@ export default function Overlay() {
     // Tell the main window we're alive so it doesn't drop a
     // recording:start emitted before our listeners attached.
     void emit("overlay:ready");
+    // Warm the Silero VAD session so the first recording's VAD paths
+    // don't block on a cold model load. No-op if Silero is disabled.
+    warmupSpeechModel();
     return () => {
       void offStart.then((u) => u());
       void offStop.then((u) => u());

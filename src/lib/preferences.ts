@@ -23,6 +23,7 @@ const LS_HISTORY_RETENTION = "sw.history.retentionDays";
 const LS_PERF_DEBUG = "sw.debug.perf";
 const LS_SILENCE_TRIM = "sw.vad.silenceTrim";
 const LS_AUTO_STOP = "sw.vad.autoStop";
+const LS_SILERO_VAD = "sw.vad.silero";
 const LS_FILLER_FILTER = "sw.postproc.fillerFilter";
 const LS_FUZZY_VOCAB = "sw.postproc.fuzzyVocab";
 const LS_LIVE_PARTIAL = "sw.transcribe.livePartial";
@@ -160,6 +161,22 @@ export function isAutoStopEnabled(): boolean {
 
 export function setAutoStopEnabled(v: boolean): void {
   localStorage.setItem(LS_AUTO_STOP, v ? "1" : "0");
+}
+
+/**
+ * Silero-ONNX VAD (issue #34). When enabled *and* the model/runtime load
+ * successfully, the real Silero network replaces the built-in energy VAD
+ * as the frame classifier behind the silence-trim and auto-stop paths.
+ * **Default on** — it degrades gracefully to the energy VAD if the model
+ * can't be loaded, so it never regresses behavior. Set `sw.vad.silero`
+ * to "0" to force the energy VAD.
+ */
+export function isSileroVadEnabled(): boolean {
+  return localStorage.getItem(LS_SILERO_VAD) !== "0";
+}
+
+export function setSileroVadEnabled(v: boolean): void {
+  localStorage.setItem(LS_SILERO_VAD, v ? "1" : "0");
 }
 
 /**

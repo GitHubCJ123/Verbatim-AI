@@ -47,6 +47,8 @@ minisign-verify = "0.2"
 # resample device audio to 16 kHz mono f32 for the on-device ASR engines.
 cpal = "0.15"
 rubato = "0.15"
+# Compact transport for per-frame PCM streamed to the frontend onFrame sink.
+base64 = "0.22"
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-single-instance = "2"

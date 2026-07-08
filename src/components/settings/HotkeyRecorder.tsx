@@ -30,6 +30,7 @@ const MODIFIER_LABEL: Record<string, string> = IS_MAC
       Alt: "⌥",
       Super: "⌘",
       Fn: "fn",
+      RightCommand: "right ⌘",
     }
   : {
       CommandOrControl: "Ctrl",
@@ -169,6 +170,32 @@ export function HotkeyRecorder({ value, onChange }: HotkeyRecorderProps) {
     }
   };
 
+  // Right ⌘ produces no keydown the recorder can capture on its own; it
+  // gets an explicit chip. The Rust side runs a flags-changed event tap
+  // for it (fn_hotkey.rs) and needs the Input Monitoring permission.
+  const useRightCommand = async () => {
+    try {
+      await applyHotkey("RightCommand");
+      committedRef.current = "RightCommand";
+      setCommitted("RightCommand");
+      setRecording(false);
+      setPendingMods([]);
+      onChange("RightCommand");
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg.includes("needs-input-monitoring")) {
+        toast.error("Input Monitoring permission needed", {
+          description:
+            "Enable Verbatim AI under System Settings → Privacy & Security → " +
+            "Input Monitoring (opening now), then relaunch the app and pick Right ⌘ again.",
+        });
+        void invoke("open_input_monitoring_settings").catch(() => {});
+      } else {
+        toast.error("Couldn't enable the Right ⌘ key", { description: msg });
+      }
+    }
+  };
+
   return (
     <div className="flex flex-col items-end gap-1.5">
       <div className="flex items-center gap-2">
@@ -236,11 +263,27 @@ export function HotkeyRecorder({ value, onChange }: HotkeyRecorderProps) {
             Use <Kbd>fn</Kbd>
           </button>
         )}
+        {IS_MAC && !recording && displayed !== "RightCommand" && (
+          <button
+            type="button"
+            onClick={() => void useRightCommand()}
+            className="flex h-9 items-center gap-1 rounded-md border border-border-subtle bg-bg-elevated px-3 text-xs text-text-secondary transition-colors hover:border-border-strong hover:text-text-primary"
+            title="Use the right ⌘ key alone — hold to talk"
+          >
+            Use <Kbd>right ⌘</Kbd>
+          </button>
+        )}
       </div>
       {IS_MAC && displayed === "Fn" && (
         <p className="max-w-[260px] text-right text-[11px] leading-snug text-text-muted">
           Hold <Kbd>fn</Kbd> to talk. If pressing it opens the emoji picker,
           set System Settings → Keyboard → "Press 🌐 key to" → Do Nothing.
+        </p>
+      )}
+      {IS_MAC && displayed === "RightCommand" && (
+        <p className="max-w-[260px] text-right text-[11px] leading-snug text-text-muted">
+          Hold <Kbd>right ⌘</Kbd> to talk. Uses Input Monitoring; the left ⌘
+          and normal shortcuts are unaffected.
         </p>
       )}
     </div>

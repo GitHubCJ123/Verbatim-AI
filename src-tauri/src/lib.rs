@@ -3,6 +3,7 @@ mod tray;
 
 use commands::{
     active_window::get_active_window,
+    cancel_hotkey::{disable_cancel_shortcut, enable_cancel_shortcut, CancelHotkeyState},
     devtools::{open_devtools, open_main_devtools},
     fn_hotkey::{open_input_monitoring_settings, FnHotkeyState},
     hotkey::{clear_hotkey, handle_event as handle_hotkey_event, install_default, set_hotkey, HotkeyState},
@@ -68,6 +69,7 @@ pub fn run() {
     builder
         .manage(HotkeyState::default())
         .manage(FnHotkeyState::default())
+        .manage(CancelHotkeyState::default())
         .manage(TargetWindowState::default())
         .manage(WhisperServerState::default())
         .plugin(tauri_plugin_opener::init())
@@ -90,6 +92,8 @@ pub fn run() {
             get_active_window,
             set_hotkey,
             clear_hotkey,
+            enable_cancel_shortcut,
+            disable_cancel_shortcut,
             list_running_apps,
             capture_target_window,
             clear_target_window,

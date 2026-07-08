@@ -6,10 +6,17 @@ import { Cloud, HardDrive } from "lucide-react";
 import { Button } from "../components/ui/Button";
 import { Card, CardContent } from "../components/ui/Card";
 import { setAppMode } from "../lib/appMode";
+import { setAiProviderKind, setCleanupProviderKind } from "../lib/ai";
+import { setAiImproveDisabled } from "../lib/preferences";
 
 export default function ModePicker() {
   function choose(mode: "local" | "cloud") {
     setAppMode(mode);
+    if (mode === "local") {
+      setAiProviderKind("local-whisper");
+      setCleanupProviderKind("local-ollama");
+      setAiImproveDisabled(true);
+    }
     window.location.reload();
   }
   return (
@@ -69,9 +76,8 @@ export default function ModePicker() {
           </Card>
         </div>
         <p className="mt-8 text-center text-xs text-text-muted">
-          Either way you can pick fully on-device transcription and cleanup afterward in
-          Settings → AI model. This choice is only about whether your modes, vocabulary, and
-          history sync to an account.
+          Local mode starts with on-device transcription and raw transcript output. You can still
+          switch any stage to cloud or local cleanup later in Settings → AI model.
         </p>
       </div>
     </div>

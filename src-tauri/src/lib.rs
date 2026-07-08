@@ -28,6 +28,10 @@ use commands::{
     },
     process_list::list_running_apps,
     relay::relay_event,
+    streaming_sidecar::{
+        finish_streaming_session, is_streaming_sidecar_available, push_streaming_frames,
+        start_streaming_session, stop_streaming_session, StreamingSidecarState,
+    },
     whisper_server::{
         ensure_engine_ready, is_whisper_server_available, transcribe_local_server,
         transcribe_local_server_pcm, unload_engine, WhisperServerState,
@@ -74,6 +78,7 @@ pub fn run() {
         .manage(CancelHotkeyState::default())
         .manage(TargetWindowState::default())
         .manage(WhisperServerState::default())
+        .manage(StreamingSidecarState::default())
         .manage(NativeCaptureState::default())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
@@ -132,6 +137,11 @@ pub fn run() {
             transcribe_local_server,
             transcribe_local_server_pcm,
             is_whisper_server_available,
+            is_streaming_sidecar_available,
+            start_streaming_session,
+            push_streaming_frames,
+            finish_streaming_session,
+            stop_streaming_session,
             start_native_capture,
             stop_native_capture,
         ])
@@ -181,6 +191,7 @@ pub fn run() {
         .run(|app_handle, event| {
             if let tauri::RunEvent::Exit = event {
                 commands::whisper_server::shutdown(app_handle);
+                commands::streaming_sidecar::shutdown(app_handle);
             }
         });
 }

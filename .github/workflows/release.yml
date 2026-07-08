@@ -224,6 +224,30 @@ jobs:
           echo "--- final archive ---"
           ls -lh whisper-bin-macos-arm64.zip
 
+      - name: (Deferred) Build streaming sidecar (whisper-stream) — issue #33
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        # DEFERRED CI PIECE (docs/proposals/streaming-sidecar.md §4).
+        #
+        # True token-level streaming (issue #33) needs a headless
+        # `whisper-stream` binary — a non-SDL2 whisper.cpp streaming wrapper
+        # that reads length-prefixed 16 kHz f32 PCM frames on stdin and prints
+        # line-delimited JSON `{"type":"partial"|"final","text":...}` on stdout.
+        #
+        # The app-side scaffold (Rust manager, TS client, overlay opt-in behind
+        # `sw.transcribe.trueStreaming`, default off) already ships and detects
+        # this binary via `is_streaming_sidecar_available`, falling back to the
+        # chunked path when it is absent — so this build is intentionally a
+        # documented no-op until the C++ source + CMake target land.
+        #
+        # To activate: compile the headless wrapper for each variant (reuse the
+        # whisper.cpp clone above; add a `-DWHISPER_BUILD_STREAM_HEADLESS=ON`
+        # style target), then stage the resulting `whisper-stream`/
+        # `whisper-stream.exe` next to `whisper-cli` in each
+        # `whisper-runtimes/<variant>/` dir. No app changes are required.
+        run: |
+          echo "::notice::streaming sidecar (whisper-stream) build is deferred; app falls back to the chunked live-partial path (issue #33)"
+
       - name: Build runtime manifest fragment
         if: startsWith(github.ref, 'refs/tags/')
         shell: bash

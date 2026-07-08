@@ -18,7 +18,7 @@ import {
   getAiProviderKind,
   getLocalWhisperTier,
   effectiveTranscribeKind,
-  type WhisperTier,
+  type WhisperModelId,
 } from "./localWhisper";
 import {
   OllamaProvider,
@@ -218,7 +218,7 @@ export class SupabaseAIProvider implements AIProvider {
 }
 
 let cloudCache: SupabaseAIProvider | null = null;
-const localWhisperByTier = new Map<WhisperTier, LocalWhisperProvider>();
+const localWhisperByTier = new Map<WhisperModelId, LocalWhisperProvider>();
 const ollamaByKey = new Map<string, OllamaProvider>();
 const llamaCppByModel = new Map<string, LlamaCppProvider>();
 const parakeetByKey = new Map<string, ParakeetProvider>();
@@ -257,7 +257,7 @@ function transcribeProvider(mode?: Mode | null): AIProvider {
     }
     return p;
   }
-  const tier = (mode?.whisperTierOverride ?? getLocalWhisperTier()) as WhisperTier;
+  const tier = (mode?.whisperTierOverride ?? getLocalWhisperTier()) as WhisperModelId;
   let p = localWhisperByTier.get(tier);
   if (!p) {
     p = new LocalWhisperProvider({ tier, cleanupFallback: cloudCleanupFallback() });

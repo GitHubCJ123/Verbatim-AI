@@ -8,7 +8,7 @@
  *
  * Spec: plan §12 (Audio Pipeline).
  */
-import { isPerfDebugEnabled } from "./preferences";
+import { isPerfDebugEnabled, isNativeCaptureEnabled } from "./preferences";
 
 export interface AudioControllerOptions {
   deviceId?: string;
@@ -140,6 +140,15 @@ function pickMimeType(): string {
 }
 
 export async function startRecording(opts: AudioControllerOptions = {}): Promise<AudioController> {
+  // Route 3B (docs/proposals/handy-adoption.md §Phase 3): when opted in, capture
+  // in Rust (cpal + rubato) instead of MediaRecorder. Default off keeps the
+  // WebAudio path below completely untouched. Dynamically imported so the native
+  // module (and its Tauri event listeners) is only loaded when enabled.
+  if (isNativeCaptureEnabled()) {
+    const { startNativeRecording } = await import("./nativeAudio");
+    return startNativeRecording(opts);
+  }
+
   const requestedKey = opts.deviceId ?? "";
   let usedKey = requestedKey;
   let stream: MediaStream;

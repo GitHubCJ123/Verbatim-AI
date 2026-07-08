@@ -25,8 +25,9 @@ import {
   getTrimSpeechModel,
   warmupSpeechModel,
 } from "../lib/vad/speechModel";
-import { PartialSegmenter } from "../lib/transcribe/segmenter";
+import { PartialSegmenter, type PartialTranscriptionPayload } from "../lib/transcribe/segmenter";
 import { TranscriptionCoordinator } from "../lib/transcribe/coordinator";
+import { mergeRollingPartialText } from "../lib/transcribe/textMerge";
 import type { RecordingState } from "../lib/store/useRecording";
 import { getActiveProvider } from "../lib/ai";
 import { getModeById, getDefaultMode, loadVocabulary } from "../lib/store/useModes";
@@ -84,7 +85,10 @@ export default function Overlay() {
   const controllerRef = useRef<AudioController | null>(null);
   const autoStopRef = useRef<AutoStopDetector | null>(null);
   const partialSegmenterRef = useRef<PartialSegmenter | null>(null);
-  const partialCoordinatorRef = useRef<TranscriptionCoordinator<Float32Array, string> | null>(null);
+  const partialCoordinatorRef = useRef<
+    TranscriptionCoordinator<PartialTranscriptionPayload, string> | null
+  >(null);
+  const partialTextRef = useRef("");
   // Monotonic recording session id — guards stale live-partial results
   // from a previous recording landing in the current UI.
   const sessionRef = useRef(0);
@@ -108,6 +112,7 @@ export default function Overlay() {
     setStreamingCleaned("");
     setRawText("");
     setPartialText("");
+    partialTextRef.current = "";
     setError(null);
     await resizeOverlayToPill();
     await clearCapturedTarget();
@@ -129,9 +134,10 @@ export default function Overlay() {
 
   /**
    * Build the live-partial coordinator + segmenter and register a frame
-   * sink into `sinks`. Each partial re-transcribes the audio-so-far
-   * through the active provider; results paint into `partialText` only if
-   * they belong to the current recording session (stale-result guard).
+   * sink into `sinks`. Each partial re-transcribes either the audio-so-far
+   * or (for long recordings) a bounded rolling window through the active
+   * provider; results paint into `partialText` only if they belong to the
+   * current recording session (stale-result guard).
    */
   const setupLivePartial = (mode: Mode | null, sinks: Array<(frame: Float32Array) => void>) => {
     const provider = getActiveProvider(mode);
@@ -140,9 +146,9 @@ export default function Overlay() {
     const session = sessionRef.current;
     const vocab = loadVocabulary().map((t) => t.term);
 
-    const coordinator = new TranscriptionCoordinator<Float32Array, string>({
-      run: async (pcm) => {
-        const wav = encodeWavBlob(pcm, VAD_SAMPLE_RATE);
+    const coordinator = new TranscriptionCoordinator<PartialTranscriptionPayload, string>({
+      run: async (payload) => {
+        const wav = encodeWavBlob(payload.pcm, VAD_SAMPLE_RATE);
         const res = await provider.transcribe({
           audio: wav,
           language: activeMode.language || "auto",
@@ -150,11 +156,16 @@ export default function Overlay() {
         });
         return res.text ?? "";
       },
-      onResult: (text) => {
+      onResult: (text, payload) => {
         // Ignore results from a superseded recording session.
         if (sessionRef.current !== session) return;
         const trimmed = text.trim();
-        if (trimmed) setPartialText(trimmed);
+        if (!trimmed) return;
+        const next = payload.isFullContext
+          ? trimmed
+          : mergeRollingPartialText(partialTextRef.current, trimmed);
+        partialTextRef.current = next;
+        setPartialText(next);
       },
       onError: (e) => {
         // Partials are a best-effort preview — never surface their
@@ -165,7 +176,7 @@ export default function Overlay() {
     partialCoordinatorRef.current = coordinator;
 
     const segmenter = new PartialSegmenter({
-      onPartial: (pcm) => coordinator.submit(pcm),
+      onPartial: (payload) => coordinator.submit(payload),
     });
     partialSegmenterRef.current = segmenter;
     sinks.push((frame) => segmenter.push(frame));
@@ -176,6 +187,7 @@ export default function Overlay() {
     setStreamingCleaned("");
     setRawText("");
     setPartialText("");
+    partialTextRef.current = "";
     setView("pill");
     setModeName(mode);
     modeRef.current = getModeById(modeId) ?? getDefaultMode();
@@ -207,10 +219,11 @@ export default function Overlay() {
       }
 
       // Live partial (chunked pseudo-streaming, Phase 6 / issue #23 P2.6,
-      // opt-in). A segmenter re-transcribes the audio-so-far on VAD
-      // boundaries / a fixed cadence; a coordinator serializes the
-      // overlapping requests. The final stop→transcribe path is untouched
-      // and replaces the partial. Best-effort: any failure is swallowed.
+      // opt-in). A segmenter re-transcribes full-context / rolling-window
+      // chunks on VAD boundaries or a fixed cadence; a coordinator
+      // serializes overlapping requests. The final stop→transcribe path is
+      // untouched and replaces the partial. Best-effort: failures are
+      // swallowed.
       if (isLivePartialEnabled()) {
         setupLivePartial(modeRef.current, sinks);
       }

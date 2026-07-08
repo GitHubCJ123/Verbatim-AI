@@ -16,6 +16,7 @@ use commands::{
         is_whisper_runtime_installed, list_custom_whisper_models, list_local_models,
         rescan_local_models, transcribe_local, transcribe_local_pcm,
     },
+    native_audio::{start_native_capture, stop_native_capture, NativeCaptureState},
     parakeet::{
         delete_parakeet_model, download_parakeet_model, install_parakeet_runtime,
         is_parakeet_model_installed, is_parakeet_runtime_installed, list_parakeet_models,
@@ -73,6 +74,7 @@ pub fn run() {
         .manage(CancelHotkeyState::default())
         .manage(TargetWindowState::default())
         .manage(WhisperServerState::default())
+        .manage(NativeCaptureState::default())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_autostart::init(
@@ -130,6 +132,8 @@ pub fn run() {
             transcribe_local_server,
             transcribe_local_server_pcm,
             is_whisper_server_available,
+            start_native_capture,
+            stop_native_capture,
         ])
         .setup(|app| {
             install_default(&app.handle());

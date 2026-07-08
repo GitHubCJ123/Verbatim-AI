@@ -16,7 +16,7 @@ describe("PartialSegmenter", () => {
       emitOnBoundary: false,
       intervalMs: 500,
       minAudioMs: 0,
-      onPartial: (pcm) => payloads.push(pcm.length),
+      onPartial: (payload) => payloads.push(payload.pcm.length),
       ...vadOpts,
     });
     // 1200 ms of tone → cadence fires at ~510 ms and ~1020 ms.
@@ -53,24 +53,34 @@ describe("PartialSegmenter", () => {
     expect(onPartial).toHaveBeenCalledTimes(1);
   });
 
-  it("stops emitting once the max-audio cap is reached", () => {
-    const payloads: number[] = [];
+  it("switches to bounded rolling windows after the full-context cap", () => {
+    const payloads: Array<{ length: number; start: number; full: boolean }> = [];
     const seg = new PartialSegmenter({
       emitOnBoundary: false,
       intervalMs: 100,
       minAudioMs: 0,
       maxAudioMs: 300,
-      onPartial: (pcm) => payloads.push(pcm.length),
+      rollingWindowMs: 240,
+      onPartial: (payload) =>
+        payloads.push({
+          length: payload.pcm.length,
+          start: payload.windowStartMs,
+          full: payload.isFullContext,
+        }),
       ...vadOpts,
     });
     seg.push(tone(2000, { amp: 0.3 }));
-    const countAtCap = payloads.length;
-    // Cap caps both count and payload size (<= 300 ms @ 16 kHz = 4800).
-    expect(countAtCap).toBeGreaterThan(0);
-    expect(Math.max(...payloads)).toBeLessThanOrEqual(4800);
-    // More audio past the cap yields no further partials.
+    expect(payloads.length).toBeGreaterThan(3);
+    expect(payloads.some((p) => p.full)).toBe(true);
+    const rolling = payloads.filter((p) => !p.full);
+    expect(rolling.length).toBeGreaterThan(0);
+    // Rolling payload size is bounded (240 ms @ 16 kHz = 3840).
+    expect(Math.max(...rolling.map((p) => p.length))).toBeLessThanOrEqual(3840);
+    expect(rolling.some((p) => p.start > 0)).toBe(true);
+
+    const countAfterFirstPush = payloads.length;
     seg.push(tone(1000, { amp: 0.3 }));
-    expect(payloads).toHaveLength(countAtCap);
+    expect(payloads.length).toBeGreaterThan(countAfterFirstPush);
   });
 
   it("stops emitting after dispose", () => {

@@ -27,6 +27,7 @@ const LS_SILERO_VAD = "sw.vad.silero";
 const LS_FILLER_FILTER = "sw.postproc.fillerFilter";
 const LS_FUZZY_VOCAB = "sw.postproc.fuzzyVocab";
 const LS_LIVE_PARTIAL = "sw.transcribe.livePartial";
+const LS_NATIVE_CAPTURE = "sw.audio.nativeCapture";
 
 export type OverlayPosition =
   | "bottom-center"
@@ -197,6 +198,25 @@ export function isLivePartialEnabled(): boolean {
 
 export function setLivePartialEnabled(v: boolean): void {
   localStorage.setItem(LS_LIVE_PARTIAL, v ? "1" : "0");
+}
+
+/**
+ * Native audio capture (docs/proposals/handy-adoption.md §Phase 3, route 3B).
+ * When on, the overlay captures the recorded audio in Rust (`cpal` + `rubato`
+ * → 16 kHz mono f32) instead of the WebView `MediaRecorder`, feeding the same
+ * transcription pipeline via a WAV blob.
+ *
+ * **Default off** — leaving it off keeps the existing `getUserMedia` +
+ * `MediaRecorder` capture path byte-for-byte unchanged. Frame-level streaming
+ * (VAD auto-stop / live partials sourced from native frames) is not yet wired
+ * on this path, so those opt-in features still require the default capture.
+ */
+export function isNativeCaptureEnabled(): boolean {
+  return localStorage.getItem(LS_NATIVE_CAPTURE) === "1";
+}
+
+export function setNativeCaptureEnabled(v: boolean): void {
+  localStorage.setItem(LS_NATIVE_CAPTURE, v ? "1" : "0");
 }
 
 export function isClipboardRestoreEnabled(): boolean {

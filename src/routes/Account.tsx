@@ -32,7 +32,7 @@ function Row({ title, description, children }: RowProps) {
 }
 
 export default function Account() {
-  if (isLocalMode()) return <LocalAccount />;
+  // All hooks must come before any early return (rules-of-hooks).
   const user = useAuth((s) => s.user)!;
   const signOut = useAuth((s) => s.signOut);
   const profile = useProfile((s) => s.profile);
@@ -46,6 +46,8 @@ export default function Account() {
     setDisplayName(profile?.display_name ?? "");
     setAvatarUrl(profile?.avatar_url ?? "");
   }, [profile?.display_name, profile?.avatar_url]);
+
+  if (isLocalMode()) return <LocalAccount />;
 
   const dirty =
     (displayName || "") !== (profile?.display_name ?? "") ||

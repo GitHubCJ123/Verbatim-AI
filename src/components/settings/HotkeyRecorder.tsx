@@ -147,7 +147,7 @@ export function HotkeyRecorder({ value, onChange }: HotkeyRecorderProps) {
   // captured by the recorder — it gets an explicit chip instead. The
   // Rust side runs a flags-changed event tap for it (fn_hotkey.rs) and
   // needs the Input Monitoring permission.
-  const useFnKey = async () => {
+  const applyFnKey = async () => {
     try {
       await applyHotkey("Fn");
       committedRef.current = "Fn";
@@ -173,7 +173,7 @@ export function HotkeyRecorder({ value, onChange }: HotkeyRecorderProps) {
   // Right ⌘ produces no keydown the recorder can capture on its own; it
   // gets an explicit chip. The Rust side runs a flags-changed event tap
   // for it (fn_hotkey.rs) and needs the Input Monitoring permission.
-  const useRightCommand = async () => {
+  const applyRightCommand = async () => {
     try {
       await applyHotkey("RightCommand");
       committedRef.current = "RightCommand";
@@ -256,7 +256,7 @@ export function HotkeyRecorder({ value, onChange }: HotkeyRecorderProps) {
         {IS_MAC && !recording && displayed !== "Fn" && (
           <button
             type="button"
-            onClick={() => void useFnKey()}
+            onClick={() => void applyFnKey()}
             className="flex h-9 items-center gap-1 rounded-md border border-border-subtle bg-bg-elevated px-3 text-xs text-text-secondary transition-colors hover:border-border-strong hover:text-text-primary"
             title="Use the fn key alone — hold to talk"
           >
@@ -266,7 +266,7 @@ export function HotkeyRecorder({ value, onChange }: HotkeyRecorderProps) {
         {IS_MAC && !recording && displayed !== "RightCommand" && (
           <button
             type="button"
-            onClick={() => void useRightCommand()}
+            onClick={() => void applyRightCommand()}
             className="flex h-9 items-center gap-1 rounded-md border border-border-subtle bg-bg-elevated px-3 text-xs text-text-secondary transition-colors hover:border-border-strong hover:text-text-primary"
             title="Use the right ⌘ key alone — hold to talk"
           >

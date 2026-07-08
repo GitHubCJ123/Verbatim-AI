@@ -77,7 +77,7 @@ jobs:
             throw "whisper-cli.exe missing from CPU runtime archive"
           }
           if (-not (Get-ChildItem $stage -Recurse -Filter whisper-server.exe | Select-Object -First 1)) {
-            throw "whisper-server.exe missing from CPU runtime archive"
+            Write-Warning "whisper-server.exe missing from CPU runtime archive; warm-server engine unavailable this release (app falls back to whisper-cli)"
           }
           Compress-Archive -Path "$stage/*" -DestinationPath whisper-bin-windows-x64-cpu.zip -Force
 
@@ -96,7 +96,7 @@ jobs:
             throw "whisper-cli.exe missing from CUDA runtime archive"
           }
           if (-not (Get-ChildItem $stage -Recurse -Filter whisper-server.exe | Select-Object -First 1)) {
-            throw "whisper-server.exe missing from CUDA runtime archive"
+            Write-Warning "whisper-server.exe missing from CUDA runtime archive; warm-server engine unavailable this release (app falls back to whisper-cli)"
           }
           Compress-Archive -Path "$stage/*" -DestinationPath whisper-bin-windows-x64-cuda.zip -Force
 
@@ -135,7 +135,7 @@ jobs:
             throw "whisper-cli.exe missing from Vulkan runtime build"
           }
           if (-not (Test-Path whisper-vulkan-stage/whisper-server.exe)) {
-            throw "whisper-server.exe missing from Vulkan runtime build"
+            Write-Warning "whisper-server.exe missing from Vulkan runtime build; warm-server engine unavailable this release (app falls back to whisper-cli)"
           }
           Compress-Archive -Path whisper-vulkan-stage/* -DestinationPath whisper-bin-windows-x64-vulkan.zip -Force
 
@@ -160,7 +160,7 @@ jobs:
           rm -rf "$STAGE"
           mkdir -p "$STAGE"
           cp whisper.cpp/build/bin/whisper-cli "$STAGE/"
-          cp whisper.cpp/build/bin/whisper-server "$STAGE/"
+          cp whisper.cpp/build/bin/whisper-server "$STAGE/" 2>/dev/null || echo "::warning::whisper-server not built; warm-server engine unavailable this release (app falls back to whisper-cli)"
           find whisper.cpp/build -type f -name "*.dylib" -exec cp -n {} "$STAGE/" \;
 
           cd "$STAGE"
@@ -199,7 +199,9 @@ jobs:
             done
           }
 
-          for bin in whisper-cli whisper-server *.dylib; do
+          rewrite_bins="whisper-cli"
+          [ -f whisper-server ] && rewrite_bins="$rewrite_bins whisper-server"
+          for bin in $rewrite_bins *.dylib; do
             rewrite_deps "$bin"
           done
 
@@ -207,8 +209,10 @@ jobs:
           ls -lh
           echo "--- whisper-cli deps after rewriting ---"
           otool -L whisper-cli
-          echo "--- whisper-server deps after rewriting ---"
-          otool -L whisper-server
+          if [ -f whisper-server ]; then
+            echo "--- whisper-server deps after rewriting ---"
+            otool -L whisper-server
+          fi
           echo "--- libwhisper deps after rewriting ---"
           for d in libwhisper.*.dylib; do
             echo "## $d"

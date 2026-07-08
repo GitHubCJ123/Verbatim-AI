@@ -57,7 +57,7 @@ export async function resolveModeAtPress(): Promise<{
   try {
     aw = await getActiveWindow();
   } catch {
-    aw = null;
+    // aw remains null on failure
   }
   const mode = resolveModeFor(aw, loadAppMappings(), loadModes());
   return { mode, activeWindow: aw };

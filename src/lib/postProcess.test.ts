@@ -134,7 +134,7 @@ describe("stripFillers", () => {
 
   it("does not leave double spaces after removal", () => {
     const result = stripFillers("Hello um world", DEFAULT_FILLERS);
-    expect(result).not.toMatch(/  /);
+    expect(result).not.toMatch(/ {2}/);
     expect(result).toBe("Hello world");
   });
 

@@ -15,6 +15,11 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { RecordingPill } from "../components/recording/RecordingPill";
 import { ReviewPanel } from "../components/recording/ReviewPanel";
 import { startRecording, type AudioController } from "../lib/audio";
+import { decodeToMonoF32_16k } from "../lib/ai/audioDecode";
+import { encodeWavBlob } from "../lib/audio/wav";
+import { trimSilence } from "../lib/vad/trim";
+import { AutoStopDetector } from "../lib/vad/autoStop";
+import { VAD_SAMPLE_RATE } from "../lib/vad/vad";
 import type { RecordingState } from "../lib/store/useRecording";
 import { getActiveProvider } from "../lib/ai";
 import { getModeById, getDefaultMode, loadVocabulary } from "../lib/store/useModes";
@@ -24,24 +29,39 @@ import {
   resizeOverlayToReview,
 } from "../lib/recording-bridge";
 import { pasteCleanedText, copyCleanedText, clearCapturedTarget } from "../lib/output";
+import { osKind } from "../lib/os";
+import { pasteMethodUsesClipboard } from "../lib/pasteMethod";
 import {
   isAiImproveDisabled,
   getMicDeviceId,
   getOutputBehavior,
+  getPasteMethod,
   isPerfDebugEnabled,
+  isSilenceTrimEnabled,
+  isAutoStopEnabled,
+  isFillerFilterEnabled,
+  isFuzzyVocabEnabled,
 } from "../lib/preferences";
+import { applyInlinePostProcessing } from "../lib/postProcess";
 import { getPrivacyStatus, type DataLocality } from "../lib/privacyStatus";
 import type { Mode } from "../types/mode";
 
 function noPasteTargetMessage(): string {
   const behavior = getOutputBehavior();
-  if (behavior === "insert-only") {
-    return "[Verbatim AI] no paste target; clipboard unchanged because insert-only is enabled";
+  const method = behavior === "insert-only" ? "direct" : getPasteMethod();
+  if (!pasteMethodUsesClipboard(method, osKind())) {
+    return "[Verbatim AI] no paste target; clipboard unchanged because direct paste is enabled";
   }
   if (behavior === "restore") {
     return "[Verbatim AI] no paste target; previous clipboard will be restored";
   }
   return "[Verbatim AI] no paste target; copied to clipboard";
+}
+
+function shouldShowReviewWhenPasteMisses(): boolean {
+  const behavior = getOutputBehavior();
+  const method = behavior === "insert-only" ? "direct" : getPasteMethod();
+  return !pasteMethodUsesClipboard(method, osKind()) || behavior === "restore";
 }
 
 type View = "pill" | "review";
@@ -56,6 +76,7 @@ export default function Overlay() {
   const [privacy, setPrivacy] = useState<DataLocality | null>(null);
 
   const controllerRef = useRef<AudioController | null>(null);
+  const autoStopRef = useRef<AutoStopDetector | null>(null);
   // In-flight getUserMedia: a stop/cancel that lands while the mic is
   // still being acquired must await this so the stream is never leaked.
   const startingRef = useRef<Promise<AudioController> | null>(null);
@@ -90,11 +111,25 @@ export default function Overlay() {
     modeRef.current = getModeById(modeId) ?? getDefaultMode();
     setPrivacy(getPrivacyStatus(modeRef.current).overall);
     try {
+      // Hands-free auto-stop (opt-in): feed live frames to a VAD
+      // endpointer that stops the recording after a hangover of silence.
+      autoStopRef.current = null;
+      let onFrame: ((frame: Float32Array) => void) | undefined;
+      if (isAutoStopEnabled()) {
+        const detector = new AutoStopDetector({
+          onSilence: () => {
+            void stop();
+          },
+        });
+        autoStopRef.current = detector;
+        onFrame = (frame) => detector.push(frame);
+      }
       // The bridge shows this window concurrently — don't wait for it.
       // Opening the mic immediately is what keeps the first syllable
       // from being lost (docs/improvement-plan/04-performance-latency.md).
       const starting = startRecording({
         deviceId: getMicDeviceId() || undefined,
+        onFrame,
         onError: (e) => {
           setError(e.message);
           setState("error");
@@ -157,14 +192,55 @@ export default function Overlay() {
     const vocabularyAll = loadVocabulary();
     const vocabularyTerms = vocabularyAll.map((t) => t.term);
 
+    // Post-hoc VAD silence trim (Phase 4a). Runs before transcription to
+    // drop leading/trailing silence and pure-noise clips. Fails open: any
+    // decode/trim error falls back to the original audio untouched.
+    let audioForTranscribe = audio;
+    if (isSilenceTrimEnabled()) {
+      try {
+        const pcm = await decodeToMonoF32_16k(audio);
+        const trim = trimSilence(pcm);
+        if (trim.isSilent) {
+          // No detectable speech and ~no energy — treat as accidental.
+          void reset();
+          return;
+        }
+        if (trim.trimmed) {
+          audioForTranscribe = encodeWavBlob(trim.pcm, VAD_SAMPLE_RATE);
+          if (isPerfDebugEnabled()) {
+            console.info(
+              `[perf] VAD trim -${Math.round(trim.leadingTrimmedMs)}ms lead / -${Math.round(
+                trim.trailingTrimmedMs,
+              )}ms tail`,
+            );
+          }
+        }
+      } catch (e) {
+        if (import.meta.env.DEV) console.warn("[Verbatim AI] VAD trim skipped:", e);
+      }
+    }
+
     try {
       setState("processing");
       const transcript = await provider.transcribe({
-        audio,
+        audio: audioForTranscribe,
         language: activeMode.language || "auto",
         vocabularyHints: vocabularyTerms,
       });
-      setRawText(transcript.text);
+
+      // ── Inline post-processing (P2.9) ──────────────────────────────────
+      // Deterministic, LLM-free step applied to the raw transcript BEFORE
+      // the cleanup-LLM so fillers are absent from the LLM context and
+      // near-miss vocab terms are corrected upfront.
+      // Both features are OFF by default; zero output change unless the
+      // user explicitly enables them in Settings.
+      const processedText = applyInlinePostProcessing(transcript.text, {
+        fillerFilter: isFillerFilterEnabled(),
+        fuzzyVocab: isFuzzyVocabEnabled(),
+        vocabularyTerms: vocabularyAll,
+      });
+
+      setRawText(processedText);
 
       // Branch on output style BEFORE polishing so review users see
       // tokens stream into the editor in real time.
@@ -176,11 +252,11 @@ export default function Overlay() {
       let cleaned: string;
       if (activeMode.skipCleanup || isAiImproveDisabled()) {
         // Fast path: skip the LLM entirely; vocab replacements still run.
-        cleaned = applyVocabReplacements(transcript.text, vocabularyAll);
+        cleaned = applyVocabReplacements(processedText, vocabularyAll);
         setStreamingCleaned(cleaned);
       } else {
         setState("polishing");
-        const cleanedRaw = await runCleanup(transcript.text, activeMode, vocabularyTerms);
+        const cleanedRaw = await runCleanup(processedText, activeMode, vocabularyTerms);
         cleaned = applyVocabReplacements(cleanedRaw, vocabularyAll);
         if (cleaned !== cleanedRaw) setStreamingCleaned(cleaned);
       }
@@ -206,7 +282,7 @@ export default function Overlay() {
 
       if (activeMode.outputStyle === "paste") {
         const pasted = await pasteCleanedText(cleaned);
-        if (!pasted && getOutputBehavior() !== "copy") {
+        if (!pasted && shouldShowReviewWhenPasteMisses()) {
           console.info(noPasteTargetMessage());
           await resizeOverlayToReview();
           setView("review");
@@ -242,6 +318,8 @@ export default function Overlay() {
   };
 
   const stop = async () => {
+    autoStopRef.current?.disable();
+    autoStopRef.current = null;
     let c = controllerRef.current;
     controllerRef.current = null;
     const starting = startingRef.current;
@@ -270,6 +348,8 @@ export default function Overlay() {
   };
 
   const cancelActive = () => {
+    autoStopRef.current?.disable();
+    autoStopRef.current = null;
     const starting = startingRef.current;
     startingRef.current = null;
     const c = controllerRef.current;
@@ -287,7 +367,7 @@ export default function Overlay() {
 
   const handleReviewPaste = async (text: string) => {
     const ok = await pasteCleanedText(text);
-    if (!ok && getOutputBehavior() !== "copy") {
+    if (!ok && shouldShowReviewWhenPasteMisses()) {
       console.info(noPasteTargetMessage());
       return;
     }

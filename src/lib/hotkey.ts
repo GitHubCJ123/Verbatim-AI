@@ -12,7 +12,7 @@
  */
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { startRecording, stopRecording } from "./recording-bridge";
+import { startRecording, stopRecording, cancelRecording } from "./recording-bridge";
 import { resolveModeAtPress } from "./modeResolver";
 import { isHotkeyPaused } from "./preferences";
 import { isOnboardingComplete } from "./store/useOnboarding";
@@ -38,7 +38,15 @@ export interface HotkeyConfig {
 }
 
 const KEY_LABEL: Record<string, string> = IS_MAC
-  ? { CommandOrControl: "⌘", Control: "⌃", Shift: "⇧", Alt: "⌥", Super: "⌘", Fn: "fn" }
+  ? {
+      CommandOrControl: "⌘",
+      Control: "⌃",
+      Shift: "⇧",
+      Alt: "⌥",
+      Super: "⌘",
+      Fn: "fn",
+      RightCommand: "right ⌘",
+    }
   : { CommandOrControl: "Ctrl", Control: "Ctrl", Super: "Win" };
 
 /** Spec → human key labels, e.g. "Control+Shift+Space" → ["⌃","⇧","Space"]. */
@@ -165,6 +173,9 @@ export async function installHotkeyListeners(): Promise<UnlistenFn> {
         await startRecording(mode.name, mode.id, pressedAt);
       } catch (e) {
         holdToTalkRecording = false;
+        // startRecording may have armed Esc-to-cancel before failing;
+        // clean up so Escape never lingers globally.
+        await cancelRecording().catch(() => {});
         throw e;
       }
     } else {
@@ -174,7 +185,13 @@ export async function installHotkeyListeners(): Promise<UnlistenFn> {
       } else {
         toggleRecording = true;
         preloadWhisperIfNeeded(mode);
-        await startRecording(mode.name, mode.id, pressedAt);
+        try {
+          await startRecording(mode.name, mode.id, pressedAt);
+        } catch (e) {
+          toggleRecording = false;
+          await cancelRecording().catch(() => {});
+          throw e;
+        }
       }
     }
   });
@@ -188,8 +205,19 @@ export async function installHotkeyListeners(): Promise<UnlistenFn> {
     }
   });
 
+  // Global Escape (armed by the recording bridge only while recording)
+  // discards the in-progress dictation: no audio saved, overlay hidden,
+  // nothing pasted. Reset both state machines so the next hotkey press
+  // starts fresh regardless of toggle/hold mode.
+  const offCancel = await listen("hotkey:cancel", async () => {
+    toggleRecording = false;
+    holdToTalkRecording = false;
+    await cancelRecording();
+  });
+
   return () => {
     offDown();
     offUp();
+    offCancel();
   };
 }

@@ -29,6 +29,7 @@ import {
 import { estimateTokens } from "../lib/ai/promptBuilder";
 import { startRecording, type AudioController } from "../lib/audio";
 import { getMicDeviceId } from "../lib/preferences";
+import { CLOUD_FEATURES_ENABLED } from "../lib/features";
 import { Waveform } from "../components/recording/Waveform";
 import type {
   Mode,
@@ -508,7 +509,11 @@ function AiOverridesSection({
         <div className="flex flex-col gap-4 border-t border-border-subtle p-4">
           <Row label="Transcribe provider">
             <Select
-              value={draft.transcribeProviderOverride ?? INHERIT}
+              value={
+                !CLOUD_FEATURES_ENABLED && draft.transcribeProviderOverride === "cloud"
+                  ? INHERIT
+                  : (draft.transcribeProviderOverride ?? INHERIT)
+              }
               onValueChange={(v) =>
                 set(
                   "transcribeProviderOverride",
@@ -521,7 +526,9 @@ function AiOverridesSection({
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value={INHERIT}>Use global default</SelectItem>
-                <SelectItem value="cloud">Cloud (Azure Whisper)</SelectItem>
+                {CLOUD_FEATURES_ENABLED && (
+                  <SelectItem value="cloud">Cloud (Azure Whisper)</SelectItem>
+                )}
                 <SelectItem value="local-whisper">Local Whisper</SelectItem>
                 <SelectItem value="local-parakeet">Parakeet TDT</SelectItem>
               </SelectContent>
@@ -553,7 +560,11 @@ function AiOverridesSection({
 
           <Row label="Cleanup provider">
             <Select
-              value={draft.cleanupProviderOverride ?? INHERIT}
+              value={
+                !CLOUD_FEATURES_ENABLED && draft.cleanupProviderOverride === "cloud"
+                  ? INHERIT
+                  : (draft.cleanupProviderOverride ?? INHERIT)
+              }
               onValueChange={(v) =>
                 set("cleanupProviderOverride", v === INHERIT ? null : (v as CleanupProviderKind))
               }
@@ -563,7 +574,7 @@ function AiOverridesSection({
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value={INHERIT}>Use global default</SelectItem>
-                <SelectItem value="cloud">Cloud (Azure GPT)</SelectItem>
+                {CLOUD_FEATURES_ENABLED && <SelectItem value="cloud">Cloud (Azure GPT)</SelectItem>}
                 <SelectItem value="local-ollama">Local (Ollama)</SelectItem>
                 <SelectItem value="local-llama-cpp">Local (llama.cpp)</SelectItem>
               </SelectContent>

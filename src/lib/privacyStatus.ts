@@ -8,7 +8,12 @@
  * text); app updates and optional account sync still use the network.
  */
 import type { Mode } from "../types/mode";
-import { getAiProviderKind, getCleanupProviderKind } from "./ai";
+import {
+  getAiProviderKind,
+  getCleanupProviderKind,
+  effectiveTranscribeKind,
+  effectiveCleanupKind,
+} from "./ai";
 import { isAiImproveDisabled } from "./preferences";
 
 export type DataLocality = "local" | "mixed" | "cloud";
@@ -23,7 +28,7 @@ export interface PrivacyStatus {
 
 export function getPrivacyStatus(mode?: Mode | null): PrivacyStatus {
   const transcription =
-    (mode?.transcribeProviderOverride ?? getAiProviderKind()) === "cloud"
+    effectiveTranscribeKind(mode?.transcribeProviderOverride ?? getAiProviderKind()) === "cloud"
       ? "cloud"
       : "local";
 
@@ -32,7 +37,7 @@ export function getPrivacyStatus(mode?: Mode | null): PrivacyStatus {
     cleanup = "off";
   } else {
     cleanup =
-      (mode?.cleanupProviderOverride ?? getCleanupProviderKind()) === "cloud"
+      effectiveCleanupKind(mode?.cleanupProviderOverride ?? getCleanupProviderKind()) === "cloud"
         ? "cloud"
         : "local";
   }

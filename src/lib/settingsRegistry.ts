@@ -12,6 +12,8 @@
  * to the row.
  */
 
+import { CLOUD_FEATURES_ENABLED } from "./features";
+
 export type SettingsTab = "general" | "model" | "recording" | "privacy" | "advanced";
 
 export interface SettingsSearchEntry {
@@ -28,7 +30,7 @@ export function entryHref(e: SettingsSearchEntry): string {
   return e.route ?? "/";
 }
 
-export const SETTINGS_ENTRIES: SettingsSearchEntry[] = [
+const ALL_SETTINGS_ENTRIES: SettingsSearchEntry[] = [
   // General
   {
     id: "autostart",
@@ -272,6 +274,15 @@ export const SETTINGS_ENTRIES: SettingsSearchEntry[] = [
     route: "/account",
   },
 ];
+
+/**
+ * The Account page is a cloud/account-sync surface — drop it from the
+ * command palette while cloud features are disabled (issue #21). The raw
+ * entry is preserved above so re-enabling is a single flag flip.
+ */
+export const SETTINGS_ENTRIES: SettingsSearchEntry[] = ALL_SETTINGS_ENTRIES.filter(
+  (e) => CLOUD_FEATURES_ENABLED || e.id !== "page-account",
+);
 
 /** Simple fuzzy-ish filter: every whitespace-separated token must match
  *  the title, description, or a keyword (substring, case-insensitive).

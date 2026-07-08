@@ -8,13 +8,27 @@
  * `--no-verify-jwt` so the anon path works.
  */
 
+import { CLOUD_FEATURES_ENABLED } from "./features";
+
 const LS_APP_MODE = "sw.app.mode";
 
 export type AppMode = "local" | "cloud";
 
-export function getAppMode(): AppMode | null {
+/**
+ * Raw persisted app mode, ignoring the cloud feature flag. Kept so a
+ * future re-enable can honor a previously-chosen "cloud" account without
+ * having overwritten it while cloud was disabled.
+ */
+export function getStoredAppMode(): AppMode | null {
   const v = localStorage.getItem(LS_APP_MODE);
   return v === "local" || v === "cloud" ? v : null;
+}
+
+export function getAppMode(): AppMode | null {
+  // Cloud disabled → force local-only everywhere (boot, hydration, nav)
+  // without mutating the stored value, so re-enabling is a clean flip.
+  if (!CLOUD_FEATURES_ENABLED) return "local";
+  return getStoredAppMode();
 }
 
 export function setAppMode(mode: AppMode): void {

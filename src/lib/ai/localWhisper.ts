@@ -7,6 +7,7 @@
  */
 import { invoke } from "@tauri-apps/api/core";
 import { decodeToMonoF32_16k } from "./audioDecode";
+import { CLOUD_FEATURES_ENABLED } from "../features";
 import type {
   AIProvider,
   CleanupInput,
@@ -115,11 +116,27 @@ export type AiProviderKind = "cloud" | "local-whisper" | "local-parakeet";
 export function getAiProviderKind(): AiProviderKind {
   const v = localStorage.getItem(LS_AI_PROVIDER);
   if (v === "local-whisper" || v === "local-parakeet") return v;
-  return "cloud";
+  if (v === "cloud" && CLOUD_FEATURES_ENABLED) return "cloud";
+  // Default / cloud-disabled fallback. A stored "cloud" is preserved in
+  // localStorage but resolves to local while the flag is off.
+  return CLOUD_FEATURES_ENABLED ? "cloud" : "local-whisper";
 }
 
 export function setAiProviderKind(v: AiProviderKind): void {
+  // Never persist a cloud selection while cloud is disabled, and don't
+  // clobber any existing stored value (non-destructive no-op).
+  if (v === "cloud" && !CLOUD_FEATURES_ENABLED) return;
   localStorage.setItem(LS_AI_PROVIDER, v);
+}
+
+/**
+ * Effective transcription engine for an already-resolved kind (global
+ * setting or per-Mode override). Coerces "cloud" → local while cloud is
+ * disabled so the cloud provider is never reachable. Shared by provider
+ * resolution (ai/index.ts) and the privacy indicator so they can't drift.
+ */
+export function effectiveTranscribeKind(kind: AiProviderKind): AiProviderKind {
+  return !CLOUD_FEATURES_ENABLED && kind === "cloud" ? "local-whisper" : kind;
 }
 
 export function getLocalWhisperTier(): WhisperTier {

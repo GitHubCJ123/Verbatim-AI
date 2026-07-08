@@ -13,13 +13,19 @@ import { useAuth } from "./lib/store/useAuth";
 import { startRecording as bridgeStart, stopRecording as bridgeStop } from "./lib/recording-bridge";
 import { resolveModeAtPress } from "./lib/modeResolver";
 import { isHotkeyPaused, setHotkeyPaused, isHistoryDisabled } from "./lib/preferences";
+import { CLOUD_FEATURES_ENABLED } from "./lib/features";
 
 // Install global hotkey event listeners as soon as the app boots.
 void installHotkeyListeners();
 console.info("[Verbatim AI] main.tsx booted, listeners installing");
 
 // Initialize Supabase auth (no-op if URL/anon key not configured yet).
-void useAuth.getState().init();
+// Skipped entirely while cloud features are disabled so a build that ships
+// with Supabase credentials can't silently restore or background-refresh an
+// account session with no in-app way to sign out.
+if (CLOUD_FEATURES_ENABLED) {
+  void useAuth.getState().init();
+}
 
 // Tray menu actions.
 let trayRecording = false;

@@ -12,14 +12,13 @@ buffers and can end up in OS logs. **Fix:** gate all transcript-content
 logging behind `import.meta.env.DEV`. Audit repo-wide:
 `grep -rn "console\.\(info\|log\|debug\)" src/ | grep -i "raw\|cleaned\|transcript\|text"`.
 
-### F2 — Edge Functions accept the anon key (`--no-verify-jwt`)
-Anyone extracting `VITE_SUPABASE_ANON_KEY` from the shipped bundle can call
-`transcribe`/`cleanup` and burn Azure quota. Options:
-1. Cheap: per-IP rate limiting inside the functions (Upstash/DB counter).
-2. Better: **Supabase anonymous sign-ins** for local mode — real (anonymous)
-   JWTs, re-enable JWT verification, per-user rate limits, no UX change.
-3. Also cap request body size and audio duration server-side.
-Files: `supabase/functions/transcribe`, `supabase/functions/cleanup`.
+### F2 — Edge Functions accept the anon key (`--no-verify-jwt`) ✅ fixed
+Anyone extracting `VITE_SUPABASE_ANON_KEY` from the shipped bundle could call
+`transcribe`/`cleanup` and burn Azure quota. **Fix:** Edge handlers now require
+a real Supabase user JWT (including anonymous sign-ins for local app mode),
+reject raw anon-key bearer calls, enforce DB-backed per-user/per-IP rate
+limits, and cap body/audio/prompt sizes. Deploy functions with default JWT
+verification enabled.
 
 ### F3 — No user-visible "where does my data go" signal  ✅ done
 The core ask. See "Privacy indicator" below. Implemented:
@@ -82,7 +81,7 @@ the active mode, not the global setting.
 
 ## Recommended order
 
-1. F1 (done) → F5 (done) → F3 (done) → **F2 anonymous sign-ins (next)** →
+1. F1 (done) → F5 (done) → F3 (done) → F2 anonymous sign-ins (done) →
    F6 retention setting → F4 documentation note.
 
 ## Acceptance criteria

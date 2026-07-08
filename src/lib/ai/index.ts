@@ -34,6 +34,7 @@ import {
   getParakeetVariant,
   type ParakeetVariant,
 } from "./parakeet";
+import { edgeAppSecretHeaders, serializeDurationMs } from "./edgeAuth";
 import type { Mode } from "../../types/mode";
 
 export * from "./localWhisper";
@@ -57,21 +58,38 @@ async function getAuthHeaders(): Promise<Record<string, string>> {
     );
   }
   const anon = supabaseAnonKey();
-  // Local mode: no session, send anon key as bearer (Edge Functions are
-  // deployed --no-verify-jwt so this works).
-  if (isLocalMode()) {
-    return {
-      Authorization: `Bearer ${anon}`,
-      apikey: anon,
-    };
-  }
   const { data } = await supabase.auth.getSession();
-  const token = data.session?.access_token;
-  if (!token) throw new Error("Not signed in.");
-  return {
+  let token = data.session?.access_token;
+
+  if (isLocalMode()) {
+    token = token ?? (await signInAnonymouslyForCloudAi());
+  } else if (!token) {
+    throw new Error("Not signed in.");
+  }
+
+  if (!token) {
+    throw new Error("Cloud AI needs a Supabase session.");
+  }
+
+  const headers: Record<string, string> = {
     Authorization: `Bearer ${token}`,
     apikey: anon,
+    ...edgeAppSecretHeaders(),
   };
+  return headers;
+}
+
+async function signInAnonymouslyForCloudAi(): Promise<string> {
+  const { data, error } = await supabase.auth.signInAnonymously();
+  if (error) {
+    throw new Error(
+      "Cloud AI needs Supabase anonymous sign-ins enabled for local mode. " +
+        `Supabase Auth returned: ${error.message}`,
+    );
+  }
+  const token = data.session?.access_token;
+  if (!token) throw new Error("Supabase did not return an anonymous session for Cloud AI.");
+  return token;
 }
 
 function functionUrl(name: string): string {
@@ -133,6 +151,8 @@ export class SupabaseAIProvider implements AIProvider {
 
     const form = new FormData();
     form.append("audio", input.audio, "audio.webm");
+    const durationMs = serializeDurationMs(input.durationMs);
+    if (durationMs !== undefined) form.append("durationMs", durationMs);
     if (input.language && input.language !== "auto") {
       form.append("language", input.language);
     }
@@ -151,7 +171,7 @@ export class SupabaseAIProvider implements AIProvider {
         );
         if (!res.ok) {
           const body = await safeReadText(res);
-          if (res.status >= 500 || res.status === 429) {
+          if (res.status >= 500) {
             throw new RetryableError(`${res.status}: ${body || res.statusText}`);
           }
           throw new Error(`${res.status}: ${body || res.statusText}`);

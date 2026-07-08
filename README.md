@@ -52,6 +52,8 @@ Verbatim AI is online-only. Set these in `.env.local`:
 ```
 VITE_SUPABASE_URL=https://YOUR-PROJECT.supabase.co
 VITE_SUPABASE_ANON_KEY=YOUR-ANON-KEY
+# Optional, only if VERBATIM_EDGE_APP_SECRET is set on Edge Functions:
+VITE_VERBATIM_EDGE_APP_SECRET=YOUR-ROLLOUT-SECRET
 ```
 
 Azure credentials live in **Supabase secrets**, not on the client. See [`supabase/functions/README.md`](./supabase/functions/README.md).
@@ -67,8 +69,8 @@ supabase db push
 ### Edge Functions
 
 ```powershell
-supabase functions deploy transcribe --no-verify-jwt
-supabase functions deploy cleanup --no-verify-jwt
+supabase functions deploy transcribe
+supabase functions deploy cleanup
 ```
 
 ## Build a release installer

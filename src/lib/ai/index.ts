@@ -62,13 +62,9 @@ async function getAuthHeaders(): Promise<Record<string, string>> {
   let token = data.session?.access_token;
 
   if (isLocalMode()) {
-    token = token ?? (await signInAnonymouslyForCloudAi());
+    token = token ?? (await signInAnonymouslyForCloudAi()) ?? anon;
   } else if (!token) {
     throw new Error("Not signed in.");
-  }
-
-  if (!token) {
-    throw new Error("Cloud AI needs a Supabase session.");
   }
 
   const headers: Record<string, string> = {
@@ -79,17 +75,21 @@ async function getAuthHeaders(): Promise<Record<string, string>> {
   return headers;
 }
 
-async function signInAnonymouslyForCloudAi(): Promise<string> {
-  const { data, error } = await supabase.auth.signInAnonymously();
-  if (error) {
-    throw new Error(
-      "Cloud AI needs Supabase anonymous sign-ins enabled for local mode. " +
-        `Supabase Auth returned: ${error.message}`,
-    );
+async function signInAnonymouslyForCloudAi(): Promise<string | null> {
+  try {
+    const { data, error } = await supabase.auth.signInAnonymously();
+    if (error) {
+      console.warn(
+        "Cloud AI anonymous sign-in unavailable; falling back to the anon key.",
+        error.message,
+      );
+      return null;
+    }
+    return data.session?.access_token ?? null;
+  } catch (e) {
+    console.warn("Cloud AI anonymous sign-in threw; falling back to the anon key.", e);
+    return null;
   }
-  const token = data.session?.access_token;
-  if (!token) throw new Error("Supabase did not return an anonymous session for Cloud AI.");
-  return token;
 }
 
 function functionUrl(name: string): string {

@@ -22,7 +22,7 @@ interface RequireEdgeAccessOptions {
 }
 
 interface EdgeContext {
-  user: User;
+  user: User | null;
   ipHash: string;
 }
 
@@ -74,6 +74,16 @@ export async function requireEdgeAccess(
 
   const appSecretResult = verifyAppSecret(req);
   if (!appSecretResult.ok) return appSecretResult;
+
+  // Enforcement is OFF by default so this change is safe to ship without a
+  // coordinated rollout. Enable via EDGE_HARDENING_ENABLED=true ONLY AFTER
+  // enabling Supabase anonymous sign-ins and applying migration 0014. While
+  // off, the function behaves exactly as before (accepts the anon-key auth
+  // Supabase already allows via --no-verify-jwt; no JWT requirement, no rate
+  // limiting). The optional app-secret check above still applies if set.
+  if (clean(Deno.env.get("EDGE_HARDENING_ENABLED")) !== "true") {
+    return { ok: true, context: { user: null, ipHash: "" } };
+  }
 
   const authResult = await verifyUser(req);
   if (!authResult.ok) return authResult;

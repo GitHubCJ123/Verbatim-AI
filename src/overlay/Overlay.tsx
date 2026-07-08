@@ -311,6 +311,7 @@ export default function Overlay() {
       setState("processing");
       const transcript = await provider.transcribe({
         audio: audioForTranscribe,
+        durationMs,
         language: activeMode.language || "auto",
         vocabularyHints: vocabularyTerms,
       });

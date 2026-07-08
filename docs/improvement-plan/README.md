@@ -50,5 +50,5 @@ criteria. Written so any model/engineer can pick up a workstream cold.
   flags-changed event tap (see doc 03).
 - `src/overlay/Overlay.tsx` logs full raw + cleaned transcripts with
   `console.info` — privacy leak.
-- Supabase Edge Functions are deployed `--no-verify-jwt`; the baked-in anon
-  key alone is enough to consume Azure quota (see doc 05).
+- Supabase Edge Functions require real user JWTs and rate-limit Azure proxy
+  calls; raw baked-in anon-key bearer calls are rejected (see doc 05).

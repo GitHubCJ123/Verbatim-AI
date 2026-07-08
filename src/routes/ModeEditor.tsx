@@ -322,6 +322,7 @@ function TestColumn({ draft }: { draft: Mode }) {
     try {
       const transcript = await provider.transcribe({
         audio: result.blob,
+        durationMs: result.durationMs,
         language: draft.language || "auto",
         vocabularyHints: vocab,
       });

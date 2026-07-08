@@ -8,6 +8,8 @@
 
 export interface TranscribeInput {
   audio: Blob;
+  /** Client-observed recording length; Edge Functions enforce a server-side cap. */
+  durationMs?: number;
   /** BCP-47 code, or 'auto' to let the provider detect. */
   language?: string;
   /** Optional list of proper nouns / jargon to bias the recognizer. */

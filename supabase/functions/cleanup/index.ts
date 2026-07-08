@@ -1,17 +1,27 @@
 // supabase/functions/cleanup/index.ts
 // Streaming chat-completion proxy. Body is forwarded to Azure with
 // stream=true and the SSE stream is piped straight back to the client.
+import {
+  CORS_HEADERS,
+  clean,
+  envInt,
+  genericCrash,
+  json,
+  requireEdgeAccess,
+} from "../_shared/security.ts";
 
-function clean(v: string | undefined): string | undefined {
-  return v?.replace(/[\x00-\x1F\x7F]/g, "").trim();
-}
-
-const CORS_HEADERS = {
-  "access-control-allow-origin": "*",
-  "access-control-allow-headers":
-    "authorization, x-client-info, apikey, content-type",
-  "access-control-allow-methods": "POST, OPTIONS",
-};
+const MAX_BODY_BYTES = envInt("CLEANUP_MAX_BODY_BYTES", 256 * 1024);
+const MAX_RAW_TEXT_CHARS = envInt("CLEANUP_MAX_RAW_TEXT_CHARS", 24_000);
+const MAX_SYSTEM_PROMPT_CHARS = envInt("CLEANUP_MAX_SYSTEM_PROMPT_CHARS", 6000);
+const MAX_MODE_NAME_CHARS = envInt("CLEANUP_MAX_MODE_NAME_CHARS", 120);
+const MAX_MODE_DESCRIPTION_CHARS = envInt("CLEANUP_MAX_MODE_DESCRIPTION_CHARS", 2000);
+const MAX_VOCAB_ITEMS = envInt("CLEANUP_MAX_VOCAB_ITEMS", 200);
+const MAX_VOCAB_ITEM_CHARS = envInt("CLEANUP_MAX_VOCAB_ITEM_CHARS", 120);
+const MAX_TARGET_LANGUAGE_CHARS = envInt("CLEANUP_MAX_TARGET_LANGUAGE_CHARS", 80);
+const MAX_OUTPUT_TOKENS = envInt("CLEANUP_MAX_OUTPUT_TOKENS", 4096);
+const RATE_LIMIT_WINDOW_SECONDS = envInt("CLEANUP_RATE_LIMIT_WINDOW_SECONDS", 60 * 60);
+const RATE_LIMIT_PER_USER = envInt("CLEANUP_RATE_LIMIT_PER_USER", 120);
+const RATE_LIMIT_PER_IP = envInt("CLEANUP_RATE_LIMIT_PER_IP", 240);
 
 interface CleanupRequest {
   rawText: string;
@@ -27,9 +37,7 @@ Deno.serve(async (req) => {
   try {
     return await handle(req);
   } catch (e) {
-    const msg = e instanceof Error ? `${e.message}\n${e.stack ?? ""}` : String(e);
-    console.error("cleanup crash:", msg);
-    return json({ error: `cleanup crashed: ${msg.slice(0, 800)}` }, 500);
+    return genericCrash("cleanup", e);
   }
 });
 
@@ -41,15 +49,29 @@ async function handle(req: Request): Promise<Response> {
     return json({ error: "Method not allowed" }, 405);
   }
 
+  const access = await requireEdgeAccess(req, {
+    functionName: "cleanup",
+    maxBodyBytes: MAX_BODY_BYTES,
+    rateLimit: {
+      userLimit: RATE_LIMIT_PER_USER,
+      ipLimit: RATE_LIMIT_PER_IP,
+      windowSeconds: RATE_LIMIT_WINDOW_SECONDS,
+    },
+  });
+  if (!access.ok) return access.response;
+
   const AZURE_ENDPOINT = clean(Deno.env.get("AZURE_ENDPOINT"));
   const AZURE_API_KEY = clean(Deno.env.get("AZURE_API_KEY"));
   const AZURE_CLEANUP_DEPLOYMENT = clean(Deno.env.get("AZURE_CLEANUP_DEPLOYMENT"));
   const API_VERSION = clean(Deno.env.get("AZURE_API_VERSION")) ?? "2024-06-01";
 
   if (!AZURE_ENDPOINT || !AZURE_API_KEY || !AZURE_CLEANUP_DEPLOYMENT) {
-    return json({
-      error: `Server is missing Azure configuration. endpoint:${!!AZURE_ENDPOINT} key:${!!AZURE_API_KEY} deployment:${!!AZURE_CLEANUP_DEPLOYMENT}`,
-    }, 500);
+    console.error("cleanup missing Azure configuration", {
+      endpoint: Boolean(AZURE_ENDPOINT),
+      key: Boolean(AZURE_API_KEY),
+      deployment: Boolean(AZURE_CLEANUP_DEPLOYMENT),
+    });
+    return json({ error: "Server is missing Azure configuration." }, 500);
   }
 
   let payload: CleanupRequest;
@@ -61,6 +83,8 @@ async function handle(req: Request): Promise<Response> {
   if (!payload.rawText || !payload.systemPrompt || !payload.modeName) {
     return json({ error: "Missing rawText, systemPrompt, or modeName." }, 400);
   }
+  const validationError = validateCleanupRequest(payload);
+  if (validationError) return validationError;
 
   const { system, user } = buildPrompt(payload);
   const body = {
@@ -68,7 +92,8 @@ async function handle(req: Request): Promise<Response> {
       { role: "system", content: system },
       { role: "user", content: user },
     ],
-    temperature: payload.temperature ?? 0.3,
+    max_tokens: MAX_OUTPUT_TOKENS,
+    temperature: clampTemperature(payload.temperature),
     stream: true,
   };
 
@@ -107,13 +132,6 @@ async function handle(req: Request): Promise<Response> {
 
 function trim(s: string): string {
   return s.replace(/\/+$/, "");
-}
-
-function json(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { "content-type": "application/json", ...CORS_HEADERS },
-  });
 }
 
 function buildPrompt(input: CleanupRequest): { system: string; user: string } {
@@ -156,4 +174,46 @@ function buildPrompt(input: CleanupRequest): { system: string; user: string } {
     .join("\n");
 
   return { system, user: `RAW TRANSCRIPT:\n${input.rawText}` };
+}
+
+function validateCleanupRequest(input: CleanupRequest): Response | null {
+  if (typeof input.rawText !== "string" || input.rawText.length > MAX_RAW_TEXT_CHARS) {
+    return json({ error: "rawText is too large." }, 413);
+  }
+  if (typeof input.systemPrompt !== "string" || input.systemPrompt.length > MAX_SYSTEM_PROMPT_CHARS) {
+    return json({ error: "systemPrompt is too large." }, 413);
+  }
+  if (typeof input.modeName !== "string" || input.modeName.length > MAX_MODE_NAME_CHARS) {
+    return json({ error: "modeName is invalid." }, 400);
+  }
+  if (
+    input.modeDescription !== undefined &&
+    (typeof input.modeDescription !== "string" ||
+      input.modeDescription.length > MAX_MODE_DESCRIPTION_CHARS)
+  ) {
+    return json({ error: "modeDescription is too large." }, 413);
+  }
+  if (
+    input.targetLanguage !== undefined &&
+    (typeof input.targetLanguage !== "string" ||
+      input.targetLanguage.length > MAX_TARGET_LANGUAGE_CHARS)
+  ) {
+    return json({ error: "targetLanguage is invalid." }, 400);
+  }
+  if (input.vocabulary !== undefined) {
+    if (!Array.isArray(input.vocabulary) || input.vocabulary.length > MAX_VOCAB_ITEMS) {
+      return json({ error: "vocabulary is too large." }, 413);
+    }
+    for (const term of input.vocabulary) {
+      if (typeof term !== "string" || term.length > MAX_VOCAB_ITEM_CHARS) {
+        return json({ error: "vocabulary contains an invalid item." }, 400);
+      }
+    }
+  }
+  return null;
+}
+
+function clampTemperature(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return 0.3;
+  return Math.min(2, Math.max(0, value));
 }

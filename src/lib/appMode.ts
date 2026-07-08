@@ -2,10 +2,10 @@
  * App mode: "local" (no Supabase account, data in localStorage) vs
  * "cloud" (Supabase-backed account + sync).
  *
- * Edge Functions (transcribe / cleanup) are used in BOTH modes — they're
- * the gateway to Azure. In local mode they're called with the anon key
- * instead of a user session JWT. The Edge Functions are deployed with
- * `--no-verify-jwt` so the anon path works.
+ * Edge Functions (transcribe / cleanup) can be used in BOTH modes when
+ * cloud AI is enabled. Local mode keeps data local, but cloud AI calls
+ * still mint a Supabase anonymous session so Edge Functions can enforce
+ * per-user quota instead of accepting the baked public anon key as bearer.
  */
 
 import { CLOUD_FEATURES_ENABLED } from "./features";

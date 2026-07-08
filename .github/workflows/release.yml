@@ -73,12 +73,48 @@ jobs:
           $stage = "whisper-cpu-stage"
           Remove-Item -Recurse -Force $stage -ErrorAction SilentlyContinue
           Expand-Archive -Path whisper-bin-windows-x64-cpu-upstream.zip -DestinationPath $stage -Force
-          if (-not (Get-ChildItem $stage -Recurse -Filter whisper-cli.exe | Select-Object -First 1)) {
+          $cli = Get-ChildItem $stage -Recurse -Filter whisper-cli.exe | Select-Object -First 1
+          if (-not $cli) {
             throw "whisper-cli.exe missing from CPU runtime archive"
           }
           if (-not (Get-ChildItem $stage -Recurse -Filter whisper-server.exe | Select-Object -First 1)) {
             Write-Warning "whisper-server.exe missing from CPU runtime archive; warm-server engine unavailable this release (app falls back to whisper-cli)"
           }
+
+          function Invoke-WhisperStreamBuild {
+            param(
+              [string]$Variant,
+              [string]$WhisperRoot,
+              [string]$BuildDir,
+              [string]$DestinationDir
+            )
+            if (-not (Test-Path "sidecars/whisper-stream/CMakeLists.txt")) {
+              Write-Warning "whisper-stream source missing for $Variant; true streaming unavailable this release (app falls back)"
+              return
+            }
+            try {
+              Remove-Item -Recurse -Force $BuildDir -ErrorAction SilentlyContinue
+              cmake -S sidecars/whisper-stream -B $BuildDir -A x64 `
+                -DCMAKE_BUILD_TYPE=Release `
+                -DWHISPER_ROOT="$WhisperRoot"
+              if ($LASTEXITCODE -ne 0) { throw "whisper-stream configure returned $LASTEXITCODE" }
+              cmake --build $BuildDir --config Release --target whisper-stream --parallel
+              if ($LASTEXITCODE -ne 0) { throw "whisper-stream build returned $LASTEXITCODE" }
+              $stream = Get-ChildItem $BuildDir -Recurse -Filter whisper-stream.exe | Select-Object -First 1
+              if (-not $stream) { throw "whisper-stream.exe missing after build" }
+              Copy-Item $stream.FullName (Join-Path $DestinationDir "whisper-stream.exe") -Force
+            } catch {
+              Write-Warning "whisper-stream not bundled for $Variant; true streaming unavailable this release (app falls back): $($_.Exception.Message)"
+            }
+          }
+
+          # Upstream CPU ZIPs have no separate CMake build tree, so use the
+          # expanded directory containing whisper-cli.exe as WHISPER_ROOT.
+          Invoke-WhisperStreamBuild `
+            -Variant "Windows CPU" `
+            -WhisperRoot $cli.DirectoryName `
+            -BuildDir "sidecars/whisper-stream/build-windows-cpu" `
+            -DestinationDir $cli.DirectoryName
           Compress-Archive -Path "$stage/*" -DestinationPath whisper-bin-windows-x64-cpu.zip -Force
 
       - name: (Windows) Fetch whisper.cpp CUDA build
@@ -92,12 +128,48 @@ jobs:
           $stage = "whisper-cuda-stage"
           Remove-Item -Recurse -Force $stage -ErrorAction SilentlyContinue
           Expand-Archive -Path whisper-bin-windows-x64-cuda-upstream.zip -DestinationPath $stage -Force
-          if (-not (Get-ChildItem $stage -Recurse -Filter whisper-cli.exe | Select-Object -First 1)) {
+          $cli = Get-ChildItem $stage -Recurse -Filter whisper-cli.exe | Select-Object -First 1
+          if (-not $cli) {
             throw "whisper-cli.exe missing from CUDA runtime archive"
           }
           if (-not (Get-ChildItem $stage -Recurse -Filter whisper-server.exe | Select-Object -First 1)) {
             Write-Warning "whisper-server.exe missing from CUDA runtime archive; warm-server engine unavailable this release (app falls back to whisper-cli)"
           }
+
+          function Invoke-WhisperStreamBuild {
+            param(
+              [string]$Variant,
+              [string]$WhisperRoot,
+              [string]$BuildDir,
+              [string]$DestinationDir
+            )
+            if (-not (Test-Path "sidecars/whisper-stream/CMakeLists.txt")) {
+              Write-Warning "whisper-stream source missing for $Variant; true streaming unavailable this release (app falls back)"
+              return
+            }
+            try {
+              Remove-Item -Recurse -Force $BuildDir -ErrorAction SilentlyContinue
+              cmake -S sidecars/whisper-stream -B $BuildDir -A x64 `
+                -DCMAKE_BUILD_TYPE=Release `
+                -DWHISPER_ROOT="$WhisperRoot"
+              if ($LASTEXITCODE -ne 0) { throw "whisper-stream configure returned $LASTEXITCODE" }
+              cmake --build $BuildDir --config Release --target whisper-stream --parallel
+              if ($LASTEXITCODE -ne 0) { throw "whisper-stream build returned $LASTEXITCODE" }
+              $stream = Get-ChildItem $BuildDir -Recurse -Filter whisper-stream.exe | Select-Object -First 1
+              if (-not $stream) { throw "whisper-stream.exe missing after build" }
+              Copy-Item $stream.FullName (Join-Path $DestinationDir "whisper-stream.exe") -Force
+            } catch {
+              Write-Warning "whisper-stream not bundled for $Variant; true streaming unavailable this release (app falls back): $($_.Exception.Message)"
+            }
+          }
+
+          # Upstream CUDA ZIPs have no separate CMake build tree, so use the
+          # expanded directory containing whisper-cli.exe as WHISPER_ROOT.
+          Invoke-WhisperStreamBuild `
+            -Variant "Windows CUDA" `
+            -WhisperRoot $cli.DirectoryName `
+            -BuildDir "sidecars/whisper-stream/build-windows-cuda" `
+            -DestinationDir $cli.DirectoryName
           Compress-Archive -Path "$stage/*" -DestinationPath whisper-bin-windows-x64-cuda.zip -Force
 
       - name: (Windows) Build whisper.cpp Vulkan build
@@ -137,6 +209,39 @@ jobs:
           if (-not (Test-Path whisper-vulkan-stage/whisper-server.exe)) {
             Write-Warning "whisper-server.exe missing from Vulkan runtime build; warm-server engine unavailable this release (app falls back to whisper-cli)"
           }
+
+          function Invoke-WhisperStreamBuild {
+            param(
+              [string]$Variant,
+              [string]$WhisperRoot,
+              [string]$BuildDir,
+              [string]$DestinationDir
+            )
+            if (-not (Test-Path "sidecars/whisper-stream/CMakeLists.txt")) {
+              Write-Warning "whisper-stream source missing for $Variant; true streaming unavailable this release (app falls back)"
+              return
+            }
+            try {
+              Remove-Item -Recurse -Force $BuildDir -ErrorAction SilentlyContinue
+              cmake -S sidecars/whisper-stream -B $BuildDir -A x64 `
+                -DCMAKE_BUILD_TYPE=Release `
+                -DWHISPER_ROOT="$WhisperRoot"
+              if ($LASTEXITCODE -ne 0) { throw "whisper-stream configure returned $LASTEXITCODE" }
+              cmake --build $BuildDir --config Release --target whisper-stream --parallel
+              if ($LASTEXITCODE -ne 0) { throw "whisper-stream build returned $LASTEXITCODE" }
+              $stream = Get-ChildItem $BuildDir -Recurse -Filter whisper-stream.exe | Select-Object -First 1
+              if (-not $stream) { throw "whisper-stream.exe missing after build" }
+              Copy-Item $stream.FullName (Join-Path $DestinationDir "whisper-stream.exe") -Force
+            } catch {
+              Write-Warning "whisper-stream not bundled for $Variant; true streaming unavailable this release (app falls back): $($_.Exception.Message)"
+            }
+          }
+
+          Invoke-WhisperStreamBuild `
+            -Variant "Windows Vulkan" `
+            -WhisperRoot "whisper-vulkan/build" `
+            -BuildDir "sidecars/whisper-stream/build-windows-vulkan" `
+            -DestinationDir "whisper-vulkan-stage"
           Compress-Archive -Path whisper-vulkan-stage/* -DestinationPath whisper-bin-windows-x64-vulkan.zip -Force
 
       - name: (macOS) Build whisper.cpp with Metal
@@ -159,11 +264,42 @@ jobs:
           STAGE=whisper-stage
           rm -rf "$STAGE"
           mkdir -p "$STAGE"
+
+          build_stream_sidecar() {
+            local variant="$1"
+            local whisper_root="$2"
+            local build_dir="$3"
+            local destination_dir="$4"
+            if [ ! -f sidecars/whisper-stream/CMakeLists.txt ]; then
+              echo "::warning::whisper-stream source missing for ${variant}; true streaming unavailable this release (app falls back)"
+              return 0
+            fi
+            rm -rf "$build_dir"
+            if cmake -S sidecars/whisper-stream -B "$build_dir" \
+                -DCMAKE_BUILD_TYPE=Release \
+                -DWHISPER_ROOT="$whisper_root" \
+              && cmake --build "$build_dir" --config Release --target whisper-stream -j$(sysctl -n hw.ncpu); then
+              stream_bin=$(find "$build_dir" -type f -name "whisper-stream" | head -n 1 || true)
+              if [ -n "$stream_bin" ]; then
+                cp "$stream_bin" "$destination_dir/"
+                chmod +x "$destination_dir/whisper-stream"
+              else
+                echo "::warning::whisper-stream binary missing for ${variant}; true streaming unavailable this release (app falls back)"
+              fi
+            else
+              echo "::warning::whisper-stream not bundled for ${variant}; true streaming unavailable this release (app falls back)"
+            fi
+          }
+
           cp whisper.cpp/build/bin/whisper-cli "$STAGE/"
           cp whisper.cpp/build/bin/whisper-server "$STAGE/" 2>/dev/null || echo "::warning::whisper-server not built; warm-server engine unavailable this release (app falls back to whisper-cli)"
+          build_stream_sidecar "macOS arm64 Metal" "whisper.cpp/build" "sidecars/whisper-stream/build-macos-metal" "$STAGE"
           find whisper.cpp/build -type f -name "*.dylib" -exec cp -n {} "$STAGE/" \;
 
           cd "$STAGE"
+          chmod +x whisper-cli
+          [ -f whisper-server ] && chmod +x whisper-server
+          [ -f whisper-stream ] && chmod +x whisper-stream
 
           # Set every dylib's install_name to point at its sibling next to
           # the executable. This is the id _other_ binaries will see.
@@ -172,7 +308,7 @@ jobs:
           done
 
           # Rewrite every @rpath/<dep> reference in whisper-cli,
-          # whisper-server, and each
+          # optional whisper-server/whisper-stream, and each
           # dylib so it points at @executable_path/<actual file>.
           # Dependencies are named like @rpath/libwhisper.1.dylib but the
           # real files have full versions like libwhisper.1.8.4.dylib —
@@ -201,6 +337,7 @@ jobs:
 
           rewrite_bins="whisper-cli"
           [ -f whisper-server ] && rewrite_bins="$rewrite_bins whisper-server"
+          [ -f whisper-stream ] && rewrite_bins="$rewrite_bins whisper-stream"
           for bin in $rewrite_bins *.dylib; do
             rewrite_deps "$bin"
           done
@@ -213,6 +350,10 @@ jobs:
             echo "--- whisper-server deps after rewriting ---"
             otool -L whisper-server
           fi
+          if [ -f whisper-stream ]; then
+            echo "--- whisper-stream deps after rewriting ---"
+            otool -L whisper-stream
+          fi
           echo "--- libwhisper deps after rewriting ---"
           for d in libwhisper.*.dylib; do
             echo "## $d"
@@ -224,29 +365,6 @@ jobs:
           echo "--- final archive ---"
           ls -lh whisper-bin-macos-arm64.zip
 
-      - name: (Deferred) Build streaming sidecar (whisper-stream) — issue #33
-        if: startsWith(github.ref, 'refs/tags/')
-        shell: bash
-        # DEFERRED CI PIECE (docs/proposals/streaming-sidecar.md §4).
-        #
-        # True token-level streaming (issue #33) needs a headless
-        # `whisper-stream` binary — a non-SDL2 whisper.cpp streaming wrapper
-        # that reads length-prefixed 16 kHz f32 PCM frames on stdin and prints
-        # line-delimited JSON `{"type":"partial"|"final","text":...}` on stdout.
-        #
-        # The app-side scaffold (Rust manager, TS client, overlay opt-in behind
-        # `sw.transcribe.trueStreaming`, default off) already ships and detects
-        # this binary via `is_streaming_sidecar_available`, falling back to the
-        # chunked path when it is absent — so this build is intentionally a
-        # documented no-op until the C++ source + CMake target land.
-        #
-        # To activate: compile the headless wrapper for each variant (reuse the
-        # whisper.cpp clone above; add a `-DWHISPER_BUILD_STREAM_HEADLESS=ON`
-        # style target), then stage the resulting `whisper-stream`/
-        # `whisper-stream.exe` next to `whisper-cli` in each
-        # `whisper-runtimes/<variant>/` dir. No app changes are required.
-        run: |
-          echo "::notice::streaming sidecar (whisper-stream) build is deferred; app falls back to the chunked live-partial path (issue #33)"
 
       - name: Build runtime manifest fragment
         if: startsWith(github.ref, 'refs/tags/')

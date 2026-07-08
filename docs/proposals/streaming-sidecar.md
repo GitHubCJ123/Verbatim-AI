@@ -1,9 +1,10 @@
 # True token-level streaming transcription — dedicated streaming sidecar
 
 Issue: [#33](https://github.com/GitHubCJ123/Verbatim-AI/issues/33) — follow-up
-from #23 (P2.6) and #36. Status: **design + non-breaking app-side scaffold**.
-The real streaming sidecar binary is a follow-up CI/packaging piece; this doc
-specifies it and lands everything that can be built and tested *without* it.
+from #23 (P2.6) and #36. Status: **design + non-breaking app-side scaffold + guarded CI packaging hook**.
+The release pipeline now attempts to build and bundle the streaming sidecar when
+its source target is present; the first tagged release that includes the source
+still needs archive-level validation.
 
 ## 1. Problem & feasibility recap
 
@@ -203,21 +204,24 @@ marker prints `{"type":"final","text":"final transcript"}`. Tests construct a
 - Full suite gates: `cargo check`, `cargo test`, `tsc --noEmit`,
   `vitest run src/`, `pnpm lint` all pass.
 
-## 4. Remaining CI / packaging piece
+## 4. CI / packaging status
 
-The only piece **not** shippable in a clean-room dev environment (no whisper.cpp
-C++ toolchain / GPU SDKs here) is **building and bundling the streaming sidecar
-binary** per platform/variant in `release.yml`, next to `whisper-cli` /
-`whisper-server`. This doc specifies its contract (the §2.1 stdin/stdout
-protocol) so the CI target is a mechanical follow-up: compile the headless
-whisper.cpp streaming wrapper, drop it into each `whisper-runtimes/<variant>/`
-dir, and `is_streaming_sidecar_available` flips to `true` automatically. Until
-then the app-side scaffold reports the sidecar unavailable and **falls back**,
-so there is no user-visible regression.
+`release.yml` now has a guarded packaging hook for **building and bundling the
+streaming sidecar binary** per platform/variant, next to `whisper-cli` /
+`whisper-server`. For each existing runtime archive it configures
+`sidecars/whisper-stream` with `-DWHISPER_ROOT=<the whisper.cpp build/runtime
+root used for whisper-cli>`, builds the `whisper-stream` target, and stages the
+resulting `whisper-stream` / `whisper-stream.exe` beside `whisper-cli` before the
+archive is created. macOS also includes the same executable-bit and `@rpath`
+fix-up pass used by the other bundled whisper binaries.
 
-`release.yml` gains a documented, guarded placeholder step describing this
-build so the follow-up is discoverable; it is intentionally a no-op until the
-C++ source + CMake target land.
+The hook is intentionally **soft-guarded** like `whisper-server`: if the source
+target is absent or the sidecar build is not usable for a variant, CI emits a
+warning and still publishes the release. The app-side scaffold then reports the
+sidecar unavailable and **falls back**, so there is no user-visible regression.
+A real tagged release run that includes the source target is still required to
+validate the produced archives and confirm `is_streaming_sidecar_available`
+flips to `true` for each runtime variant.
 
 ## 5. GPT-5.5 self-critique (incorporated)
 

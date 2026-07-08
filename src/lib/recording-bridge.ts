@@ -21,6 +21,26 @@ import { loadOverlayPosition } from "./preferences";
 
 const OVERLAY_LABEL = "overlay";
 
+// The global Escape "cancel-during-recording" shortcut is armed only
+// while a dictation is in flight, so Escape reaches the foreground app
+// normally the rest of the time. Arm on start, disarm on every terminal
+// path (stop, cancel, start failure) so it never lingers.
+async function armCancelShortcut(): Promise<void> {
+  try {
+    await invoke("enable_cancel_shortcut");
+  } catch {
+    /* non-fatal: recording still works, just no Esc-to-cancel */
+  }
+}
+
+async function disarmCancelShortcut(): Promise<void> {
+  try {
+    await invoke("disable_cancel_shortcut");
+  } catch {
+    /* ignore */
+  }
+}
+
 const OVERLAY_PILL_SIZE = { width: 420, height: 96 };
 const OVERLAY_REVIEW_SIZE = { width: 520, height: 360 };
 
@@ -73,6 +93,11 @@ export async function startRecording(
   await waitForOverlayReady();
   const audioStarted = emit("recording:start", { modeName, modeId, pressedAt });
 
+  // Arm Esc-to-cancel the moment capture begins. Runs concurrently with
+  // the emit above — order doesn't matter, and it's disarmed on stop or
+  // cancel regardless.
+  void armCancelShortcut();
+
   // Window chrome runs concurrently with mic acquisition. Within this
   // chain the order still matters: capture the foreground window
   // *before* showing the overlay so we can paste back into it (plan §14).
@@ -96,10 +121,12 @@ export async function startRecording(
 }
 
 export async function stopRecording() {
+  await disarmCancelShortcut();
   await emit("recording:stop", {});
 }
 
 export async function cancelRecording() {
+  await disarmCancelShortcut();
   await emit("recording:cancel", {});
 }
 

@@ -1,9 +1,11 @@
-//! macOS `fn`-key hotkey (docs/improvement-plan/03-single-key-hotkey.md).
+//! macOS hardware-modifier hotkeys — the `fn` key and bare Right ⌘
+//! (docs/improvement-plan/03-single-key-hotkey.md,
+//! docs/proposals/handy-adoption.md §Hotkey handling).
 //!
-//! The `fn` key is a hardware modifier that never reaches
-//! `tauri-plugin-global-shortcut` — it only surfaces as a flags-changed
-//! event. This module runs a listen-only CGEventTap on a dedicated
-//! thread and translates the `SecondaryFn` bit into the same
+//! `fn` and a lone Right Command are hardware modifiers that never reach
+//! `tauri-plugin-global-shortcut` — they only surface as flags-changed
+//! events. This module runs a listen-only CGEventTap on a dedicated
+//! thread and translates the chosen modifier into the same
 //! `hotkey:down` / `hotkey:up` events the rest of the app already
 //! consumes, so nothing downstream changes.
 //!
@@ -16,33 +18,77 @@ use std::sync::Mutex;
 
 /// Spec string reserved for the fn key. Never a valid plugin shortcut.
 pub const FN_SPEC: &str = "Fn";
+/// Spec string reserved for a bare Right ⌘. Never a valid plugin shortcut.
+pub const RIGHT_COMMAND_SPEC: &str = "RightCommand";
+
+/// Which hardware modifier the event tap is watching.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Trigger {
+    Fn,
+    RightCommand,
+}
+
+impl Trigger {
+    /// The sentinel spec this trigger emits its events under.
+    #[cfg(target_os = "macos")]
+    fn spec(self) -> &'static str {
+        match self {
+            Trigger::Fn => FN_SPEC,
+            Trigger::RightCommand => RIGHT_COMMAND_SPEC,
+        }
+    }
+}
+
+/// Map a hotkey spec to the hardware-modifier trigger it names, if any.
+/// Regular plugin shortcuts return `None`.
+pub fn trigger_for_spec(spec: &str) -> Option<Trigger> {
+    match spec {
+        FN_SPEC => Some(Trigger::Fn),
+        RIGHT_COMMAND_SPEC => Some(Trigger::RightCommand),
+        _ => None,
+    }
+}
 
 #[derive(Default)]
 pub struct FnHotkeyState {
     #[cfg(target_os = "macos")]
-    runloop: Mutex<Option<macos::SendRunLoop>>,
+    active: Mutex<Option<macos::Active>>,
     #[cfg(not(target_os = "macos"))]
     _unused: Mutex<()>,
 }
 
 #[cfg(target_os = "macos")]
 mod macos {
-    use super::{FnHotkeyState, FN_SPEC};
+    use super::{FnHotkeyState, Trigger};
     use core_foundation::runloop::CFRunLoop;
     use core_graphics::event::{
         CGEventFlags, CGEventTap, CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement,
-        CGEventType, CallbackResult,
+        CGEventType, CallbackResult, EventField,
     };
     use serde::Serialize;
     use std::cell::Cell;
     use std::sync::mpsc;
     use tauri::{AppHandle, Emitter, Runtime};
 
+    /// Virtual keycode of the Right ⌘ key (`kVK_RightCommand`).
+    const RIGHT_COMMAND_KEYCODE: i64 = 54;
+    /// Device-dependent modifier bit set while Right ⌘ specifically is
+    /// held (`NX_DEVICERCMDKEYMASK`). Unlike `CGEventFlagCommand` it
+    /// distinguishes the right key from the left.
+    const NX_DEVICE_RIGHT_COMMAND_MASK: u64 = 0x0000_0010;
+
     // CFRunLoop is not Send, but stopping a run loop from another thread
     // is explicitly supported by CoreFoundation (CFRunLoopStop is
     // thread-safe), so this wrapper is sound for that single use.
     pub struct SendRunLoop(CFRunLoop);
     unsafe impl Send for SendRunLoop {}
+
+    /// The live tap: its run loop (for teardown) plus which trigger it
+    /// watches (so `start` is idempotent per-trigger).
+    pub struct Active {
+        runloop: SendRunLoop,
+        pub trigger: Trigger,
+    }
 
     #[derive(Serialize, Clone)]
     struct HotkeyPayload<'a> {
@@ -54,11 +100,24 @@ mod macos {
         fn CGRequestListenEventAccess() -> bool;
     }
 
-    pub fn start<R: Runtime>(app: AppHandle<R>, state: &FnHotkeyState) -> Result<(), String> {
+    pub fn start<R: Runtime>(
+        app: AppHandle<R>,
+        state: &FnHotkeyState,
+        trigger: Trigger,
+    ) -> Result<(), String> {
         {
-            let guard = state.runloop.lock().map_err(|e| e.to_string())?;
-            if guard.is_some() {
-                return Ok(()); // already listening
+            let mut guard = state.active.lock().map_err(|e| e.to_string())?;
+            match guard.as_ref() {
+                // Same trigger already listening — nothing to do.
+                Some(active) if active.trigger == trigger => return Ok(()),
+                // A different trigger is live — tear it down before we
+                // start the new one so only one tap runs at a time.
+                Some(_) => {
+                    if let Some(active) = guard.take() {
+                        active.runloop.0.stop();
+                    }
+                }
+                None => {}
             }
         }
 
@@ -72,17 +131,18 @@ mod macos {
             return Err(
                 "needs-input-monitoring: grant Input Monitoring to Verbatim AI in \
                  System Settings → Privacy & Security → Input Monitoring, then \
-                 relaunch the app and pick the fn key again."
+                 relaunch the app and pick the modifier hotkey again."
                     .to_string(),
             );
         }
 
         let (tx, rx) = mpsc::channel::<Result<SendRunLoop, String>>();
+        let spec = trigger.spec();
 
         std::thread::Builder::new()
-            .name("fn-hotkey-tap".into())
+            .name("modifier-hotkey-tap".into())
             .spawn(move || {
-                let fn_down = Cell::new(false);
+                let is_down = Cell::new(false);
                 // `with_enabled` creates the tap, attaches it to this
                 // thread's run loop, enables it, and destroys it when the
                 // run-loop call below returns (i.e. when `stop` fires).
@@ -92,13 +152,34 @@ mod macos {
                     CGEventTapOptions::ListenOnly,
                     vec![CGEventType::FlagsChanged],
                     |_proxy, _etype, event| {
-                        let now = event
-                            .get_flags()
-                            .contains(CGEventFlags::CGEventFlagSecondaryFn);
-                        if now != fn_down.get() {
-                            fn_down.set(now);
+                        let now = match trigger {
+                            Trigger::Fn => event
+                                .get_flags()
+                                .contains(CGEventFlags::CGEventFlagSecondaryFn),
+                            Trigger::RightCommand => {
+                                // Only Right ⌘ transitions matter; ignore
+                                // every other modifier's flags-changed.
+                                let keycode = event
+                                    .get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE);
+                                if keycode != RIGHT_COMMAND_KEYCODE {
+                                    return CallbackResult::Keep;
+                                }
+                                // Use the device-specific right-⌘ bit
+                                // (NX_DEVICERCMDKEYMASK) rather than the
+                                // aggregate Command flag: the aggregate
+                                // bit can't tell left from right, so a
+                                // Right ⌘ release while Left ⌘ is held
+                                // would otherwise be missed and leave the
+                                // trigger stuck down. The device bit
+                                // reflects Right ⌘ alone, so press and
+                                // release are always seen.
+                                (event.get_flags().bits() & NX_DEVICE_RIGHT_COMMAND_MASK) != 0
+                            }
+                        };
+                        if now != is_down.get() {
+                            is_down.set(now);
                             let name = if now { "hotkey:down" } else { "hotkey:up" };
-                            let _ = app.emit(name, HotkeyPayload { spec: FN_SPEC });
+                            let _ = app.emit(name, HotkeyPayload { spec });
                         }
                         CallbackResult::Keep
                     },
@@ -109,8 +190,8 @@ mod macos {
                 );
                 if created.is_err() {
                     let _ = tx.send(Err(
-                        "Couldn't create the fn-key event tap. If you just granted \
-                         Input Monitoring, relaunch the app and try again."
+                        "Couldn't create the modifier-key event tap. If you just \
+                         granted Input Monitoring, relaunch the app and try again."
                             .into(),
                     ));
                 }
@@ -119,16 +200,16 @@ mod macos {
 
         let runloop = rx
             .recv()
-            .map_err(|_| "fn-key listener thread died during startup".to_string())??;
-        let mut guard = state.runloop.lock().map_err(|e| e.to_string())?;
-        *guard = Some(runloop);
+            .map_err(|_| "modifier-key listener thread died during startup".to_string())??;
+        let mut guard = state.active.lock().map_err(|e| e.to_string())?;
+        *guard = Some(Active { runloop, trigger });
         Ok(())
     }
 
     pub fn stop(state: &FnHotkeyState) {
-        if let Ok(mut guard) = state.runloop.lock() {
-            if let Some(SendRunLoop(runloop)) = guard.take() {
-                runloop.stop();
+        if let Ok(mut guard) = state.active.lock() {
+            if let Some(active) = guard.take() {
+                active.runloop.0.stop();
             }
         }
     }
@@ -138,16 +219,18 @@ mod macos {
 pub fn start<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     state: &FnHotkeyState,
+    trigger: Trigger,
 ) -> Result<(), String> {
-    macos::start(app, state)
+    macos::start(app, state, trigger)
 }
 
 #[cfg(not(target_os = "macos"))]
 pub fn start<R: tauri::Runtime>(
     _app: tauri::AppHandle<R>,
     _state: &FnHotkeyState,
+    _trigger: Trigger,
 ) -> Result<(), String> {
-    Err("The fn key is only supported on macOS.".into())
+    Err("Modifier-only hotkeys (fn / Right ⌘) are only supported on macOS.".into())
 }
 
 pub fn stop(state: &FnHotkeyState) {

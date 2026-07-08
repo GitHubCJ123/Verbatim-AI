@@ -1,4 +1,5 @@
 pub mod active_window;
+pub mod cancel_hotkey;
 pub mod devtools;
 pub mod fn_hotkey;
 pub mod hotkey;

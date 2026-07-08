@@ -209,6 +209,13 @@ export function isWhisperServerAvailable(): Promise<boolean> {
   });
 }
 
+export function ensureWhisperEngineReady(tier: WhisperTier): Promise<void> {
+  return invoke("ensure_engine_ready", {
+    tier,
+    computePreference: getWhisperComputePreference(),
+  });
+}
+
 // The probe is stable within a session per compute preference; cache it so we
 // don't touch the filesystem on every utterance.
 const serverAvailByPref = new Map<string, boolean>();

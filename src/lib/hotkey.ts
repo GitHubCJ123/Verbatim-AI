@@ -16,6 +16,13 @@ import { startRecording, stopRecording } from "./recording-bridge";
 import { resolveModeAtPress } from "./modeResolver";
 import { isHotkeyPaused } from "./preferences";
 import { isOnboardingComplete } from "./store/useOnboarding";
+import {
+  ensureWhisperEngineReady,
+  getAiProviderKind,
+  getLocalWhisperEngine,
+  getLocalWhisperTier,
+  type WhisperTier,
+} from "./ai/localWhisper";
 
 const LS_HOTKEY = "sw.hotkey.spec";
 const LS_PTT = "sw.hotkey.ptt";
@@ -99,6 +106,21 @@ export async function getActiveWindow(): Promise<ActiveWindow> {
   return invoke<ActiveWindow>("get_active_window");
 }
 
+function preloadWhisperIfNeeded(mode: {
+  transcribeProviderOverride?: string | null;
+  whisperTierOverride?: string | null;
+}): void {
+  const kind = mode.transcribeProviderOverride ?? getAiProviderKind();
+  if (kind !== "local-whisper" || getLocalWhisperEngine() === "cli") return;
+
+  const tier = (mode.whisperTierOverride ?? getLocalWhisperTier()) as WhisperTier;
+  void ensureWhisperEngineReady(tier).catch((e) => {
+    if (import.meta.env.DEV) {
+      console.debug("[Verbatim AI] local whisper preload skipped", e);
+    }
+  });
+}
+
 /**
  * Install the global key-down / key-up listeners. Returns an unlisten
  * function that removes both subscriptions.
@@ -138,6 +160,7 @@ export async function installHotkeyListeners(): Promise<UnlistenFn> {
     if (usesHoldToTalk(cfg)) {
       if (holdToTalkRecording) return;
       holdToTalkRecording = true;
+      preloadWhisperIfNeeded(mode);
       try {
         await startRecording(mode.name, mode.id, pressedAt);
       } catch (e) {
@@ -150,6 +173,7 @@ export async function installHotkeyListeners(): Promise<UnlistenFn> {
         await stopRecording();
       } else {
         toggleRecording = true;
+        preloadWhisperIfNeeded(mode);
         await startRecording(mode.name, mode.id, pressedAt);
       }
     }

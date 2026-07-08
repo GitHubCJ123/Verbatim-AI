@@ -5,6 +5,8 @@ import { spawnFile } from "./process.mjs";
 import { redactSecrets } from "./redaction.mjs";
 import { issueFolderName } from "./markers.mjs";
 import { critiqueRequirements, requirementsReview } from "./requirements.mjs";
+import { readIssueAutomationSummary } from "./artifacts.mjs";
+import { evaluateSpecReview } from "./spec-review.mjs";
 
 export const PHASES = [
   { id: "requirements", title: "Requirements critique", sideEffect: "local state only" },
@@ -17,6 +19,8 @@ export const PHASES = [
   { id: "human-pr-review", title: "Human PR review", sideEffect: "GitHub PR review" },
   { id: "self-reflection", title: "Self-reflection", sideEffect: "local state only" },
 ];
+
+export const APPROVAL_NOTE_MAX_CHARS = 4000;
 
 export async function ensureDashboardState(runtimeDir) {
   await fs.mkdir(runtimeDir, { recursive: true });
@@ -43,10 +47,40 @@ export function runtimeDirFor(root) {
   return path.join(root, ".copilot-issue-loop");
 }
 
+export function dashboardIssueId(issue) {
+  return issue?.id ?? `gh-${issue?.number}`;
+}
+
+export function normalizeApprovalNote(note) {
+  return neutralizePromptDelimiters(
+    String(note ?? "").replace(/\r\n?/g, "\n").slice(0, APPROVAL_NOTE_MAX_CHARS),
+  ).slice(0, APPROVAL_NOTE_MAX_CHARS);
+}
+
+export async function readDashboardApproval(root, issue, phaseId, { issueInputSha } = {}) {
+  if (!issueInputSha) return null;
+  let state;
+  try {
+    state = JSON.parse(await fs.readFile(statePathFor(root), "utf8"));
+  } catch {
+    return null;
+  }
+  const approval = state?.issues?.[dashboardIssueId(issue)]?.approvals?.[phaseId] ?? null;
+  if (!approval) return null;
+  if (approval.issueInputSha !== issueInputSha) return null;
+  return approval;
+}
+
+export async function readDashboardApprovalNote(root, issue, phaseId, options = {}) {
+  const approval = await readDashboardApproval(root, issue, phaseId, options);
+  return approval?.note ?? "";
+}
+
 export function applyApproval(state, issueId, phaseId, context) {
   const issue = issueState(state, issueId);
   const previous = issue.overrides[phaseId] ?? "ready";
   const spec = context?.spec ?? {};
+  const note = normalizeApprovalNote(context?.note);
   issue.approvals[phaseId] = {
     id: randomUUID(),
     issueId,
@@ -54,6 +88,8 @@ export function applyApproval(state, issueId, phaseId, context) {
     approver: context?.approver ?? "local-maintainer",
     specPath: spec.path ?? null,
     specSha: spec.sha ?? null,
+    issueInputSha: context?.issueInputSha ? String(context.issueInputSha).slice(0, 128) : null,
+    note: note.trim() ? note : "",
     createdAt: new Date().toISOString(),
   };
   setPhaseStatus(issue, phaseId, "approved", {
@@ -136,20 +172,30 @@ export function buildPhaseView(issue, stateIssue, derived) {
     );
     const override = stateIssue?.overrides?.[phase.id];
     const status = activeActions.length > 0 ? "running" : (override ?? base.status);
+    let statusLabel = activeActions.length > 0 ? "running" : (override ? status : (base.statusLabel ?? status));
+    if (phase.id === "spec" && status === "ready" && base.statusLabel === "not started") {
+      statusLabel = "not started";
+    }
     const feedback = (stateIssue?.feedback ?? []).filter((item) => item.phaseId === phase.id);
     const approvals = stateIssue?.approvals?.[phase.id] ? [stateIssue.approvals[phase.id]] : [];
     const transitions = (stateIssue?.transitions ?? []).filter((item) => item.phaseId === phase.id);
+    const canApprove =
+      activeActions.length === 0 &&
+      ["ready", "needs-revision", "local-approved"].includes(status) &&
+      !(phase.id === "spec" && statusLabel === "not started");
     return {
       ...phase,
       status,
+      statusLabel,
       output: base.output,
       path: base.path ?? null,
+      artifacts: base.artifacts ?? [],
       sideEffect: phase.sideEffect,
       feedback,
       approvals,
       transitions,
       activeActions,
-      canApprove: activeActions.length === 0 && ["ready", "needs-revision", "local-approved"].includes(status),
+      canApprove,
       canGiveFeedback:
         activeActions.length === 0 &&
         ["ready", "complete", "approved", "needs-revision", "needs-redo"].includes(status),
@@ -159,64 +205,124 @@ export function buildPhaseView(issue, stateIssue, derived) {
 
 export async function deriveIssueState({ root, issue, prs, localIssue }) {
   const spec = await specInfo(root, issue);
+  const automationSummary = await readIssueAutomationSummary(root, issue);
   const requirements = critiqueRequirements(issue);
   const linkedPr = prs.find((pr) =>
     pr.closingIssuesReferences?.some((ref) => String(ref.number) === String(issue.number)),
   );
   const hasSpec = Boolean(spec.content);
   const hasReview = Boolean(spec.adversarialReview && !/Pending\./i.test(spec.adversarialReview));
-  const reviewNeedsHuman = /\b(needs[-\s]?human|requires human|open question|cannot proceed|blocked)\b/i.test(
-    spec.adversarialReview,
-  );
+  const reviewDecision = evaluateSpecReview(spec.adversarialReview);
+  const reviewNeedsHuman = hasReview ? reviewDecision.needsHuman : false;
+  const artifactByPhase = artifactsByPhase(automationSummary);
+  const phaseStatus = (phase, fallback) => automationSummary.phaseStatuses?.[phase]?.status ?? fallback;
+  const phaseArtifacts = (phase) => artifactByPhase.get(phase) ?? [];
+  const latestArtifact = (phase) => automationSummary.latestArtifacts?.[phase] ?? phaseArtifacts(phase).at(-1);
+  const artifactOutput = (phase, fallback) => {
+    const artifact = latestArtifact(phase);
+    return artifact
+      ? `${artifact.displayId}: ${artifact.summary || artifact.title || artifact.path}`
+      : fallback;
+  };
   const derived = {
     requirements: {
-      status: requirements.status === "clear" ? "complete" : "needs-revision",
-      output: requirementsReview(issue, requirements),
+      status: phaseStatus("requirements", requirements.status === "clear" ? "complete" : "needs-revision"),
+      output: artifactOutput("requirements", requirementsReview(issue, requirements)),
+      issueInputSha: requirements.issueInputSha,
+      artifacts: phaseArtifacts("requirements"),
     },
     spec: {
-      status: hasSpec ? "complete" : "ready",
-      output: spec.content || "No spec file found yet.",
+      status: phaseStatus("spec", hasSpec ? "complete" : "ready"),
+      statusLabel: hasSpec ? undefined : "not started",
+      output: artifactOutput(
+        "spec",
+        spec.content || "Not started — ready to run the architect after requirements approval. No spec file exists yet.",
+      ),
       path: spec.path,
+      artifacts: phaseArtifacts("spec"),
     },
     "adversarial-review": {
-      status: hasReview ? (reviewNeedsHuman ? "needs-human" : "complete") : hasSpec ? "ready" : "blocked",
-      output: spec.adversarialReview || "No adversarial review yet.",
+      status: phaseStatus(
+        "adversarial-review",
+        hasReview ? (reviewNeedsHuman ? "needs-human" : "complete") : hasSpec ? "ready" : "blocked",
+      ),
+      output: artifactOutput(
+        "adversarial-review",
+        spec.adversarialReview || "No adversarial review yet.",
+      ),
       path: spec.adversarialPath,
+      artifacts: phaseArtifacts("adversarial-review"),
     },
     implementation: {
-      status: linkedPr ? "complete" : hasReview && !reviewNeedsHuman ? "ready" : "blocked",
-      output: linkedPr
-        ? `PR #${linkedPr.number}: ${linkedPr.title}`
-        : hasReview && !reviewNeedsHuman
-          ? "Spec review is clear. Implementation can proceed automatically."
-          : "No implementation PR linked yet.",
+      status: phaseStatus("implementation", hasReview && !reviewNeedsHuman ? "ready" : "blocked"),
+      output: artifactOutput(
+        "implementation",
+        linkedPr
+          ? `Linked PR #${linkedPr.number}: ${linkedPr.title}. Waiting for first-party implementation artifact.`
+          : hasReview && !reviewNeedsHuman
+            ? "Spec review is clear. Implementation can proceed automatically in an isolated worktree."
+            : "No implementation artifact yet.",
+      ),
+      artifacts: phaseArtifacts("implementation"),
     },
     "agent-pr-review": {
-      status: linkedPr ? "ready" : "blocked",
-      output: linkedPr
-        ? "Agent reviewer should critique the PR and iterate with the developer agent until no blocking findings remain."
-        : "No PR to review yet.",
+      status: phaseStatus("agent-pr-review", latestArtifact("implementation") && linkedPr ? "ready" : "blocked"),
+      output: artifactOutput(
+        "agent-pr-review",
+        linkedPr
+          ? "Agent reviewer should critique the PR and iterate with the developer agent until no blocking findings remain."
+          : "No PR to review yet.",
+      ),
+      artifacts: phaseArtifacts("agent-pr-review"),
     },
     verification: {
-      status: linkedPr?.mergeStateStatus === "CLEAN" ? "complete" : linkedPr ? "ready" : "blocked",
-      output: linkedPr ? `Merge state: ${linkedPr.mergeStateStatus ?? "unknown"}` : "No PR to verify.",
+      status: phaseStatus("verification", latestArtifact("agent-pr-review") && linkedPr ? "ready" : "blocked"),
+      output: artifactOutput(
+        "verification",
+        linkedPr
+          ? `Merge state: ${linkedPr.mergeStateStatus ?? "unknown"}. Verification still requires a first-party VER artifact for the current head.`
+          : "No PR to verify.",
+      ),
+      artifacts: phaseArtifacts("verification"),
     },
     finalization: {
-      status: linkedPr && !linkedPr.isDraft ? "complete" : linkedPr ? "ready" : "blocked",
-      output: linkedPr ? (linkedPr.isDraft ? "Draft PR." : "Ready for review.") : "No PR.",
+      status: phaseStatus("finalization", latestArtifact("verification") && linkedPr ? "ready" : "blocked"),
+      output: artifactOutput(
+        "finalization",
+        linkedPr
+          ? "Finalization requires a passing VER artifact bound to the current head before marking ready."
+          : "No PR.",
+      ),
+      artifacts: phaseArtifacts("finalization"),
     },
     "human-pr-review": {
-      status: linkedPr && !linkedPr.isDraft ? "ready" : "blocked",
-      output: linkedPr
-        ? "Human review gate. Review the PR, screenshots, verifier output, and agent PR review results."
-        : "No ready PR for human review yet.",
+      status: phaseStatus("human-pr-review", latestArtifact("finalization") ? "ready" : "blocked"),
+      output: artifactOutput(
+        "human-pr-review",
+        linkedPr
+          ? "Human review gate. Review the PR, screenshots, verifier output, and agent PR review results."
+          : "No ready PR for human review yet.",
+      ),
+      artifacts: phaseArtifacts("human-pr-review"),
     },
     "self-reflection": {
-      status: localIssue?.reflections?.length ? "complete" : linkedPr ? "ready" : "blocked",
-      output: localIssue?.reflections?.at(-1)?.result ?? "No reflection recorded.",
+      status: phaseStatus("self-reflection", localIssue?.reflections?.length ? "complete" : linkedPr ? "ready" : "blocked"),
+      output: artifactOutput("self-reflection", localIssue?.reflections?.at(-1)?.result ?? "No reflection recorded."),
+      artifacts: phaseArtifacts("self-reflection"),
     },
   };
-  return { derived, spec, linkedPr };
+  return { derived, spec, linkedPr, automationSummary };
+}
+
+function artifactsByPhase(summary) {
+  const byPhase = new Map();
+  for (const artifact of summary?.artifacts ?? []) {
+    if (!artifact?.phase) continue;
+    const list = byPhase.get(artifact.phase) ?? [];
+    list.push(artifact);
+    byPhase.set(artifact.phase, list);
+  }
+  return byPhase;
 }
 
 export function issueState(state, issueId) {
@@ -387,6 +493,10 @@ async function readTextIfExists(file) {
 
 function sha256(text) {
   return createHash("sha256").update(text).digest("hex");
+}
+
+function neutralizePromptDelimiters(text) {
+  return String(text).replace(/(?:BEGIN|END)_[A-Z0-9_]+/g, "[neutralized prompt delimiter]");
 }
 
 function minimalAgentEnv() {

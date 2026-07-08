@@ -47,6 +47,16 @@
             <button class="approve-btn" type="button">Approve phase</button>
             <button class="feedback-btn" type="button">Request revision</button>
           </div>
+          <form class="approval-form hidden">
+            <label>
+              Optional note for the next agent
+              <textarea name="note" maxlength="4000" placeholder="Add maintainer guidance before approving, or leave blank."></textarea>
+            </label>
+            <div class="form-actions">
+              <button type="submit">Approve with note</button>
+              <button type="button" class="approval-cancel-btn">Cancel</button>
+            </div>
+          </form>
           <form class="feedback-form hidden">
             <label>
               Human feedback

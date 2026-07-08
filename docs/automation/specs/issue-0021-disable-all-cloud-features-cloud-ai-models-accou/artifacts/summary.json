@@ -1,0 +1,206 @@
+{
+  "version": 1,
+  "issue": {
+    "number": 21,
+    "title": "Disable all cloud features (cloud AI models + account/sync) in the UI — local-only for now",
+    "folder": "issue-0021-disable-all-cloud-features-cloud-ai-models-accou"
+  },
+  "updatedAt": "2026-07-08T06:01:28.571Z",
+  "artifacts": [
+    {
+      "id": "issue-0021-reconcile-pr24-IMPL-001",
+      "displayId": "IMPL-001",
+      "phase": "implementation",
+      "prefix": "IMPL",
+      "title": "Implementation adopted from PR #24",
+      "summary": "Single-flag CLOUD_FEATURES_ENABLED gating; local-only; PR #24.",
+      "agent": "developer-agent (adopted PR #24)",
+      "runId": "reconcile-pr24",
+      "status": "complete",
+      "decision": null,
+      "path": "docs/automation/specs/issue-0021-disable-all-cloud-features-cloud-ai-models-accou/artifacts/IMPL-001.md",
+      "sha256": "2a61ad7c7f0761fec38dab941446161d2863762e089cbe928faa28750304e609",
+      "createdAt": "2026-07-08T06:01:28.561Z",
+      "metadata": {
+        "pr": 24,
+        "head": "86a11a3b563e19f9f76beb552b643d1442508c15"
+      }
+    },
+    {
+      "id": "issue-0021-reconcile-pr24-REVIEW-001",
+      "displayId": "REVIEW-001",
+      "phase": "agent-pr-review",
+      "prefix": "REVIEW",
+      "title": "Agent PR review of PR #24",
+      "summary": "APPROVE-WITH-NITS; one Low finding (unconditional useAuth.init in main.tsx) fixed by gating on the flag (commit 86a11a3). No blocking findings remain.",
+      "agent": "code-review agent",
+      "runId": "reconcile-pr24",
+      "status": "complete",
+      "decision": "approve",
+      "path": "docs/automation/specs/issue-0021-disable-all-cloud-features-cloud-ai-models-accou/artifacts/REVIEW-001.md",
+      "sha256": "25498372e2fb1b9a2f3b815324c044c960ceacfd55cf6b4b828bc65a26f9b293",
+      "createdAt": "2026-07-08T06:01:28.565Z",
+      "metadata": {
+        "pr": 24,
+        "head": "86a11a3b563e19f9f76beb552b643d1442508c15"
+      }
+    },
+    {
+      "id": "issue-0021-reconcile-pr24-VER-001",
+      "displayId": "VER-001",
+      "phase": "verification",
+      "prefix": "VER",
+      "title": "Verification bound to head 86a11a3",
+      "summary": "tsc + 36 tests + vite build + cargo check all pass on the PR head.",
+      "agent": "verifier",
+      "runId": "reconcile-pr24",
+      "status": "complete",
+      "decision": null,
+      "path": "docs/automation/specs/issue-0021-disable-all-cloud-features-cloud-ai-models-accou/artifacts/VER-001.md",
+      "sha256": "b56eae86fabef9d44d90ac7e32716906c0a929cd6b26ff0d8cdaa79dda39b7b1",
+      "createdAt": "2026-07-08T06:01:28.567Z",
+      "metadata": {
+        "pr": 24,
+        "head": "86a11a3b563e19f9f76beb552b643d1442508c15"
+      }
+    },
+    {
+      "id": "issue-0021-reconcile-pr24-FINAL-001",
+      "displayId": "FINAL-001",
+      "phase": "finalization",
+      "prefix": "FINAL",
+      "title": "Finalization — PR #24 ready for human review",
+      "summary": "PR #24 ready; verification + review clean; no merge performed.",
+      "agent": "finalizer",
+      "runId": "reconcile-pr24",
+      "status": "complete",
+      "decision": null,
+      "path": "docs/automation/specs/issue-0021-disable-all-cloud-features-cloud-ai-models-accou/artifacts/FINAL-001.md",
+      "sha256": "4837b400a0efb3fd0d52d9c6b991c99289a6eae4a4c1c2af2b3dfc3136f6656e",
+      "createdAt": "2026-07-08T06:01:28.569Z",
+      "metadata": {
+        "pr": 24,
+        "head": "86a11a3b563e19f9f76beb552b643d1442508c15"
+      }
+    }
+  ],
+  "latestArtifacts": {
+    "implementation": {
+      "id": "issue-0021-reconcile-pr24-IMPL-001",
+      "displayId": "IMPL-001",
+      "phase": "implementation",
+      "prefix": "IMPL",
+      "title": "Implementation adopted from PR #24",
+      "summary": "Single-flag CLOUD_FEATURES_ENABLED gating; local-only; PR #24.",
+      "agent": "developer-agent (adopted PR #24)",
+      "runId": "reconcile-pr24",
+      "status": "complete",
+      "decision": null,
+      "path": "docs/automation/specs/issue-0021-disable-all-cloud-features-cloud-ai-models-accou/artifacts/IMPL-001.md",
+      "sha256": "2a61ad7c7f0761fec38dab941446161d2863762e089cbe928faa28750304e609",
+      "createdAt": "2026-07-08T06:01:28.561Z",
+      "metadata": {
+        "pr": 24,
+        "head": "86a11a3b563e19f9f76beb552b643d1442508c15"
+      }
+    },
+    "agent-pr-review": {
+      "id": "issue-0021-reconcile-pr24-REVIEW-001",
+      "displayId": "REVIEW-001",
+      "phase": "agent-pr-review",
+      "prefix": "REVIEW",
+      "title": "Agent PR review of PR #24",
+      "summary": "APPROVE-WITH-NITS; one Low finding (unconditional useAuth.init in main.tsx) fixed by gating on the flag (commit 86a11a3). No blocking findings remain.",
+      "agent": "code-review agent",
+      "runId": "reconcile-pr24",
+      "status": "complete",
+      "decision": "approve",
+      "path": "docs/automation/specs/issue-0021-disable-all-cloud-features-cloud-ai-models-accou/artifacts/REVIEW-001.md",
+      "sha256": "25498372e2fb1b9a2f3b815324c044c960ceacfd55cf6b4b828bc65a26f9b293",
+      "createdAt": "2026-07-08T06:01:28.565Z",
+      "metadata": {
+        "pr": 24,
+        "head": "86a11a3b563e19f9f76beb552b643d1442508c15"
+      }
+    },
+    "verification": {
+      "id": "issue-0021-reconcile-pr24-VER-001",
+      "displayId": "VER-001",
+      "phase": "verification",
+      "prefix": "VER",
+      "title": "Verification bound to head 86a11a3",
+      "summary": "tsc + 36 tests + vite build + cargo check all pass on the PR head.",
+      "agent": "verifier",
+      "runId": "reconcile-pr24",
+      "status": "complete",
+      "decision": null,
+      "path": "docs/automation/specs/issue-0021-disable-all-cloud-features-cloud-ai-models-accou/artifacts/VER-001.md",
+      "sha256": "b56eae86fabef9d44d90ac7e32716906c0a929cd6b26ff0d8cdaa79dda39b7b1",
+      "createdAt": "2026-07-08T06:01:28.567Z",
+      "metadata": {
+        "pr": 24,
+        "head": "86a11a3b563e19f9f76beb552b643d1442508c15"
+      }
+    },
+    "finalization": {
+      "id": "issue-0021-reconcile-pr24-FINAL-001",
+      "displayId": "FINAL-001",
+      "phase": "finalization",
+      "prefix": "FINAL",
+      "title": "Finalization — PR #24 ready for human review",
+      "summary": "PR #24 ready; verification + review clean; no merge performed.",
+      "agent": "finalizer",
+      "runId": "reconcile-pr24",
+      "status": "complete",
+      "decision": null,
+      "path": "docs/automation/specs/issue-0021-disable-all-cloud-features-cloud-ai-models-accou/artifacts/FINAL-001.md",
+      "sha256": "4837b400a0efb3fd0d52d9c6b991c99289a6eae4a4c1c2af2b3dfc3136f6656e",
+      "createdAt": "2026-07-08T06:01:28.569Z",
+      "metadata": {
+        "pr": 24,
+        "head": "86a11a3b563e19f9f76beb552b643d1442508c15"
+      }
+    }
+  },
+  "phaseStatuses": {
+    "implementation": {
+      "status": "complete",
+      "decision": null,
+      "latestArtifactId": "issue-0021-reconcile-pr24-IMPL-001",
+      "latestDisplayId": "IMPL-001",
+      "count": 1,
+      "updatedAt": "2026-07-08T06:01:28.561Z"
+    },
+    "agent-pr-review": {
+      "status": "complete",
+      "decision": "approve",
+      "latestArtifactId": "issue-0021-reconcile-pr24-REVIEW-001",
+      "latestDisplayId": "REVIEW-001",
+      "count": 1,
+      "updatedAt": "2026-07-08T06:01:28.565Z"
+    },
+    "verification": {
+      "status": "complete",
+      "decision": null,
+      "latestArtifactId": "issue-0021-reconcile-pr24-VER-001",
+      "latestDisplayId": "VER-001",
+      "count": 1,
+      "updatedAt": "2026-07-08T06:01:28.567Z"
+    },
+    "finalization": {
+      "status": "complete",
+      "decision": null,
+      "latestArtifactId": "issue-0021-reconcile-pr24-FINAL-001",
+      "latestDisplayId": "FINAL-001",
+      "count": 1,
+      "updatedAt": "2026-07-08T06:01:28.569Z"
+    },
+    "human-pr-review": {
+      "status": "ready",
+      "updatedAt": "2026-07-08T06:01:28.571Z",
+      "details": {
+        "source": "reconcile-pr24"
+      }
+    }
+  }
+}

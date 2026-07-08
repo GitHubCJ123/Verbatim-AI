@@ -202,7 +202,12 @@ async function buildState(ctx) {
   const hydrated = [];
   for (const issue of issues) {
     const local = ctx.state.issues[issue.id] ?? {};
-    const { derived, spec, linkedPr } = await deriveIssueState({ root: ROOT, issue, prs, localIssue: local });
+    const { derived, spec, linkedPr, automationSummary } = await deriveIssueState({
+      root: ROOT,
+      issue,
+      prs,
+      localIssue: local,
+    });
     const relatedPrs = prs.filter((pr) =>
       pr.closingIssuesReferences?.some((ref) => String(ref.number) === String(issue.number)),
     );
@@ -211,6 +216,8 @@ async function buildState(ctx) {
       spec,
       linkedPr,
       relatedPrs,
+      automationSummary,
+      requirementsIssueInputSha: derived.requirements?.issueInputSha ?? null,
       phases: buildPhaseView(issue, local, derived),
       local: {
         approvals: local.approvals ?? {},

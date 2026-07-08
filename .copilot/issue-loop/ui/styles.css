@@ -115,6 +115,29 @@ button:hover { transform: translateY(-1px); border-color: rgba(244,255,104,.55);
 .related-prs { display: flex; flex-direction: column; gap: 7px; margin-top: 14px; }
 .mini-title { color: var(--hot); font: 11px ui-monospace, monospace; text-transform: uppercase; letter-spacing: .14em; }
 .related-pr { color: var(--ink); text-decoration: none; font: 12px ui-monospace, monospace; border-left: 2px solid var(--hot); padding-left: 8px; }
+.artifact-summary { display: flex; flex-direction: column; gap: 7px; margin-top: 14px; }
+.artifact-row, .artifact-chip {
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  gap: 8px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 8px;
+  background: rgba(255,255,255,.03);
+  font: 11px ui-monospace, monospace;
+}
+.artifact-list { display: flex; flex-direction: column; gap: 8px; margin: 12px 0; }
+.artifact-chip { grid-template-columns: auto 1fr; }
+.artifact-id {
+  color: #04110e;
+  background: var(--hot);
+  border-radius: 999px;
+  padding: 3px 7px;
+  font-weight: 700;
+}
+.artifact-phase { color: var(--blue); text-transform: uppercase; }
+.artifact-text, .artifact-empty { color: var(--muted); min-width: 0; overflow-wrap: anywhere; }
 .phase-card { border: 1px solid var(--line); border-radius: 18px; background: var(--panel-2); margin-bottom: 12px; overflow: hidden; }
 .phase-header { width: 100%; display: grid; grid-template-columns: 54px 1fr auto; align-items: center; gap: 14px; border: 0; border-radius: 0; text-align: left; padding: 16px; background: rgba(255,255,255,.02); }
 .phase-index { color: var(--hot); font: 13px ui-monospace, monospace; }
@@ -141,7 +164,8 @@ pre {
   font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 .phase-actions { display: flex; gap: 8px; margin: 12px 0; }
-.feedback-form { border-top: 1px solid var(--line); padding-top: 12px; }
+.approval-form, .feedback-form { border-top: 1px solid var(--line); padding-top: 12px; margin-top: 10px; }
+.form-actions { display: flex; gap: 8px; margin: 10px 0; }
 .hidden { display: none; }
 label { display: block; color: var(--muted); font: 12px ui-monospace, monospace; }
 textarea {

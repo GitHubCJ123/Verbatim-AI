@@ -11,9 +11,13 @@ const actionHeaders = {
   "content-type": "application/json",
 };
 const openPhases = new Set();
+const approvalDrafts = new Map();
 
 document.getElementById("refreshBtn").addEventListener("click", load);
-setInterval(() => void load({ preserveOpen: true }), 2000);
+setInterval(() => {
+  if (document.activeElement?.tagName === "TEXTAREA") return;
+  void load({ preserveOpen: true });
+}, 2000);
 
 async function load(_options = {}) {
   const res = await fetch("/api/state", { headers });
@@ -105,6 +109,7 @@ function renderDetail() {
     related.append(el("div", { className: "mini-title", text: "No related PR yet" }));
   }
   title.append(related);
+  title.append(renderArtifactSummary(issue));
   const reflect = el("button", { className: "reflection-btn", text: "Run self-reflection" });
   reflect.addEventListener("click", () => runReflection(issue.id));
   head.append(title, reflect);
@@ -124,7 +129,7 @@ function renderPhase(issue, phase, index) {
   template.querySelector(".phase-index").textContent = String(index + 1).padStart(2, "0");
   template.querySelector(".phase-title").textContent = phase.title;
   const status = template.querySelector(".phase-status");
-  status.textContent = phase.status;
+  status.textContent = phase.statusLabel ?? phase.status;
   status.classList.add(phase.status);
   template.querySelector(".phase-output").textContent = phase.output || "(no output yet)";
   const header = template.querySelector(".phase-header");
@@ -137,16 +142,48 @@ function renderPhase(issue, phase, index) {
     template.querySelector(".phase-output").textContent =
       `${phase.activeActions.map((action) => action.message).join("\n")}\n\n${phase.output || ""}`;
   }
+  const artifacts = phase.artifacts ?? [];
+  if (artifacts.length) {
+    const artifactList = el("div", { className: "artifact-list" });
+    for (const artifact of artifacts) {
+      const item = el("div", { className: "artifact-chip" });
+      item.append(
+        el("span", { className: "artifact-id", text: artifact.displayId ?? artifact.id ?? "artifact" }),
+        el("span", { className: "artifact-text", text: artifact.summary || artifact.title || artifact.path || "" }),
+      );
+      artifactList.append(item);
+    }
+    template.querySelector(".phase-output").after(artifactList);
+  }
 
   const approve = template.querySelector(".approve-btn");
+  const approvalForm = template.querySelector(".approval-form");
+  const approvalNote = approvalForm.note;
+  const approvalDraftKey = `${phaseKey}:approval-note`;
   approve.disabled = !phase.canApprove;
   approve.title = phase.sideEffect;
-  approve.addEventListener("click", async (event) => {
+  approvalNote.value = approvalDrafts.get(approvalDraftKey) ?? "";
+  approvalNote.addEventListener("input", () => {
+    approvalDrafts.set(approvalDraftKey, approvalNote.value);
+  });
+  approve.addEventListener("click", (event) => {
     event.stopPropagation();
+    approvalForm.classList.toggle("hidden");
+    if (!approvalForm.classList.contains("hidden")) approvalNote.focus();
+  });
+  approvalForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
     await post(`/api/issues/${issue.id}/phases/${phase.id}/approve`, {
       approver: "local-maintainer",
       spec: issue.spec,
+      issueInputSha: issue.requirementsIssueInputSha,
+      note: approvalNote.value,
     });
+    approvalDrafts.delete(approvalDraftKey);
+  });
+  template.querySelector(".approval-cancel-btn").addEventListener("click", (event) => {
+    event.stopPropagation();
+    approvalForm.classList.add("hidden");
   });
 
   const feedbackBtn = template.querySelector(".feedback-btn");
@@ -171,12 +208,34 @@ function renderPhase(issue, phase, index) {
   const actions = phase.activeActions ?? [];
   log.textContent = [
     ...actions.map((item) => `Running ${item.type}: ${item.message}`),
-    ...approvals.map((item) => `Approved by ${item.approver} at ${item.createdAt}`),
+    ...approvals.map((item) =>
+      `Approved by ${item.approver} at ${item.createdAt}${item.note ? `\nNote: ${item.note}` : ""}`,
+    ),
     ...feedback.map((item) => `Feedback ${item.createdAt}: ${item.feedback}\n${item.agentResult}`),
     ...transitions.map((item) => `Transition ${item.from ?? "derived"} -> ${item.to}: ${item.message}`),
   ].join("\n\n");
 
   return template;
+}
+
+function renderArtifactSummary(issue) {
+  const wrap = el("div", { className: "artifact-summary" });
+  const artifacts = issue.automationSummary?.artifacts ?? [];
+  wrap.append(el("div", { className: "mini-title", text: "Automation artifacts" }));
+  if (!artifacts.length) {
+    wrap.append(el("div", { className: "artifact-empty", text: "No durable artifacts yet." }));
+    return wrap;
+  }
+  for (const artifact of artifacts.slice(-8)) {
+    const item = el("div", { className: "artifact-row" });
+    item.append(
+      el("span", { className: "artifact-id", text: artifact.displayId ?? artifact.id }),
+      el("span", { className: "artifact-phase", text: artifact.phase ?? "" }),
+      el("span", { className: "artifact-text", text: artifact.summary || artifact.title || artifact.path || "" }),
+    );
+    wrap.append(item);
+  }
+  return wrap;
 }
 
 async function runReflection(issueId) {

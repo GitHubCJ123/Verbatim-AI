@@ -15,7 +15,16 @@ describe("issue loop config", () => {
     expect(modelFamily("gemini-3.1-pro")).toBe("google");
   });
 
-  it("triages all open issues for requirements clarity by default", () => {
-    expect(DEFAULT_CONFIG.triageAllOpenIssues).toBe(true);
+  it("keeps initial issue triggers manual by default", () => {
+    expect(DEFAULT_CONFIG.triageAllOpenIssues).toBe(false);
+  });
+
+  it("uses a local ignored worktree root by default", () => {
+    expect(DEFAULT_CONFIG.worktrees.root).toBe(".copilot-issue-loop/worktrees");
+    expect(DEFAULT_CONFIG.worktrees.cleanupMergedPrBranches).toBe(true);
+  });
+
+  it("bounds agent PR review iteration by default", () => {
+    expect(DEFAULT_CONFIG.maxPrReviewIterations).toBe(2);
   });
 });

@@ -9,7 +9,8 @@ export const DEFAULT_CONFIG = {
   pollIntervalSeconds: 300,
   maxConcurrentIssues: 1,
   maxIssuesPerTick: 1,
-  triageAllOpenIssues: true,
+  maxPrReviewIterations: 2,
+  triageAllOpenIssues: false,
   requiredLabels: ["automate"],
   excludedLabels: ["wontfix", "blocked", "needs-human"],
   automationLabels: {
@@ -19,6 +20,10 @@ export const DEFAULT_CONFIG = {
     specApproved: "spec-approved",
   },
   branchPrefix: "copilot/issue-",
+  worktrees: {
+    root: ".copilot-issue-loop/worktrees",
+    cleanupMergedPrBranches: true,
+  },
   reviewers: [],
   teamReviewers: [],
   trustedApprovers: [],
@@ -29,6 +34,7 @@ export const DEFAULT_CONFIG = {
     labels: ["automation-stop", "blocked"],
   },
   agents: {
+    requirementsCritic: { persona: "requirements critic", model: "gpt-5.5" },
     architect: { persona: "experienced software architect", model: "gpt-5.5" },
     adversarialReviewer: {
       persona: "skeptical senior reviewer",
@@ -36,7 +42,13 @@ export const DEFAULT_CONFIG = {
       mustDifferFrom: "architect",
     },
     implementer: { model: "claude-sonnet-5" },
+    agentPrReviewer: {
+      persona: "skeptical PR reviewer focused on correctness, security, tests, and UX regressions",
+      model: "gpt-5.5",
+    },
     verifier: { model: "gpt-5.5" },
+    finalizer: { model: "gpt-5.5" },
+    selfReflector: { model: "claude-opus-4.8" },
   },
   gates: {
     requireHumanOnSpecReviewQuestions: true,
@@ -57,7 +69,7 @@ export const DEFAULT_CONFIG = {
     model: "auto",
     baseArgs: ["-p", "--add-dir", "{worktree}"],
     allowTools: ["view", "rg", "glob", "apply_patch"],
-    readOnlyRoles: ["architect", "adversarialReviewer"],
+    readOnlyRoles: ["architect", "adversarialReviewer", "agentPrReviewer"],
     readOnlyTools: ["view", "rg", "glob"],
   },
 };

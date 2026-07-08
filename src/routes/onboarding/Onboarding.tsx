@@ -271,18 +271,19 @@ function NavRow({
 
 // ─── Step 1: Welcome ─────────────────────────────────────────────────────
 
-/**
- * Quick-start defaults (docs/improvement-plan/01-quick-setup.md): cloud
- * transcription + cleanup, platform-default hold-to-talk hotkey, history
- * on, pill bottom-center. Built-in Modes are already seeded elsewhere.
- */
 async function applyQuickDefaults() {
   const cfg = loadHotkeyConfig(); // platform default unless the user rebound before
   await applyHotkey(cfg.spec);
   saveHotkeyConfig({ spec: cfg.spec, pushToTalk: true });
-  setAiProviderKind("cloud");
-  setCleanupProviderKind("cloud");
-  setAiImproveDisabled(false);
+  if (isLocalMode()) {
+    setAiProviderKind("local-whisper");
+    setCleanupProviderKind("local-ollama");
+    setAiImproveDisabled(true);
+  } else {
+    setAiProviderKind("cloud");
+    setCleanupProviderKind("cloud");
+    setAiImproveDisabled(false);
+  }
   setHistoryDisabled(false);
   setOverlayPosition("bottom-center");
   const ob = useOnboarding.getState();
@@ -296,6 +297,7 @@ function Welcome() {
   const finish = useOnboarding((s) => s.finish);
   const navigate = useNavigate();
   const [applying, setApplying] = useState(false);
+  const localMode = isLocalMode();
 
   const setMicPermission = useOnboarding((s) => s.setMicPermission);
 
@@ -359,9 +361,9 @@ function Welcome() {
         </Button>
       </div>
       <p className="mx-auto mt-6 max-w-md text-xs text-text-muted">
-        Quick start uses our defaults: cloud AI (audio is sent to our cloud just long enough to
-        transcribe), hold-to-talk hotkey, and transcript history on. Everything can be changed later
-        in Settings — including switching to fully-local AI.
+        {localMode
+          ? "Quick start uses local defaults: on-device transcription, raw transcript output, hold-to-talk hotkey, and transcript history on. You can opt into cloud AI later in Settings."
+          : "Quick start uses our cloud AI defaults, hold-to-talk hotkey, and transcript history on. Everything can be changed later in Settings."}
       </p>
     </div>
   );
@@ -393,7 +395,11 @@ function Permissions() {
     <div>
       <StepHeading
         title="Microphone access"
-        subtitle="Verbatim AI sends your audio to our cloud just long enough to transcribe and polish it. Recordings themselves are never stored."
+        subtitle={
+          isLocalMode()
+            ? "Verbatim AI needs microphone access to record. With local defaults, transcription stays on this computer."
+            : "Verbatim AI sends your audio to our cloud just long enough to transcribe and polish it. Recordings themselves are never stored."
+        }
       />
       <Card className="mt-8">
         <CardContent className="flex items-center justify-between gap-4 p-6 pt-6">
@@ -897,6 +903,16 @@ function AIStep() {
   const [cleanup, setCleanup] = useState<CleanupChoice>(() =>
     isAiImproveDisabled() ? "none" : getCleanupProviderKind(),
   );
+
+  useEffect(() => {
+    if (isLocalMode() && getAiProviderKind() === "cloud") {
+      setAiProviderKind("local-whisper");
+      setKind("local-whisper");
+      setCleanupProviderKind("local-ollama");
+      setAiImproveDisabled(true);
+      setCleanup("none");
+    }
+  }, []);
 
   const choose = (k: AiProviderKind) => {
     setAiProviderKind(k);

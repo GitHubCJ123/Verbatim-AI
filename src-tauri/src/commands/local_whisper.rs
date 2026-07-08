@@ -317,9 +317,9 @@ async fn verified_runtime_manifest(client: &reqwest::Client) -> Result<RuntimeMa
         .get(&manifest_url)
         .send()
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(|e| runtime_download_error("manifest", &manifest_url, e))?
         .error_for_status()
-        .map_err(|e| e.to_string())?
+        .map_err(|e| runtime_download_error("manifest", &manifest_url, e))?
         .bytes()
         .await
         .map_err(|e| e.to_string())?;
@@ -327,9 +327,9 @@ async fn verified_runtime_manifest(client: &reqwest::Client) -> Result<RuntimeMa
         .get(&sig_url)
         .send()
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(|e| runtime_download_error("manifest signature", &sig_url, e))?
         .error_for_status()
-        .map_err(|e| e.to_string())?
+        .map_err(|e| runtime_download_error("manifest signature", &sig_url, e))?
         .text()
         .await
         .map_err(|e| e.to_string())?;
@@ -339,6 +339,19 @@ async fn verified_runtime_manifest(client: &reqwest::Client) -> Result<RuntimeMa
         .verify(&manifest_bytes, &signature, false)
         .map_err(|e| format!("Whisper runtime manifest signature verification failed: {e}"))?;
     serde_json::from_slice::<RuntimeManifest>(&manifest_bytes).map_err(|e| e.to_string())
+}
+
+fn runtime_download_error(kind: &str, url: &str, e: reqwest::Error) -> String {
+    if e.status() == Some(reqwest::StatusCode::NOT_FOUND) {
+        return format!(
+            "Could not download the Whisper runtime {kind} for Verbatim AI v{} from {url}. \
+             The GitHub release assets are not publicly available yet. Publish the v{} release \
+             or install a Verbatim AI version whose Local Whisper runtime assets are published.",
+            env!("CARGO_PKG_VERSION"),
+            env!("CARGO_PKG_VERSION"),
+        );
+    }
+    format!("Could not download the Whisper runtime {kind} from {url}: {e}")
 }
 
 #[tauri::command]
@@ -414,8 +427,19 @@ async fn install_whisper_runtime_variant(
         .sha256
         .to_ascii_lowercase();
 
-    let res = client.get(&asset.url).send().await.map_err(|e| e.to_string())?;
+    let res = client
+        .get(&asset.url)
+        .send()
+        .await
+        .map_err(|e| runtime_download_error(asset.name, &asset.url, e))?;
     if !res.status().is_success() {
+        if res.status() == reqwest::StatusCode::NOT_FOUND {
+            return Err(runtime_download_error(
+                asset.name,
+                &asset.url,
+                res.error_for_status().unwrap_err(),
+            ));
+        }
         return Err(format!(
             "download failed: HTTP {} from {}",
             res.status(),

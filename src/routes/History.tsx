@@ -34,7 +34,7 @@ import { isSupabaseConfigured } from "../lib/supabase";
 import { toast } from "../components/ui/Toast";
 import { confirmDialog } from "../components/ui/confirmDialog";
 import { copyCleanedText, pasteCleanedText } from "../lib/output";
-import { getOutputBehavior } from "../lib/preferences";
+import { getOutputBehavior, isAiImproveDisabled } from "../lib/preferences";
 import { useModes } from "../lib/store/useModes";
 import { getActiveProvider } from "../lib/ai";
 import { loadVocabulary } from "../lib/store/useModes";
@@ -243,6 +243,12 @@ function HistoryRow({
   };
 
   const handleReclean = async () => {
+    if (isAiImproveDisabled()) {
+      toast.error("AI cleanup is off", {
+        description: "Turn on cleanup in Settings → AI model before re-cleaning transcripts.",
+      });
+      return;
+    }
     const provider = getActiveProvider();
     if (!provider) {
       toast.error("Configure Azure in Settings → AI first");

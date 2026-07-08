@@ -32,7 +32,10 @@ import {
   getOutputBehavior,
   getPasteMethod,
   isPerfDebugEnabled,
+  isFillerFilterEnabled,
+  isFuzzyVocabEnabled,
 } from "../lib/preferences";
+import { applyInlinePostProcessing } from "../lib/postProcess";
 import { getPrivacyStatus, type DataLocality } from "../lib/privacyStatus";
 import type { Mode } from "../types/mode";
 
@@ -174,7 +177,20 @@ export default function Overlay() {
         language: activeMode.language || "auto",
         vocabularyHints: vocabularyTerms,
       });
-      setRawText(transcript.text);
+
+      // ── Inline post-processing (P2.9) ──────────────────────────────────
+      // Deterministic, LLM-free step applied to the raw transcript BEFORE
+      // the cleanup-LLM so fillers are absent from the LLM context and
+      // near-miss vocab terms are corrected upfront.
+      // Both features are OFF by default; zero output change unless the
+      // user explicitly enables them in Settings.
+      const processedText = applyInlinePostProcessing(transcript.text, {
+        fillerFilter: isFillerFilterEnabled(),
+        fuzzyVocab: isFuzzyVocabEnabled(),
+        vocabularyTerms: vocabularyAll,
+      });
+
+      setRawText(processedText);
 
       // Branch on output style BEFORE polishing so review users see
       // tokens stream into the editor in real time.
@@ -186,11 +202,11 @@ export default function Overlay() {
       let cleaned: string;
       if (activeMode.skipCleanup || isAiImproveDisabled()) {
         // Fast path: skip the LLM entirely; vocab replacements still run.
-        cleaned = applyVocabReplacements(transcript.text, vocabularyAll);
+        cleaned = applyVocabReplacements(processedText, vocabularyAll);
         setStreamingCleaned(cleaned);
       } else {
         setState("polishing");
-        const cleanedRaw = await runCleanup(transcript.text, activeMode, vocabularyTerms);
+        const cleanedRaw = await runCleanup(processedText, activeMode, vocabularyTerms);
         cleaned = applyVocabReplacements(cleanedRaw, vocabularyAll);
         if (cleaned !== cleanedRaw) setStreamingCleaned(cleaned);
       }

@@ -21,6 +21,8 @@ const LS_AI_DISABLED = "sw.ai.disabled";
 const LS_HISTORY_DISABLED = "sw.history.disabled";
 const LS_HISTORY_RETENTION = "sw.history.retentionDays";
 const LS_PERF_DEBUG = "sw.debug.perf";
+const LS_FILLER_FILTER = "sw.postproc.fillerFilter";
+const LS_FUZZY_VOCAB = "sw.postproc.fuzzyVocab";
 
 export type OverlayPosition =
   | "bottom-center"
@@ -208,4 +210,30 @@ export async function isAutostartEnabled(): Promise<boolean> {
 export async function setAutostart(enabled: boolean): Promise<void> {
   if (enabled) await autostartEnable();
   else await autostartDisable();
+}
+
+// ─── Inline post-processing (P2.9) ────────────────────────────────────────
+
+/**
+ * Whether the filler-word filter is active.
+ * Default: false (off) — conservative; the user must opt in.
+ */
+export function isFillerFilterEnabled(): boolean {
+  return localStorage.getItem(LS_FILLER_FILTER) === "1";
+}
+
+export function setFillerFilterEnabled(v: boolean): void {
+  localStorage.setItem(LS_FILLER_FILTER, v ? "1" : "0");
+}
+
+/**
+ * Whether fuzzy vocabulary correction is active.
+ * Default: false (off) — conservative; the user must opt in.
+ */
+export function isFuzzyVocabEnabled(): boolean {
+  return localStorage.getItem(LS_FUZZY_VOCAB) === "1";
+}
+
+export function setFuzzyVocabEnabled(v: boolean): void {
+  localStorage.setItem(LS_FUZZY_VOCAB, v ? "1" : "0");
 }

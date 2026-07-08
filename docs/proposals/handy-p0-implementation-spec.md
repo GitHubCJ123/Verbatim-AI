@@ -1,177 +1,202 @@
-# P0 Implementation Spec — Warm, in-process Whisper engine (clean-room)
+# P0 Implementation Spec — Warm Whisper via a persistent `whisper-server` sidecar (clean-room)
 
 - **Tracking issue:** [#23](https://github.com/GitHubCJ123/Verbatim-AI/issues/23)
 - **Builds on:** `docs/proposals/handy-adoption.md` (§4 Phase 0–2, Phase 1b)
-- **Status:** Draft for review — implementation-ready for the P0 first cut
+- **Status:** Draft for review — revised after a GPT-5.5 design critique
 - **Branch:** `analysis/handy-comparison`
+
+> **Revision note.** An earlier draft proposed linking Whisper in-process via `whisper-rs`. A
+> design critique surfaced a **blocking** conflict: this codebase *deliberately* avoids linking
+> whisper.cpp because it "hit bindgen/libclang version-mismatch issues on Windows"
+> (`src-tauri/src/commands/local_whisper.rs:1-6`), and today's GPU support is **runtime-downloaded
+> sidecar variants** (`local_whisper.rs:278-297`), not build-time features. This spec therefore
+> uses a **persistent `whisper-server` process** instead: it keeps the model warm **without any
+> in-process linking**, reuses the **exact same models and GPU-variant infrastructure**, and
+> avoids reintroducing the Windows build problems.
 
 ---
 
 ## 0. Clean-room mandate (read first)
 
-We implement the **design and behavior** observed in Handy. We do **not** copy, paste, port,
-translate, or line-by-line adapt Handy's source code, comments, or data files (e.g.
-`catalog.json`). No Handy files are vendored into this repo.
-
-- We reuse **ideas and architecture** (warm resident engine, preload-on-press, single-flight
-  load, idle-unload). Ideas are not copyrightable; **expression is**. We reimplement the
-  expression from scratch against our own types and conventions.
-- Because nothing is copied, **no MIT attribution to Handy is required** and there is no
-  licensing/attribution obligation to track. Handy is a *reference for behavior only*.
-- Third-party crates we add (e.g. `whisper-rs`, MIT) are used under **their own** licenses via
-  Cargo — that is normal dependency use, unrelated to Handy.
-- **Reviewer instruction:** reject any hunk that appears derived from Handy source (same
-  identifiers, structure, or comments). When in doubt, describe the behavior and re-write.
+We implement the **design/behavior** from Handy (warm resident model, preload-on-press,
+single-flight readiness, idle-unload). We do **not** copy, port, or adapt Handy's source code,
+comments, or data. Ideas are reused; **expression is reimplemented** against our own types.
+Because nothing is copied, **no attribution/licensing obligation to Handy applies**; Handy is a
+reference for behavior only. `whisper.cpp`/`whisper-server` (MIT) is used as an **external
+prebuilt binary** (as the app already does for `whisper-cli`) — normal dependency use, unrelated
+to Handy. **Reviewers:** reject any hunk that appears derived from Handy source.
 
 ---
 
-## 1. Scope
+## 1. Scope & approach
 
-This spec covers only the P0 first cut, which removes the largest repeated local-mode cost:
+Deliver the P0 first cut: remove the **cold model load + process spawn on every utterance**.
 
-- **P0.0** — Pipeline measurement instrumentation.
-- **P0.1** — Warm, in-process Whisper engine (model resident across utterances).
-- **P0.2** — Remove the `Array.from(samples)` JSON-array IPC.
-- **P1b** — Preload the model on hotkey-down (small, rides on P0.1).
+- **P0.0** — Pipeline measurement (baseline vs. warm).
+- **P0.1** — Run transcription against a **persistent `whisper-server`** kept warm across
+  utterances (model resident in the server process), replacing the per-utterance `whisper-cli`
+  spawn.
+- **P0.2** — Reduce the `Array.from(samples)` JSON-array IPC between the webview and Rust.
+- **P1b** — Ensure the server is warm (spawned/model-loaded) on hotkey-down.
 
-**Out of scope here** (later phases in `handy-adoption.md`): native `cpal` capture, VAD, the
-model-catalogue overhaul, streaming, hotkey/paste changes. **Parakeet stays on its current
-sidecar** for this cut; the same resident-engine pattern can wrap it in a follow-up.
+**Out of scope** (later phases in `handy-adoption.md`): native `cpal` capture, VAD, catalogue
+overhaul, streaming, hotkey/paste. **Parakeet stays on its current sidecar** for this cut.
 
-**Key enabling fact:** `whisper-rs` (MIT) loads the **exact GGML `.bin` models Verbatim already
-downloads** (`ggml-*.bin` under the app data dir via `commands/local_whisper.rs`). So P0.1 needs
-**no re-download and no model-format change** — only a change in *how* we run inference
-(in-process vs. spawning `whisper-cli`).
+**Why the server approach fits:** it keeps the model in memory (the #1 win) while reusing (a) the
+existing GGML `.bin` models under `whisper-models/` (`local_whisper.rs:93-100,123-126`), and
+(b) the existing signed runtime-archive + GPU-variant selection (`local_whisper.rs:278-297`,
+`default_runtime_variant()` :210-233). No in-process linking, no GPU-parity loss.
 
 ---
 
 ## 2. Current state (recap, cited)
 
-- `LocalWhisperProvider.transcribe` decodes audio to 16 kHz mono f32 in JS, then invokes
-  `transcribe_local` with `pcm: Array.from(samples)` — a JSON number array
-  (`src/lib/ai/localWhisper.ts:197`).
-- Rust `transcribe_local` writes a temp WAV and calls `run_whisper_cli`, which does
-  `Command::new(cli)` + `cmd.output().await` **per call** — a fresh process and **cold model
-  load every utterance** (`src-tauri/src/commands/local_whisper.rs:795,819`).
-- No model is retained between calls; GPU selection is via a compute-preference setting
-  (`getWhisperComputePreference`, runtime-variant detection in `local_whisper.rs`).
+- Models: `app_data_dir/whisper-models/ggml-{tiny,base,small,large-v3-turbo-q5_0,large-v3}.bin`
+  (`local_whisper.rs:93-100,123-126`); downloaded from HuggingFace `ggerganov/whisper.cpp`
+  (`:102-106`).
+- Runtime binary: `app_data_dir/whisper-bin/whisper-cli(.exe)` (+ DLLs), obtained from Verbatim's
+  **own** signed GitHub release archives `whisper-bin-<platform>-<variant>.zip` via a signed
+  manifest (`local_whisper.rs:263-297,442-512`). GPU variant chosen at runtime by
+  `default_runtime_variant()` (Windows: nvcuda/vulkan DLL probe; macOS arm64: Metal; else CPU)
+  (`:210-233`).
+- Transcription: `transcribe_local` → temp WAV → `run_whisper_cli` = `Command::new(cli)` +
+  `cmd.output().await` **per utterance** (cold model load each time) (`:785-819,939-953`).
+- Audio → Rust: `pcm: Array.from(samples)` JSON array (`src/lib/ai/localWhisper.ts:196-210`).
 
 ---
 
 ## 3. Design
 
-### 3.1 Rust: resident engine module (new)
+### 3.1 `whisper-server` acquisition (release-pipeline change)
 
-New module tree (our own names/structure — not Handy's):
+- Bundle the `whisper-server` binary **inside the existing `whisper-bin-<platform>-<variant>.zip`
+  archives** (built in `.github/workflows/release.yml` alongside `whisper-cli`). Because it lives
+  in the same archive, the **signed manifest asset list is unchanged** — only the archive contents
+  grow. The app then finds `whisper-bin/whisper-server(.exe)` next to `whisper-cli`.
+- Add `whisper-server` to the executable-permission fix-up already done for `whisper-cli`
+  (`local_whisper.rs:579`).
+- **Required pre-implementation spike:** confirm `whisper-server` builds and runs for every
+  variant we ship (Windows CPU/CUDA/Vulkan, macOS arm64 Metal). For local dev/test, a locally
+  built `whisper-server` placed in `whisper-bin/` is sufficient; the workflow change lands with
+  this PR but only affects users after the next signed release.
+
+### 3.2 Rust: `whisper-server` process manager (new module)
+
+New module `src-tauri/src/commands/whisper_server.rs` (our own code):
 
 ```
-src-tauri/src/transcribe/
-  mod.rs        // public API: EngineManager, commands glue, TranscriptionEngine trait
-  engine.rs     // TranscriptionEngine trait + WhisperEngine (whisper-rs) impl
-  manager.rs    // resident state, single-flight load, idle-unload
+struct ServerHandle { child: Child, port: u16, model_key: ModelKey, base_url: String, last_used: Instant }
+struct WhisperServerState { inner: Arc<Mutex<Option<ServerHandle>>>, starting: Arc<tokio::sync::Mutex<()>>, idle: Duration }
 ```
 
-- **State (Tauri managed):**
-  ```
-  struct EngineManager {
-      inner: Arc<Mutex<EngineSlot>>,   // holds Option<Loaded>, current key, last_used
-      loading: Arc<Mutex<()>>,         // single-flight guard (one load at a time)
-      idle_timeout: Duration,          // default 5 min, from settings
-  }
-  struct Loaded { key: ModelKey, engine: Box<dyn TranscriptionEngine>, }
-  ```
-  `ModelKey = (tier, compute_variant)`. Managed via `app.manage(EngineManager::new(..))`.
-- **`TranscriptionEngine` trait:** `load(model_path, opts) -> Self`, `transcribe(&self, pcm:
-  &[f32], language: Option<&str>) -> TranscribeOutput`. One impl now: `WhisperEngine` wrapping
-  `whisper_rs::WhisperContext` + `WhisperState`.
-- **Load semantics (mirror Handy's safety, our code):**
-  1. Fast path: if `key` matches the resident engine, reuse it (update `last_used`).
-  2. Otherwise take the `loading` guard (single-flight; concurrent presses coalesce).
-  3. **Drop the previous engine before allocating the new one** (avoid double peak memory).
-  4. Store `Loaded`, record `last_used`.
-- **Idle-unload:** a lightweight task (or check-on-use) drops the engine when
-  `now - last_used > idle_timeout`. Keep it simple: check on each transcribe + a 30 s interval
-  timer; setting `Immediately` unloads right after a transcription.
-- **GPU:** map `WhisperComputePreference`/`WhisperRuntimeVariant` → whisper-rs context params
-  (`use_gpu`, `gpu_device`) and Cargo features per platform (`metal` on macOS; `cuda`/`vulkan`
-  gated on Linux/Windows, matching existing `-fa` flash-attn behavior for CUDA/Metal). Preserve
-  the current auto/cuda/vulkan/cpu preference plumbing end-to-end.
+- **Send/Sync-safe by construction:** we hold a `Child` + `u16` + `String` — **no whisper types
+  in-process** (this sidesteps the whisper-rs `WhisperState: !Sync`/`&mut` problems entirely).
+- **`ensure_server(tier, compute)`**:
+  1. Fast path: if a live server matches `(tier, variant)` → update `last_used`, return `base_url`.
+  2. Take the `starting` guard (single-flight; concurrent presses coalesce).
+  3. If a server for a **different** model is running, **kill it first** (drop before spawn) —
+     whisper-server serves one model per process.
+  4. Pick a free loopback port (bind `TcpListener` on `127.0.0.1:0`, read the port, drop it), then
+     spawn `whisper-server -m <model.bin> --host 127.0.0.1 --port <port> [-fa for CUDA/Metal]`
+     with `CREATE_NO_WINDOW` on Windows (mirror `local_whisper.rs`).
+  5. **Health-poll** `GET /` (or `/health`) on the port until ready or timeout; store the handle.
+- **Idle-unload:** a 30 s interval task kills the server when `now - last_used > idle` (default
+  5 min, configurable). Kill on model switch and on app exit (`RunEvent::Exit`).
+- **Crash recovery:** if a request fails with a connection error, mark the handle dead and
+  re-`ensure_server` once.
+- **GPU:** reuse `default_runtime_variant()` / the compute preference exactly as the CLI path does;
+  pass `-fa` for CUDA/Metal like `run_whisper_cli` (`local_whisper.rs:799-801`). No new GPU logic.
 
-### 3.2 Rust: commands
+### 3.3 Rust: commands & request mapping
 
-New commands in `transcribe/mod.rs`, registered in `lib.rs`:
+- Commands (in `whisper_server.rs`, registered in `lib.rs`): `ensure_engine_ready(tier,
+  compute_preference)`, `unload_engine()`.
+- `transcribe_local` **keeps its name/signature** but branches on an **engine mode** arg
+  (`"server" | "cli"`, default `"server"`): server path calls `ensure_server` then **POSTs the WAV
+  to `http://127.0.0.1:<port>/inference`** (multipart `file=@wav`) with fields mapped from the
+  existing CLI flags:
+  - `-nt` → `no_timestamps=true`; `-l <lang>` → `language`; `-tr` → `translate` (**preserve the
+    `translate` arg** from `TranscribeArgs`, `local_whisper.rs:722-729`); `response_format=json`.
+  - Parse the JSON response `text` and detected `language`; keep the existing
+    `{text, language_detected, duration_ms}` return shape.
+  - Reuse the existing WAV writer (`local_whisper.rs:939-953`) so audio format is identical to the
+    CLI path (guarantees parity).
+- HTTP client: reuse the crate already used for runtime downloads (`reqwest`, see
+  `local_whisper.rs:389,464`). No new dependency.
+- Keep `run_whisper_cli` intact as the `"cli"` fallback.
 
-- `ensure_engine_loaded(tier, compute_preference) -> Result<(), String>` — idempotent warm-up.
-- `transcribe_pcm(tier, compute_preference, language, pcm_bytes) -> TranscribeOutput` — runs on
-  the resident engine; loads if needed (single-flight).
-- `unload_engine() -> Result<(), String>`.
-
-**Migration/compat:** keep the existing `transcribe_local` command name as a **thin wrapper** that
-delegates to `transcribe_pcm`, so the frontend surface barely changes and we can flip back if
-needed. Keep `run_whisper_cli` behind a `sw.local.engine = "cli"` escape hatch (default
-`"in-process"`) for one release to de-risk parity.
-
-### 3.3 Frontend
+### 3.4 Frontend
 
 - `src/lib/ai/localWhisper.ts`:
-  - Replace `pcm: Array.from(samples)` with a **binary handoff** (P0.2). Preferred: send an
-    `ArrayBuffer` of the f32 PCM (Tauri v2 supports `ArrayBuffer`/`Uint8Array` args efficiently);
-    Rust reinterprets bytes as `&[f32]`. Fallback: write a temp WAV in Rust from bytes (we already
-    do WAV for the CLI path).
-  - Call `ensure_engine_loaded(tier, compute)` from `health()`/on provider selection so the model
-    warms before first use.
-- `src/lib/hotkey.ts` (P1b): on `hotkey:down`, fire `ensure_engine_loaded(activeTier, compute)`
-  **in parallel** with mic acquisition (do not await before starting capture). Guard so a
-  fast press/release doesn't leak a load.
-- No change to the composite-provider contract in `src/lib/ai/index.ts`.
+  - Add `getLocalWhisperEngineMode(): "server" | "cli"` (localStorage, default `"server"`) and pass
+    `engine` in `TranscribeArgs` (Rust cannot read localStorage — critic fix).
+  - **P0.2:** stop sending `pcm: Array.from(samples)`. Preferred: send the PCM as bytes via a
+    top-level raw invoke (`tauri::ipc::Request`), or write the WAV in Rust from a `Uint8Array`
+    (we already build a WAV). Decode f32 via `f32::from_le_bytes` chunks (require `len % 4 == 0`);
+    no unsafe reinterpret (critic fix).
+  - Call `ensure_engine_ready(resolvedTier, compute)` from `health()` / on provider selection.
+- `src/lib/hotkey.ts` (**P1b**): on `hotkey:down`, if the resolved provider is local-whisper, fire
+  `ensure_engine_ready(tier, compute)` **in parallel** with mic acquisition. **Use the resolved
+  mode's `whisperTierOverride`** (via the same resolution as `ai/index.ts:279`), not a blind
+  `getLocalWhisperTier()` (critic fix). Fast press/release does **not** cancel a spawn — let it
+  finish; the idle timer reclaims it (critic fix: loads aren't cheaply cancelable).
+- No change to the composite-provider contract in `ai/index.ts`.
 
-### 3.4 Measurement (P0.0, land first)
+### 3.5 Registration (explicit — critic fix)
 
-- TS (`localWhisper.ts`, behind `isPerfDebugEnabled()`): `performance.mark` for decode,
-  serialize/IPC, and total; log payload byte size.
-- Rust: log `model_load_ms` vs `inference_ms` separately (behind an env/setting flag) so we can
-  prove "load ≈ 0 when warm".
-- One summary line per utterance; reuse the existing perf-log style from `src/lib/audio.ts`.
+- Add `pub mod whisper_server;` under `commands/mod.rs`; import commands + `WhisperServerState`
+  into `lib.rs`; `.manage(WhisperServerState::new(..))` next to existing managed state
+  (`lib.rs:64-67`); add the new commands to `generate_handler!` (`lib.rs:84-115`); ensure
+  `transcribe_local` is not double-registered. Kill the server on `RunEvent::Exit`.
+
+### 3.6 Measurement (P0.0, land first)
+
+- TS (behind `isPerfDebugEnabled()`): mark decode, serialize/IPC bytes, HTTP round-trip, total.
+- Server model makes the split natural: **first** request after (re)spawn = cold (model load in the
+  server); **subsequent** = warm. Log server-spawn ms separately from request ms. (The old CLI's
+  `cmd.output().await` can only give a single total — measure it as the baseline.)
 
 ---
 
 ## 4. Dependencies
 
-- Add `whisper-rs` to `src-tauri/Cargo.toml` with per-platform features:
-  `metal` (macOS), `cuda`/`vulkan` (gated, Linux/Windows) — mirroring the existing runtime-variant
-  matrix. Verify the current crate version/API at implementation time (crate is MIT; loads our
-  existing GGML `.bin` models).
-- No new JS dependencies.
+- **No new Rust linking deps.** Reuse `reqwest` (already present) for the loopback POST.
+- Release workflow bundles a `whisper-server` binary into the runtime archives (build-time only).
+- No new JS deps.
 
 ---
 
 ## 5. Acceptance criteria
 
-1. **Warm:** 2nd+ utterances with an already-selected tier show `model_load_ms ≈ 0`
-   (P0.0 log); only inference is paid.
-2. **Preload:** with warm mic + P1b, a short utterance's press→result is dominated by inference,
-   not setup, vs. the P0.0 baseline.
-3. **IPC:** for a 30 s clip, the audio handoff is compact binary, not an N-element JSON array;
-   the serialize/IPC segment shrinks by ≥ an order of magnitude.
-4. **Parity:** transcript text matches the CLI path on a fixed sample set (±minor tokenization);
-   language detection unchanged.
-5. **Memory:** switching tiers drops the old engine first; idle-unload frees memory after the
-   timeout; concurrent presses never double-load.
-6. **No regressions:** cloud mode, Parakeet, warm-mic, hot-path reorder, and `fn`-key unchanged.
-7. **Validation:** `corepack pnpm test`, `corepack pnpm exec tsc --noEmit`,
-   `cargo check --manifest-path src-tauri/Cargo.toml` all pass; app builds.
+1. **Warm:** 2nd+ utterances against a running server show **no model-load cost**; only inference +
+   a loopback round-trip are paid (P0.0 log).
+2. **Preload:** with warm mic + P1b, the server is ready by the time the user stops; short-clip
+   press→result is dominated by inference vs. the CLI baseline.
+3. **IPC:** the webview→Rust audio handoff is compact (bytes/WAV), not an N-element JSON array.
+4. **Parity:** transcript text + detected language match the CLI path on a fixed sample set (same
+   WAV, same model, same flags).
+5. **Lifecycle:** switching tiers kills+respawns; idle-unload kills after timeout; app exit kills
+   the server (no zombies); a dead server is transparently respawned once.
+6. **GPU:** the server uses the same runtime variant as the CLI would (CUDA/Vulkan/Metal/CPU).
+7. **Fallback:** `engine="cli"` still works unchanged.
+8. **No regressions:** cloud mode, Parakeet, warm-mic, hot-path reorder, `fn`-key unchanged.
+9. **Validation:** `corepack pnpm test`, `corepack pnpm exec tsc --noEmit`,
+   `cargo check --manifest-path src-tauri/Cargo.toml` pass; app builds.
 
 ---
 
 ## 6. Test plan
 
-- **Rust unit:** `EngineManager` load/reuse/drop-before-alloc/single-flight (mock engine); idle
-  eviction. `cargo test --manifest-path src-tauri/Cargo.toml`.
-- **TS:** extend `src/lib/ai/localWhisper.test.ts` for the binary-handoff path and
-  `ensure_engine_loaded` wiring (mock `invoke`).
-- **Manual latency:** measure baseline (CLI) then warm engine for {tiny, turbo, large} × {5 s,
-  30 s}; record the load-vs-run delta.
-- **Parity:** transcribe a fixed WAV set on both paths; diff text.
+- **Rust unit:** `WhisperServerState` port selection; single-flight (concurrent `ensure_server`
+  spawns one); kill-before-respawn on model switch; idle eviction; dead-handle respawn. Use a
+  **fake server binary** (a tiny script that binds the port and answers `/inference`) so tests
+  don't need real weights. `cargo test --manifest-path src-tauri/Cargo.toml`.
+- **TS:** extend `src/lib/ai/localWhisper.test.ts` for engine-mode selection + binary handoff
+  (mock `invoke`); assert `translate`/language are forwarded.
+- **Manual latency + parity:** baseline (CLI) vs warm server for {tiny,turbo,large} × {5 s,30 s};
+  diff transcripts on a fixed WAV set.
+- **Build matrix (acceptance gate):** Windows CPU, Windows CUDA/Vulkan (or CLI fallback), macOS
+  arm64 Metal, no-GPU CPU.
 
 ---
 
@@ -179,25 +204,30 @@ needed. Keep `run_whisper_cli` behind a `sw.local.engine = "cli"` escape hatch (
 
 | Risk | Mitigation |
 |---|---|
-| `whisper.cpp` compiled into the app grows build time / binary | Feature-gate GPU backends per platform; document first-build cost; CI cache |
-| whisper-rs API drift vs. this spec | Verify crate version/API at implementation; isolate behind `TranscriptionEngine` trait |
-| GPU feature build failures on some targets | Default `auto`→CPU fallback; keep CLI escape hatch (`sw.local.engine="cli"`) one release |
-| Parity regressions | Keep CLI path selectable; parity test gate before removing it |
-| Binary f32 IPC edge cases | WAV-from-bytes fallback already proven |
+| `whisper-server` not built for a variant | Pre-impl spike; if missing, fall back to CLI for that variant via `engine="cli"` |
+| Release-archive/manifest change needed | Bundle server in the *same* zip → asset list/manifest unchanged; only contents grow |
+| Loopback port conflict / firewall prompt | Bind `127.0.0.1:0` (ephemeral, no external listen); localhost only |
+| Orphaned server process | Kill on model switch, idle timeout, and `RunEvent::Exit`; track the `Child` |
+| First-request latency still includes model load | Expected; P1b preload + warm keep-alive amortize it; measured in P0.0 |
+| Parity drift vs CLI | Identical WAV + flags; parity test gates removing the CLI path |
+| Raw-byte IPC edge cases | `len % 4 == 0` guard, `from_le_bytes`, WAV-from-bytes fallback |
 
 ---
 
 ## 8. Open decisions (maintainer sign-off)
 
-1. **Confirm `whisper-rs`** as the engine crate (vs. deferring to a `transcribe-cpp`-style loader
-   in Phase 5). *Recommendation: `whisper-rs` now — MIT, loads our existing models, mature.*
-2. **Remove vs. retain the `whisper-cli` sidecar** after parity. *Recommendation: retain one
-   release behind `sw.local.engine`, then remove.*
-3. **When to migrate Parakeet** to the resident pattern (follow-up, not P0).
+1. **Confirm `whisper-server` ships for all runtime variants** (spike) vs. CLI fallback per-variant.
+2. **Retain the `whisper-cli` one-shot path** as `engine="cli"` fallback for ≥1 release, then
+   revisit. *Recommendation: retain.*
+3. **Idle-unload default** (proposed 5 min) and whether to expose it in Settings.
+4. **Parakeet**: apply the same persistent-server pattern later (sherpa-onnx has a server too) —
+   follow-up, not P0.
 
 ---
 
 ## 9. Rollout
 
-Single PR (this branch) implementing P0.0 → P0.2 + P1b, with the CLI escape hatch defaulting to
-in-process. Parakeet + later phases follow in separate PRs per `handy-adoption.md`.
+One PR (this branch): P0.0 measurement + `whisper_server.rs` manager/commands + provider rewire +
+P1b preload + release-workflow bundling of `whisper-server`, with `engine` defaulting to
+`"server"` and `"cli"` retained as fallback. Parakeet + later phases follow separately per
+`handy-adoption.md`.

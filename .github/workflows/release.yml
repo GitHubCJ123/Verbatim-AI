@@ -58,42 +58,7 @@ jobs:
       - name: Install frontend deps
         run: pnpm install --frozen-lockfile
 
-      - name: Build & release (installers)
-        uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
-          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
-          # Updater signing. If TAURI_SIGNING_PRIVATE_KEY is set,
-          # tauri-action also produces `.sig` files next to each
-          # bundle and a `latest.json` manifest the in-app updater
-          # polls. Missing secrets = unsigned build, no auto-update.
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        with:
-          tagName: ${{ github.ref_name }}
-          releaseName: "Verbatim AI ${{ github.ref_name }}"
-          releaseBody: |
-            ## Installers
-            Pick the file for your platform below.
-
-            ## Local Whisper runtime
-            If you turn on **Local Whisper** in Settings → AI model, the app downloads the matching runtime zip from this release automatically. You don't need to grab it manually.
-
-            ## Auto-update
-            Existing installs on a previous version will detect this release in the background and offer one-click install.
-          releaseDraft: true
-          prerelease: false
-          # We *do* want the updater bundles (.nsis.zip / .app.tar.gz /
-          # .sig). Without this flag tauri-action skips packaging them
-          # entirely. tauri-action will then try to upload its own
-          # latest.json and fail with a "signature not found" race;
-          # that's harmless — our publish-latest-json job below
-          # overwrites with a correctly-merged manifest.
-          includeUpdaterJson: true
-          args: ${{ matrix.target && format('--target {0}', matrix.target) || '' }}
-
-      # --- Whisper runtime zips, attached to the same draft release ---
+      # --- Whisper runtime zips, bundled into installers and attached to the release ---
 
       - name: (Windows) Fetch whisper.cpp CPU build
         if: matrix.platform == 'windows-latest' && startsWith(github.ref, 'refs/tags/')
@@ -219,17 +184,11 @@ jobs:
           echo "--- final archive ---"
           ls -lh whisper-bin-macos-arm64.zip
 
-      - name: Attach whisper runtime to release
+      - name: Build runtime manifest fragment
         if: startsWith(github.ref, 'refs/tags/')
         shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_TAG: ${{ github.ref_name }}
-        # `gh release upload` targets the existing draft release that
-        # tauri-action created for this tag and adds our extra assets to
-        # it. The bash conditional skips a file if the platform-specific
-        # build step didn't produce it. Runtime checksums are bundled into
-        # a minisign-signed manifest verified by the app before extraction.
+        # Build the per-platform runtime checksum fragment before packaging.
+        # Runtime assets are uploaded after tauri-action creates the draft release.
         run: |
           files=()
           [ -f whisper-bin-windows-x64-cpu.zip ] && files+=("whisper-bin-windows-x64-cpu.zip")
@@ -249,6 +208,106 @@ jobs:
               }
           print(json.dumps({"assets": assets}, indent=2, sort_keys=True))
           PY
+          else
+            echo "No whisper runtime artifacts produced on this platform."
+          fi
+
+      - name: Build signed bundled runtime manifest
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        env:
+          VERSION: ${{ github.ref_name }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          files=()
+          [ -f whisper-bin-windows-x64-cpu.zip ] && files+=("whisper-bin-windows-x64-cpu.zip")
+          [ -f whisper-bin-windows-x64-vulkan.zip ] && files+=("whisper-bin-windows-x64-vulkan.zip")
+          [ -f whisper-bin-windows-x64-cuda.zip ] && files+=("whisper-bin-windows-x64-cuda.zip")
+          [ -f whisper-bin-macos-arm64.zip ] && files+=("whisper-bin-macos-arm64.zip")
+          if [ ${#files[@]} -gt 0 ]; then
+            python3 - "${files[@]}" > whisper-runtimes.json <<'PY'
+          import hashlib, json, os, pathlib, sys
+          assets = {}
+          for name in sys.argv[1:]:
+              p = pathlib.Path(name)
+              assets[p.name] = {
+                  "sha256": hashlib.sha256(p.read_bytes()).hexdigest(),
+                  "size": p.stat().st_size,
+              }
+          print(json.dumps({"version": os.environ["VERSION"], "assets": assets}, indent=2, sort_keys=True))
+          PY
+            pnpm tauri signer sign whisper-runtimes.json > whisper-runtimes.json.sig
+          fi
+
+      - name: Stage bundled Whisper runtime resources
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf src-tauri/resources/whisper-runtimes
+          mkdir -p src-tauri/resources/whisper-runtimes
+          for f in whisper-bin-*.zip whisper-runtimes.json whisper-runtimes.json.sig; do
+            [ -f "$f" ] && cp "$f" src-tauri/resources/whisper-runtimes/
+          done
+          find src-tauri/resources/whisper-runtimes -type f -maxdepth 1 -print
+
+      - name: Build & release (installers)
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+          # Updater signing. If TAURI_SIGNING_PRIVATE_KEY is set,
+          # tauri-action also produces `.sig` files next to each
+          # bundle and a `latest.json` manifest the in-app updater
+          # polls. Missing secrets = unsigned build, no auto-update.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "Verbatim AI ${{ github.ref_name }}"
+          releaseBody: |
+            ## Installers
+            Pick the file for your platform below.
+
+            ## Local Whisper runtime
+            The matching Local Whisper runtime is bundled into the installer and also attached to this release.
+
+            ## Auto-update
+            Existing installs on a previous version will detect this release in the background and offer one-click install.
+          releaseDraft: true
+          prerelease: false
+          # We *do* want the updater bundles (.nsis.zip / .app.tar.gz /
+          # .sig). Without this flag tauri-action skips packaging them
+          # entirely. tauri-action will then try to upload its own
+          # latest.json and fail with a "signature not found" race;
+          # that's harmless — our publish-latest-json job below
+          # overwrites with a correctly-merged manifest.
+          includeUpdaterJson: true
+          args: ${{ matrix.target && format('--target {0}', matrix.target) || '' }}
+
+      - name: Attach whisper runtime to release
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        # `gh release upload` targets the draft release that tauri-action
+        # created for this tag and adds the runtime assets alongside the
+        # installer. The same runtime assets are also bundled inside the
+        # installer resources above, so Local Whisper works even while the
+        # release is still draft/unpublished.
+        run: |
+          files=()
+          [ -f whisper-bin-windows-x64-cpu.zip ] && files+=("whisper-bin-windows-x64-cpu.zip")
+          [ -f whisper-bin-windows-x64-vulkan.zip ] && files+=("whisper-bin-windows-x64-vulkan.zip")
+          [ -f whisper-bin-windows-x64-cuda.zip ] && files+=("whisper-bin-windows-x64-cuda.zip")
+          [ -f whisper-bin-macos-arm64.zip ] && files+=("whisper-bin-macos-arm64.zip")
+          [ -f whisper-runtimes.json ] && files+=("whisper-runtimes.json")
+          [ -f whisper-runtimes.json.sig ] && files+=("whisper-runtimes.json.sig")
+          if [ ${#files[@]} -gt 0 ]; then
             gh release upload "$RELEASE_TAG" "${files[@]}" --clobber
           else
             echo "No whisper runtime artifacts produced on this platform."

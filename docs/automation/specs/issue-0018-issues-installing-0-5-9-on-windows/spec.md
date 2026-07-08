@@ -25,25 +25,30 @@ The no-account setup path currently defaults transcription to Azure, which surpr
    - transcription: `local-whisper`
    - cleanup: disabled/raw transcript
    - persisted cleanup provider: local backend, not cloud
-2. During onboarding in local mode, guard against legacy/default cloud fallback by switching the AI step to Local Whisper and cleanup none.
-3. Quick-start defaults should follow app mode:
+2. Bundle the platform-specific Whisper runtime zip(s), signed manifest, and signature inside the installer as Tauri resources.
+3. During runtime install, prefer the bundled runtime asset and signed manifest. Fall back to GitHub release downloads when no bundled resource exists, such as dev builds.
+4. During onboarding in local mode, guard against legacy/default cloud fallback by switching the AI step to Local Whisper and cleanup none.
+5. Quick-start defaults should follow app mode:
    - local app mode: Local Whisper + cleanup off
    - cloud app mode: Cloud transcription + Cloud cleanup
-4. Runtime download errors should explain release-asset availability instead of raw HTTP status.
+6. Runtime download errors should explain release-asset availability instead of raw HTTP status if both bundled and network sources are unavailable.
 
 ## Security and privacy
 
 - Local mode should not silently send audio to Azure by default.
 - Local mode should not persist cloud cleanup behind the disabled cleanup flag.
 - Runtime downloads must continue using the signed manifest and checksum verification.
+- Bundled runtime assets must also be verified against the signed manifest before extraction.
 - Error messages must not include secrets or local paths.
 
 ## Implementation waves
 
 1. Update first-launch/local onboarding defaults.
-2. Add release-asset-specific runtime download errors for manifest, signature, and archive 404s.
-3. Add tests for troubleshooting/error text where feasible.
-4. Validate build, tests, Rust check, and UX evidence.
+2. Stage platform runtime zips and a signed manifest into `src-tauri/resources/whisper-runtimes` before Tauri packaging.
+3. Add bundled-resource fallback in Rust before network download.
+4. Add release-asset-specific runtime download errors for manifest, signature, and archive 404s.
+5. Add tests for troubleshooting/error text where feasible.
+6. Validate build, tests, Rust check, and UX evidence.
 
 ## Acceptance criteria
 
@@ -51,6 +56,7 @@ The no-account setup path currently defaults transcription to Azure, which surpr
 - Quick-start in local mode does not set cloud transcription.
 - Cloud/account setup still defaults to cloud.
 - Local Whisper 404s explain that release runtime assets are not publicly available yet and suggest publishing the release or installing a version with published assets.
+- Tagged installers include the matching platform runtime assets so Local Whisper does not depend on the draft release asset URLs.
 - Existing signed manifest verification remains intact.
 
 ## Verification

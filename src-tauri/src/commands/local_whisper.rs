@@ -341,6 +341,51 @@ async fn verified_runtime_manifest(client: &reqwest::Client) -> Result<RuntimeMa
     serde_json::from_slice::<RuntimeManifest>(&manifest_bytes).map_err(|e| e.to_string())
 }
 
+async fn bundled_runtime_manifest(app: &AppHandle) -> Result<Option<RuntimeManifest>, String> {
+    let Some((manifest_bytes, signature_text)) = bundled_manifest_bytes(app).await? else {
+        return Ok(None);
+    };
+    verify_runtime_manifest_bytes(&manifest_bytes, &signature_text)?;
+    serde_json::from_slice::<RuntimeManifest>(&manifest_bytes)
+        .map(Some)
+        .map_err(|e| e.to_string())
+}
+
+async fn bundled_manifest_bytes(app: &AppHandle) -> Result<Option<(Vec<u8>, String)>, String> {
+    let Some(dir) = bundled_runtime_dir(app) else {
+        return Ok(None);
+    };
+    let manifest_path = dir.join(RUNTIME_MANIFEST_NAME);
+    let sig_path = dir.join(format!("{RUNTIME_MANIFEST_NAME}.sig"));
+    if !manifest_path.exists() || !sig_path.exists() {
+        return Ok(None);
+    }
+    let manifest = fs::read(&manifest_path).await.map_err(|e| e.to_string())?;
+    let signature = fs::read_to_string(&sig_path).await.map_err(|e| e.to_string())?;
+    Ok(Some((manifest, signature)))
+}
+
+fn verify_runtime_manifest_bytes(manifest_bytes: &[u8], signature_text: &str) -> Result<(), String> {
+    let public_key = PublicKey::decode(MINISIGN_PUBLIC_KEY).map_err(|e| e.to_string())?;
+    let signature = Signature::decode(signature_text).map_err(|e| e.to_string())?;
+    public_key
+        .verify(manifest_bytes, &signature, false)
+        .map_err(|e| format!("Whisper runtime manifest signature verification failed: {e}"))
+}
+
+fn bundled_runtime_dir(app: &AppHandle) -> Option<PathBuf> {
+    Some(app
+        .path()
+        .resource_dir()
+        .ok()?
+        .join("whisper-runtimes"))
+}
+
+fn bundled_runtime_asset(app: &AppHandle, asset_name: &str) -> Option<PathBuf> {
+    let path = bundled_runtime_dir(app)?.join(asset_name);
+    path.exists().then_some(path)
+}
+
 fn runtime_download_error(kind: &str, url: &str, e: reqwest::Error) -> String {
     if e.status() == Some(reqwest::StatusCode::NOT_FOUND) {
         return format!(
@@ -419,7 +464,10 @@ async fn install_whisper_runtime_variant(
         .user_agent("Verbatim-AI/0.2 (+https://github.com/GitHubCJ123/Verbatim-AI)")
         .build()
         .map_err(|e| e.to_string())?;
-    let manifest = verified_runtime_manifest(&client).await?;
+    let manifest = match bundled_runtime_manifest(app).await? {
+        Some(manifest) => manifest,
+        None => verified_runtime_manifest(&client).await?,
+    };
     let expected_sha = manifest
         .assets
         .get(asset.name)
@@ -427,45 +475,59 @@ async fn install_whisper_runtime_variant(
         .sha256
         .to_ascii_lowercase();
 
-    let res = client
-        .get(&asset.url)
-        .send()
-        .await
-        .map_err(|e| runtime_download_error(asset.name, &asset.url, e))?;
-    if !res.status().is_success() {
-        if res.status() == reqwest::StatusCode::NOT_FOUND {
-            return Err(runtime_download_error(
-                asset.name,
-                &asset.url,
-                res.error_for_status().unwrap_err(),
-            ));
-        }
-        return Err(format!(
-            "download failed: HTTP {} from {}",
-            res.status(),
-            asset.url
-        ));
-    }
-    let total = res.content_length().unwrap_or(0);
-
     let mut file = fs::File::create(&tmp_zip)
         .await
         .map_err(|e| e.to_string())?;
-    let mut stream = res.bytes_stream();
-    let mut downloaded: u64 = 0;
-    let mut last_emit = Instant::now();
     let mut hasher = Sha256::new();
-    while let Some(chunk) = stream.next().await {
-        let bytes = chunk.map_err(|e| e.to_string())?;
+
+    if let Some(bundled_path) = bundled_runtime_asset(app, asset.name) {
+        let bytes = fs::read(&bundled_path).await.map_err(|e| e.to_string())?;
         hasher.update(&bytes);
         file.write_all(&bytes).await.map_err(|e| e.to_string())?;
-        downloaded += bytes.len() as u64;
-        if last_emit.elapsed().as_millis() > 150 {
-            last_emit = Instant::now();
-            let _ = app.emit(
-                "local-whisper:runtime:progress",
-                RuntimeProgress { downloaded, total },
-            );
+        let total = bytes.len() as u64;
+        let _ = app.emit(
+            "local-whisper:runtime:progress",
+            RuntimeProgress {
+                downloaded: total,
+                total,
+            },
+        );
+    } else {
+        let res = client
+            .get(&asset.url)
+            .send()
+            .await
+            .map_err(|e| runtime_download_error(asset.name, &asset.url, e))?;
+        if !res.status().is_success() {
+            if res.status() == reqwest::StatusCode::NOT_FOUND {
+                return Err(runtime_download_error(
+                    asset.name,
+                    &asset.url,
+                    res.error_for_status().unwrap_err(),
+                ));
+            }
+            return Err(format!(
+                "download failed: HTTP {} from {}",
+                res.status(),
+                asset.url
+            ));
+        }
+        let total = res.content_length().unwrap_or(0);
+        let mut stream = res.bytes_stream();
+        let mut downloaded: u64 = 0;
+        let mut last_emit = Instant::now();
+        while let Some(chunk) = stream.next().await {
+            let bytes = chunk.map_err(|e| e.to_string())?;
+            hasher.update(&bytes);
+            file.write_all(&bytes).await.map_err(|e| e.to_string())?;
+            downloaded += bytes.len() as u64;
+            if last_emit.elapsed().as_millis() > 150 {
+                last_emit = Instant::now();
+                let _ = app.emit(
+                    "local-whisper:runtime:progress",
+                    RuntimeProgress { downloaded, total },
+                );
+            }
         }
     }
     file.flush().await.map_err(|e| e.to_string())?;

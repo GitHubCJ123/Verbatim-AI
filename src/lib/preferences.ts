@@ -21,6 +21,8 @@ const LS_AI_DISABLED = "sw.ai.disabled";
 const LS_HISTORY_DISABLED = "sw.history.disabled";
 const LS_HISTORY_RETENTION = "sw.history.retentionDays";
 const LS_PERF_DEBUG = "sw.debug.perf";
+const LS_SILENCE_TRIM = "sw.vad.silenceTrim";
+const LS_AUTO_STOP = "sw.vad.autoStop";
 const LS_FILLER_FILTER = "sw.postproc.fillerFilter";
 const LS_FUZZY_VOCAB = "sw.postproc.fuzzyVocab";
 
@@ -125,6 +127,34 @@ export function setHistoryRetentionDays(days: HistoryRetentionDays): void {
  */
 export function isPerfDebugEnabled(): boolean {
   return localStorage.getItem(LS_PERF_DEBUG) === "1";
+}
+
+/**
+ * Post-hoc VAD silence trimming (docs/proposals/handy-adoption.md
+ * §Phase 4a). Trims leading/trailing silence from the captured clip
+ * before transcription. **Default on** — the trim logic fails open and
+ * never cuts speech, so it's a safe latency/quality win.
+ */
+export function isSilenceTrimEnabled(): boolean {
+  return localStorage.getItem(LS_SILENCE_TRIM) !== "0";
+}
+
+export function setSilenceTrimEnabled(v: boolean): void {
+  localStorage.setItem(LS_SILENCE_TRIM, v ? "1" : "0");
+}
+
+/**
+ * Hands-free auto-stop (docs/proposals/handy-adoption.md §Phase 4b):
+ * end the recording after a hangover of silence using the real-time
+ * frame path. **Default off** to preserve push-to-talk / toggle
+ * behavior.
+ */
+export function isAutoStopEnabled(): boolean {
+  return localStorage.getItem(LS_AUTO_STOP) === "1";
+}
+
+export function setAutoStopEnabled(v: boolean): void {
+  localStorage.setItem(LS_AUTO_STOP, v ? "1" : "0");
 }
 
 export function isClipboardRestoreEnabled(): boolean {

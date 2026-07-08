@@ -15,6 +15,11 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { RecordingPill } from "../components/recording/RecordingPill";
 import { ReviewPanel } from "../components/recording/ReviewPanel";
 import { startRecording, type AudioController } from "../lib/audio";
+import { decodeToMonoF32_16k } from "../lib/ai/audioDecode";
+import { encodeWavBlob } from "../lib/audio/wav";
+import { trimSilence } from "../lib/vad/trim";
+import { AutoStopDetector } from "../lib/vad/autoStop";
+import { VAD_SAMPLE_RATE } from "../lib/vad/vad";
 import type { RecordingState } from "../lib/store/useRecording";
 import { getActiveProvider } from "../lib/ai";
 import { getModeById, getDefaultMode, loadVocabulary } from "../lib/store/useModes";
@@ -32,6 +37,8 @@ import {
   getOutputBehavior,
   getPasteMethod,
   isPerfDebugEnabled,
+  isSilenceTrimEnabled,
+  isAutoStopEnabled,
   isFillerFilterEnabled,
   isFuzzyVocabEnabled,
 } from "../lib/preferences";
@@ -69,6 +76,7 @@ export default function Overlay() {
   const [privacy, setPrivacy] = useState<DataLocality | null>(null);
 
   const controllerRef = useRef<AudioController | null>(null);
+  const autoStopRef = useRef<AutoStopDetector | null>(null);
   // In-flight getUserMedia: a stop/cancel that lands while the mic is
   // still being acquired must await this so the stream is never leaked.
   const startingRef = useRef<Promise<AudioController> | null>(null);
@@ -103,11 +111,25 @@ export default function Overlay() {
     modeRef.current = getModeById(modeId) ?? getDefaultMode();
     setPrivacy(getPrivacyStatus(modeRef.current).overall);
     try {
+      // Hands-free auto-stop (opt-in): feed live frames to a VAD
+      // endpointer that stops the recording after a hangover of silence.
+      autoStopRef.current = null;
+      let onFrame: ((frame: Float32Array) => void) | undefined;
+      if (isAutoStopEnabled()) {
+        const detector = new AutoStopDetector({
+          onSilence: () => {
+            void stop();
+          },
+        });
+        autoStopRef.current = detector;
+        onFrame = (frame) => detector.push(frame);
+      }
       // The bridge shows this window concurrently — don't wait for it.
       // Opening the mic immediately is what keeps the first syllable
       // from being lost (docs/improvement-plan/04-performance-latency.md).
       const starting = startRecording({
         deviceId: getMicDeviceId() || undefined,
+        onFrame,
         onError: (e) => {
           setError(e.message);
           setState("error");
@@ -170,10 +192,38 @@ export default function Overlay() {
     const vocabularyAll = loadVocabulary();
     const vocabularyTerms = vocabularyAll.map((t) => t.term);
 
+    // Post-hoc VAD silence trim (Phase 4a). Runs before transcription to
+    // drop leading/trailing silence and pure-noise clips. Fails open: any
+    // decode/trim error falls back to the original audio untouched.
+    let audioForTranscribe = audio;
+    if (isSilenceTrimEnabled()) {
+      try {
+        const pcm = await decodeToMonoF32_16k(audio);
+        const trim = trimSilence(pcm);
+        if (trim.isSilent) {
+          // No detectable speech and ~no energy — treat as accidental.
+          void reset();
+          return;
+        }
+        if (trim.trimmed) {
+          audioForTranscribe = encodeWavBlob(trim.pcm, VAD_SAMPLE_RATE);
+          if (isPerfDebugEnabled()) {
+            console.info(
+              `[perf] VAD trim -${Math.round(trim.leadingTrimmedMs)}ms lead / -${Math.round(
+                trim.trailingTrimmedMs,
+              )}ms tail`,
+            );
+          }
+        }
+      } catch (e) {
+        if (import.meta.env.DEV) console.warn("[Verbatim AI] VAD trim skipped:", e);
+      }
+    }
+
     try {
       setState("processing");
       const transcript = await provider.transcribe({
-        audio,
+        audio: audioForTranscribe,
         language: activeMode.language || "auto",
         vocabularyHints: vocabularyTerms,
       });
@@ -268,6 +318,8 @@ export default function Overlay() {
   };
 
   const stop = async () => {
+    autoStopRef.current?.disable();
+    autoStopRef.current = null;
     let c = controllerRef.current;
     controllerRef.current = null;
     const starting = startingRef.current;
@@ -296,6 +348,8 @@ export default function Overlay() {
   };
 
   const cancelActive = () => {
+    autoStopRef.current?.disable();
+    autoStopRef.current = null;
     const starting = startingRef.current;
     startingRef.current = null;
     const c = controllerRef.current;

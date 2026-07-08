@@ -181,6 +181,65 @@ export function whisperRuntimeVariantLabel(v: WhisperRuntimeVariant): string {
 // Decode arbitrary audio Blob → 16 kHz mono Float32 PCM.
 // (moved to ./audioDecode.ts so the Parakeet provider can reuse it)
 
+export type LocalWhisperEngine = "auto" | "server" | "cli";
+
+const LS_WHISPER_ENGINE = "sw.ai.whisperEngine";
+
+/**
+ * Which local Whisper execution path to use:
+ * - "auto" (default): warm persistent `whisper-server` when its binary is present,
+ *   otherwise the `whisper-cli` one-shot path (previous behaviour).
+ * - "server": always the warm server (errors if not installed).
+ * - "cli": always the one-shot CLI.
+ */
+export function getLocalWhisperEngine(): LocalWhisperEngine {
+  const v = localStorage.getItem(LS_WHISPER_ENGINE);
+  return v === "server" || v === "cli" ? v : "auto";
+}
+
+export function setLocalWhisperEngine(v: LocalWhisperEngine): void {
+  localStorage.setItem(LS_WHISPER_ENGINE, v);
+}
+
+/** Is the warm `whisper-server` binary available for the selected compute variant? */
+export function isWhisperServerAvailable(): Promise<boolean> {
+  return invoke<boolean>("is_whisper_server_available", {
+    preference: getWhisperComputePreference(),
+  });
+}
+
+// The probe is stable within a session per compute preference; cache it so we
+// don't touch the filesystem on every utterance.
+const serverAvailByPref = new Map<string, boolean>();
+
+async function warmServerAvailable(): Promise<boolean> {
+  const key = getWhisperComputePreference();
+  const cached = serverAvailByPref.get(key);
+  if (cached !== undefined) return cached;
+  try {
+    const ok = await isWhisperServerAvailable();
+    serverAvailByPref.set(key, ok);
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
+/** Clear the cached availability probe (e.g. after installing/updating the runtime). */
+export function resetWhisperEngineProbe(): void {
+  serverAvailByPref.clear();
+}
+
+/** Resolve the Tauri command to use for the current engine setting. */
+export async function resolveWhisperCommand(): Promise<
+  "transcribe_local" | "transcribe_local_server"
+> {
+  const engine = getLocalWhisperEngine();
+  if (engine === "cli") return "transcribe_local";
+  if (engine === "server") return "transcribe_local_server";
+  return (await warmServerAvailable()) ? "transcribe_local_server" : "transcribe_local";
+}
+
 export interface LocalWhisperConfig {
   tier: WhisperTier;
   /** Provider used for the cleanup/polish step until local LLM ships. */
@@ -195,12 +254,13 @@ export class LocalWhisperProvider implements AIProvider {
 
   async transcribe(input: TranscribeInput): Promise<TranscribeResult> {
     const samples = await decodeToMonoF32_16k(input.audio);
+    const command = await resolveWhisperCommand();
     const started = performance.now();
     const out = await invoke<{
       text: string;
       language_detected: string;
       duration_ms: number;
-    }>("transcribe_local", {
+    }>(command, {
       args: {
         tier: this.cfg.tier,
         language: input.language ?? null,

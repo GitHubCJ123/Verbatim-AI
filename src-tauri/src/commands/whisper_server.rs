@@ -227,6 +227,14 @@ pub async fn unload_engine(state: State<'_, WhisperServerState>) -> Result<(), S
     Ok(())
 }
 
+/// Whether the warm-server path is usable (the `whisper-server` binary exists
+/// for the selected compute variant). Lets the frontend auto-detect and fall
+/// back to the `whisper-cli` path when the server isn't installed.
+#[tauri::command]
+pub fn is_whisper_server_available(app: AppHandle, preference: Option<String>) -> bool {
+    super::local_whisper::whisper_server_available(&app, preference.as_deref())
+}
+
 /// Transcribe via the persistent server. Output matches `transcribe_local`.
 #[tauri::command]
 pub async fn transcribe_local_server(

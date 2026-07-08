@@ -273,6 +273,16 @@ pub(crate) fn resolve_whisper_server_launch(
     })
 }
 
+/// Cheap check: is a `whisper-server` binary present for the resolved variant?
+/// Does not require the model to be downloaded (unlike the launch resolver).
+pub(crate) fn whisper_server_available(app: &AppHandle, preference: Option<&str>) -> bool {
+    let variant = resolve_runtime_variant(preference);
+    locate_whisper_server_for_variant(app, variant)
+        .ok()
+        .flatten()
+        .is_some()
+}
+
 /// Recursive list of every file under `root`. Used to chmod whisper-cli
 /// + dylibs after extraction (zip drops the executable bit).
 #[cfg(unix)]

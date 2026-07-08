@@ -26,7 +26,8 @@ use commands::{
     process_list::list_running_apps,
     relay::relay_event,
     whisper_server::{
-        ensure_engine_ready, transcribe_local_server, unload_engine, WhisperServerState,
+        ensure_engine_ready, is_whisper_server_available, transcribe_local_server, unload_engine,
+        WhisperServerState,
     },
 };
 use tauri::Manager;
@@ -119,6 +120,7 @@ pub fn run() {
             ensure_engine_ready,
             unload_engine,
             transcribe_local_server,
+            is_whisper_server_available,
         ])
         .setup(|app| {
             install_default(&app.handle());

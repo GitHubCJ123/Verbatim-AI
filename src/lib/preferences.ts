@@ -7,6 +7,7 @@ import {
   enable as autostartEnable,
   disable as autostartDisable,
 } from "@tauri-apps/plugin-autostart";
+import { normalizePasteMethod, type PasteMethod } from "./pasteMethod";
 
 const LS_OVERLAY_POSITION = "sw.overlay.position";
 const LS_MIC_DEVICE = "sw.mic.deviceId";
@@ -14,6 +15,7 @@ const LS_HOTKEY_PAUSED = "sw.hotkey.paused";
 const LS_CLIPBOARD_RESTORE = "sw.clipboard.restore";
 const LS_OUTPUT_BEHAVIOR = "sw.output.behavior";
 const LS_OUTPUT_INSERT_ONLY = "sw.output.insertOnly";
+const LS_PASTE_METHOD = "sw.paste.method";
 const LS_TELEMETRY = "sw.telemetry.enabled";
 const LS_AI_DISABLED = "sw.ai.disabled";
 const LS_HISTORY_DISABLED = "sw.history.disabled";
@@ -21,6 +23,8 @@ const LS_HISTORY_RETENTION = "sw.history.retentionDays";
 const LS_PERF_DEBUG = "sw.debug.perf";
 const LS_SILENCE_TRIM = "sw.vad.silenceTrim";
 const LS_AUTO_STOP = "sw.vad.autoStop";
+const LS_FILLER_FILTER = "sw.postproc.fillerFilter";
+const LS_FUZZY_VOCAB = "sw.postproc.fuzzyVocab";
 
 export type OverlayPosition =
   | "bottom-center"
@@ -196,6 +200,16 @@ export function setOutputBehavior(v: OutputBehavior): void {
   localStorage.setItem(LS_CLIPBOARD_RESTORE, v === "restore" ? "1" : "0");
 }
 
+export type { PasteMethod };
+
+export function getPasteMethod(): PasteMethod {
+  return normalizePasteMethod(localStorage.getItem(LS_PASTE_METHOD));
+}
+
+export function setPasteMethod(v: PasteMethod): void {
+  localStorage.setItem(LS_PASTE_METHOD, v);
+}
+
 /**
  * Compatibility wrapper for older callers and migrated localStorage keys.
  */
@@ -226,4 +240,30 @@ export async function isAutostartEnabled(): Promise<boolean> {
 export async function setAutostart(enabled: boolean): Promise<void> {
   if (enabled) await autostartEnable();
   else await autostartDisable();
+}
+
+// ─── Inline post-processing (P2.9) ────────────────────────────────────────
+
+/**
+ * Whether the filler-word filter is active.
+ * Default: false (off) — conservative; the user must opt in.
+ */
+export function isFillerFilterEnabled(): boolean {
+  return localStorage.getItem(LS_FILLER_FILTER) === "1";
+}
+
+export function setFillerFilterEnabled(v: boolean): void {
+  localStorage.setItem(LS_FILLER_FILTER, v ? "1" : "0");
+}
+
+/**
+ * Whether fuzzy vocabulary correction is active.
+ * Default: false (off) — conservative; the user must opt in.
+ */
+export function isFuzzyVocabEnabled(): boolean {
+  return localStorage.getItem(LS_FUZZY_VOCAB) === "1";
+}
+
+export function setFuzzyVocabEnabled(v: boolean): void {
+  localStorage.setItem(LS_FUZZY_VOCAB, v ? "1" : "0");
 }

@@ -3,21 +3,21 @@
 //! Flow:
 //!   1. Frontend calls `capture_target_window()` *before* showing the
 //!      overlay so we remember which app had focus.
-//!   2. Clipboard mode writes the cleaned text to the clipboard, then
-//!      calls `paste_to_target()` which:
+//!   2. Clipboard modes write the cleaned text to the clipboard, then
+//!      call `paste_to_target()` which:
 //!      - Restores foreground to the captured HWND
 //!      - Briefly waits so Windows finishes the focus change
-//!      - Sends Ctrl+V via `enigo`
-//!   3. Insert-only mode calls `insert_text_to_target()` instead, which
-//!      restores focus and types text directly without touching the clipboard.
+//!      - Sends the selected paste shortcut via `enigo`
+//!   3. Direct mode restores focus and types text directly without
+//!      touching the clipboard.
 //!
 //! If no target was captured, `paste_to_target()` returns Ok(false) so
-//! the caller can fall back to "Copied to clipboard" UX.
+//! the caller can choose the right clipboard or review fallback.
 
 use std::sync::Mutex;
 
 use enigo::{Direction, Enigo, Key, Keyboard, Settings};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::State;
 
 #[derive(Default)]
@@ -28,6 +28,37 @@ pub struct CapturedTarget {
     /// Foreground window handle, stringified so we can round-trip
     /// through serde without losing precision on 64-bit Windows.
     pub hwnd: String,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum PasteMethod {
+    Auto,
+    CtrlV,
+    ShiftInsert,
+    Direct,
+}
+
+impl Default for PasteMethod {
+    fn default() -> Self {
+        Self::Auto
+    }
+}
+
+fn effective_paste_method(method: PasteMethod) -> PasteMethod {
+    match method {
+        PasteMethod::Auto => {
+            #[cfg(target_os = "linux")]
+            {
+                PasteMethod::Direct
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                PasteMethod::CtrlV
+            }
+        }
+        other => other,
+    }
 }
 
 #[cfg(windows)]
@@ -102,44 +133,87 @@ pub fn clear_target_window(state: State<'_, TargetWindowState>) {
     }
 }
 
-/// Restore focus to the captured target window and send Ctrl+V.
-/// Returns Ok(true) if pasted, Ok(false) if no target was captured.
-#[tauri::command]
-pub fn paste_to_target(state: State<'_, TargetWindowState>) -> Result<bool, String> {
-    let hwnd = {
-        let g = state.0.lock().map_err(|e| e.to_string())?;
-        *g
-    };
+fn captured_target(state: &State<'_, TargetWindowState>) -> Result<Option<isize>, String> {
+    let g = state.0.lock().map_err(|e| e.to_string())?;
+    Ok(*g)
+}
 
-    let Some(hwnd) = hwnd else {
-        return Ok(false);
-    };
-
-    // Best-effort focus restore. SetForegroundWindow can be denied by
-    // Windows when the calling process isn't the active one. We accept
-    // that and try the keystroke anyway — if focus didn't move we'll
-    // just paste into our own window (clipboard still has the value).
-    imp::restore_foreground(hwnd);
-
-    // Small wait so the focus change actually propagates before we
-    // send synthetic input.
-    std::thread::sleep(std::time::Duration::from_millis(60));
-
-    let mut enigo = Enigo::new(&Settings::default()).map_err(|e| e.to_string())?;
+fn send_ctrl_v(enigo: &mut Enigo) -> Result<(), String> {
     // ⌘ on macOS, Ctrl elsewhere.
     #[cfg(target_os = "macos")]
     let modifier = Key::Meta;
     #[cfg(not(target_os = "macos"))]
     let modifier = Key::Control;
-    enigo
-        .key(modifier, Direction::Press)
-        .map_err(|e| e.to_string())?;
+    enigo.key(modifier, Direction::Press).map_err(|e| e.to_string())?;
     enigo
         .key(Key::Unicode('v'), Direction::Click)
         .map_err(|e| e.to_string())?;
     enigo
         .key(modifier, Direction::Release)
         .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
+fn send_shift_insert(enigo: &mut Enigo) -> Result<(), String> {
+    enigo
+        .key(Key::Shift, Direction::Press)
+        .map_err(|e| e.to_string())?;
+    enigo
+        .key(Key::Insert, Direction::Click)
+        .map_err(|e| e.to_string())?;
+    enigo
+        .key(Key::Shift, Direction::Release)
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn send_shift_insert(_: &mut Enigo) -> Result<(), String> {
+    Err("Shift+Insert paste is not supported on macOS.".into())
+}
+
+/// Restore focus to the captured target window and paste text using the
+/// selected method. Clipboard-based methods expect the caller to have already
+/// written `text` to the system clipboard.
+/// Returns Ok(true) if pasted, Ok(false) if no target was captured.
+#[tauri::command]
+pub fn paste_to_target(
+    state: State<'_, TargetWindowState>,
+    text: Option<String>,
+    method: Option<PasteMethod>,
+) -> Result<bool, String> {
+    let hwnd = captured_target(&state)?;
+    let Some(hwnd) = hwnd else {
+        return Ok(false);
+    };
+    let method = effective_paste_method(method.unwrap_or_default());
+
+    // Best-effort focus restore. SetForegroundWindow can be denied by
+    // Windows when the calling process isn't the active one. We accept
+    // that and try the keystroke anyway — if focus didn't move we'll
+    // just paste into our own window (clipboard still has the value).
+    let focus_restored = imp::restore_foreground(hwnd);
+
+    // Small wait so the focus change actually propagates before we
+    // send synthetic input.
+    std::thread::sleep(std::time::Duration::from_millis(60));
+
+    let mut enigo = Enigo::new(&Settings::default()).map_err(|e| e.to_string())?;
+    match method {
+        PasteMethod::CtrlV => send_ctrl_v(&mut enigo)?,
+        PasteMethod::ShiftInsert => send_shift_insert(&mut enigo)?,
+        PasteMethod::Direct => {
+            if !focus_restored {
+                return Ok(false);
+            }
+            let Some(text) = text else {
+                return Err("Direct paste requires text.".into());
+            };
+            enigo.text(&text).map_err(|e| e.to_string())?;
+        }
+        PasteMethod::Auto => unreachable!("auto paste method must be resolved before execution"),
+    }
 
     Ok(true)
 }
@@ -151,11 +225,7 @@ pub fn insert_text_to_target(
     state: State<'_, TargetWindowState>,
     text: String,
 ) -> Result<bool, String> {
-    let hwnd = {
-        let g = state.0.lock().map_err(|e| e.to_string())?;
-        *g
-    };
-
+    let hwnd = captured_target(&state)?;
     let Some(hwnd) = hwnd else {
         return Ok(false);
     };
@@ -169,4 +239,34 @@ pub fn insert_text_to_target(
     enigo.text(&text).map_err(|e| e.to_string())?;
 
     Ok(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{effective_paste_method, PasteMethod};
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn auto_defaults_to_direct_on_linux() {
+        assert_eq!(effective_paste_method(PasteMethod::Auto), PasteMethod::Direct);
+    }
+
+    #[test]
+    #[cfg(not(target_os = "linux"))]
+    fn auto_defaults_to_ctrl_v_off_linux() {
+        assert_eq!(effective_paste_method(PasteMethod::Auto), PasteMethod::CtrlV);
+    }
+
+    #[test]
+    fn explicit_methods_are_preserved() {
+        assert_eq!(effective_paste_method(PasteMethod::CtrlV), PasteMethod::CtrlV);
+        assert_eq!(
+            effective_paste_method(PasteMethod::ShiftInsert),
+            PasteMethod::ShiftInsert
+        );
+        assert_eq!(
+            effective_paste_method(PasteMethod::Direct),
+            PasteMethod::Direct
+        );
+    }
 }

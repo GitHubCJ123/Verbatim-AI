@@ -29,26 +29,39 @@ import {
   resizeOverlayToReview,
 } from "../lib/recording-bridge";
 import { pasteCleanedText, copyCleanedText, clearCapturedTarget } from "../lib/output";
+import { osKind } from "../lib/os";
+import { pasteMethodUsesClipboard } from "../lib/pasteMethod";
 import {
   isAiImproveDisabled,
   getMicDeviceId,
   getOutputBehavior,
+  getPasteMethod,
   isPerfDebugEnabled,
   isSilenceTrimEnabled,
   isAutoStopEnabled,
+  isFillerFilterEnabled,
+  isFuzzyVocabEnabled,
 } from "../lib/preferences";
+import { applyInlinePostProcessing } from "../lib/postProcess";
 import { getPrivacyStatus, type DataLocality } from "../lib/privacyStatus";
 import type { Mode } from "../types/mode";
 
 function noPasteTargetMessage(): string {
   const behavior = getOutputBehavior();
-  if (behavior === "insert-only") {
-    return "[Verbatim AI] no paste target; clipboard unchanged because insert-only is enabled";
+  const method = behavior === "insert-only" ? "direct" : getPasteMethod();
+  if (!pasteMethodUsesClipboard(method, osKind())) {
+    return "[Verbatim AI] no paste target; clipboard unchanged because direct paste is enabled";
   }
   if (behavior === "restore") {
     return "[Verbatim AI] no paste target; previous clipboard will be restored";
   }
   return "[Verbatim AI] no paste target; copied to clipboard";
+}
+
+function shouldShowReviewWhenPasteMisses(): boolean {
+  const behavior = getOutputBehavior();
+  const method = behavior === "insert-only" ? "direct" : getPasteMethod();
+  return !pasteMethodUsesClipboard(method, osKind()) || behavior === "restore";
 }
 
 type View = "pill" | "review";
@@ -214,7 +227,20 @@ export default function Overlay() {
         language: activeMode.language || "auto",
         vocabularyHints: vocabularyTerms,
       });
-      setRawText(transcript.text);
+
+      // ── Inline post-processing (P2.9) ──────────────────────────────────
+      // Deterministic, LLM-free step applied to the raw transcript BEFORE
+      // the cleanup-LLM so fillers are absent from the LLM context and
+      // near-miss vocab terms are corrected upfront.
+      // Both features are OFF by default; zero output change unless the
+      // user explicitly enables them in Settings.
+      const processedText = applyInlinePostProcessing(transcript.text, {
+        fillerFilter: isFillerFilterEnabled(),
+        fuzzyVocab: isFuzzyVocabEnabled(),
+        vocabularyTerms: vocabularyAll,
+      });
+
+      setRawText(processedText);
 
       // Branch on output style BEFORE polishing so review users see
       // tokens stream into the editor in real time.
@@ -226,11 +252,11 @@ export default function Overlay() {
       let cleaned: string;
       if (activeMode.skipCleanup || isAiImproveDisabled()) {
         // Fast path: skip the LLM entirely; vocab replacements still run.
-        cleaned = applyVocabReplacements(transcript.text, vocabularyAll);
+        cleaned = applyVocabReplacements(processedText, vocabularyAll);
         setStreamingCleaned(cleaned);
       } else {
         setState("polishing");
-        const cleanedRaw = await runCleanup(transcript.text, activeMode, vocabularyTerms);
+        const cleanedRaw = await runCleanup(processedText, activeMode, vocabularyTerms);
         cleaned = applyVocabReplacements(cleanedRaw, vocabularyAll);
         if (cleaned !== cleanedRaw) setStreamingCleaned(cleaned);
       }
@@ -256,7 +282,7 @@ export default function Overlay() {
 
       if (activeMode.outputStyle === "paste") {
         const pasted = await pasteCleanedText(cleaned);
-        if (!pasted && getOutputBehavior() !== "copy") {
+        if (!pasted && shouldShowReviewWhenPasteMisses()) {
           console.info(noPasteTargetMessage());
           await resizeOverlayToReview();
           setView("review");
@@ -341,7 +367,7 @@ export default function Overlay() {
 
   const handleReviewPaste = async (text: string) => {
     const ok = await pasteCleanedText(text);
-    if (!ok && getOutputBehavior() !== "copy") {
+    if (!ok && shouldShowReviewWhenPasteMisses()) {
       console.info(noPasteTargetMessage());
       return;
     }

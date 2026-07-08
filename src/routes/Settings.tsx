@@ -79,7 +79,7 @@ import {
 } from "../lib/ai";
 import { providerTestStatus, type ProviderTestStatus } from "../lib/ai/healthStatus";
 import { useTheme, type Theme } from "../lib/theme";
-import { osName } from "../lib/os";
+import { osKind, osName } from "../lib/os";
 import {
   checkForUpdate,
   getUpdateStatus,
@@ -94,6 +94,9 @@ import {
   getOutputBehavior,
   setOutputBehavior,
   type OutputBehavior,
+  getPasteMethod,
+  setPasteMethod,
+  type PasteMethod,
   isHistoryDisabled,
   setHistoryDisabled,
   getHistoryRetentionDays,
@@ -360,6 +363,31 @@ function ClipboardBehaviorSelect() {
         <SelectItem value="copy">Paste and keep copied</SelectItem>
         <SelectItem value="insert-only">Paste without clipboard</SelectItem>
         <SelectItem value="restore">Paste then restore previous clipboard</SelectItem>
+      </SelectContent>
+    </Select>
+  );
+}
+
+function PasteMethodSelect() {
+  const [value, setValue] = useState<PasteMethod>(() => getPasteMethod());
+  const autoLabel = osKind() === "linux" ? "Auto (direct type)" : "Auto (⌘/Ctrl+V)";
+  return (
+    <Select
+      value={value}
+      onValueChange={(next) => {
+        const method = next as PasteMethod;
+        setPasteMethod(method);
+        setValue(method);
+      }}
+    >
+      <SelectTrigger className="w-64">
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value="auto">{autoLabel}</SelectItem>
+        <SelectItem value="ctrl-v">⌘/Ctrl+V</SelectItem>
+        <SelectItem value="shift-insert">Shift+Insert</SelectItem>
+        <SelectItem value="direct">Direct type</SelectItem>
       </SelectContent>
     </Select>
   );
@@ -671,9 +699,16 @@ export default function Settings() {
               <SettingRow
                 id="clipboard-behavior"
                 title="Clipboard behavior"
-                description="Choose whether pasted dictation stays copied, bypasses the clipboard, or restores your previous clipboard after paste."
+                description="For clipboard-based paste methods, choose whether dictation stays copied or restores your previous clipboard. Direct output bypasses the clipboard."
               >
                 <ClipboardBehaviorSelect />
+              </SettingRow>
+              <SettingRow
+                id="paste-method"
+                title="Paste method"
+                description="Choose the keystroke used to paste. Auto keeps ⌘/Ctrl+V on macOS/Windows and direct-types on Linux; no-clipboard output always direct-types."
+              >
+                <PasteMethodSelect />
               </SettingRow>
               <SettingRow
                 id="overlay-position"

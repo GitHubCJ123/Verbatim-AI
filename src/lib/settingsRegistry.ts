@@ -142,8 +142,15 @@ const ALL_SETTINGS_ENTRIES: SettingsSearchEntry[] = [
   {
     id: "clipboard-behavior",
     title: "Clipboard behavior",
-    description: "Choose whether dictation stays copied, bypasses the clipboard, or restores it.",
+    description: "Choose how clipboard-based paste methods keep or restore clipboard contents.",
     keywords: ["clipboard", "paste", "copy", "restore", "privacy", "insert", "output"],
+    tab: "recording",
+  },
+  {
+    id: "paste-method",
+    title: "Paste method",
+    description: "Choose auto, Ctrl+V, Shift+Insert, or direct typing for dictation output.",
+    keywords: ["paste", "terminal", "shift insert", "ctrl v", "direct", "type", "linux", "output"],
     tab: "recording",
   },
   // Privacy

@@ -17,10 +17,17 @@ use futures_util::StreamExt;
 use minisign_verify::{PublicKey, Signature};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{
+    ipc::{InvokeBody, Request},
+    AppHandle, Emitter, Manager,
+};
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
+
+fn perf_enabled() -> bool {
+    std::env::var("VERBATIM_PERF").ok().as_deref() == Some("1")
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -181,6 +188,107 @@ fn locate_whisper_cli_for_variant(
 fn locate_legacy_whisper_cli(app: &AppHandle) -> Result<Option<PathBuf>, String> {
     let dir = bin_dir(app)?;
     Ok(locate_whisper_cli_in_dir(&dir))
+}
+
+// --- Persistent whisper-server support (issue #23, P0) ---------------------
+// Clean-room reimplementation of the "warm resident model" behaviour: instead
+// of spawning `whisper-cli` per utterance (cold model load each time), we run
+// the official `whisper-server` binary once and keep the model resident. These
+// helpers resolve the model + server binary + GPU variant, reusing the exact
+// same runtime layout as the CLI path. No code is copied from any other project.
+
+fn whisper_server_name() -> &'static str {
+    #[cfg(windows)]
+    {
+        "whisper-server.exe"
+    }
+    #[cfg(not(windows))]
+    {
+        "whisper-server"
+    }
+}
+
+fn locate_whisper_server_in_dir(dir: &Path) -> Option<PathBuf> {
+    let target = whisper_server_name();
+    fn walk(dir: &Path, target: &str) -> Option<PathBuf> {
+        let entries = std::fs::read_dir(dir).ok()?;
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_file() {
+                if p.file_name().and_then(|n| n.to_str()) == Some(target) {
+                    return Some(p);
+                }
+            } else if p.is_dir() {
+                if let Some(found) = walk(&p, target) {
+                    return Some(found);
+                }
+            }
+        }
+        None
+    }
+    walk(dir, target)
+}
+
+fn locate_whisper_server_for_variant(
+    app: &AppHandle,
+    variant: WhisperRuntimeVariant,
+) -> Result<Option<PathBuf>, String> {
+    let dir = variant_bin_dir(app, variant)?;
+    Ok(locate_whisper_server_in_dir(&dir))
+}
+
+/// Everything the persistent whisper-server manager needs to launch a server.
+#[derive(Clone)]
+pub(crate) struct WhisperServerLaunch {
+    pub model_path: PathBuf,
+    pub server_bin: PathBuf,
+    /// GPU-variant label ("cpu" | "vulkan" | "cuda" | "metal"), part of the
+    /// warm-server cache key so a variant change forces a respawn.
+    pub variant_label: &'static str,
+    /// Pass `-fa` (flash attention) for CUDA/Metal, mirroring `run_whisper_cli`.
+    pub flash_attn: bool,
+}
+
+/// Resolve the model path, `whisper-server` binary, and GPU variant for a tier,
+/// or a user-facing error if the model / runtime is missing.
+pub(crate) fn resolve_whisper_server_launch(
+    app: &AppHandle,
+    tier: &str,
+    compute_preference: Option<&str>,
+) -> Result<WhisperServerLaunch, String> {
+    let t = WhisperTier::from_str(tier).ok_or_else(|| format!("unknown tier: {tier}"))?;
+    let model_path = models_dir(app)?.join(t.file_name());
+    if !model_path.exists() {
+        return Err(format!(
+            "Model '{tier}' is not downloaded yet. Download it from Settings → AI model."
+        ));
+    }
+    let variant = resolve_runtime_variant(compute_preference);
+    let server_bin = locate_whisper_server_for_variant(app, variant)?.ok_or_else(|| {
+        format!(
+            "whisper-server ({}) is not installed. Update the Whisper runtime in Settings → AI model.",
+            variant.as_str()
+        )
+    })?;
+    Ok(WhisperServerLaunch {
+        model_path,
+        server_bin,
+        variant_label: variant.as_str(),
+        flash_attn: matches!(
+            variant,
+            WhisperRuntimeVariant::Cuda | WhisperRuntimeVariant::Metal
+        ),
+    })
+}
+
+/// Cheap check: is a `whisper-server` binary present for the resolved variant?
+/// Does not require the model to be downloaded (unlike the launch resolver).
+pub(crate) fn whisper_server_available(app: &AppHandle, preference: Option<&str>) -> bool {
+    let variant = resolve_runtime_variant(preference);
+    locate_whisper_server_for_variant(app, variant)
+        .ok()
+        .flatten()
+        .is_some()
 }
 
 /// Recursive list of every file under `root`. Used to chmod whisper-cli
@@ -729,17 +837,84 @@ pub struct TranscribeArgs {
     pub pcm: Vec<f32>,
 }
 
+fn request_header(request: &Request<'_>, name: &str) -> Option<String> {
+    request
+        .headers()
+        .get(name)
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+pub(crate) fn transcribe_args_from_pcm_request(
+    request: &Request<'_>,
+) -> Result<TranscribeArgs, String> {
+    let format = request_header(request, "x-verbatim-pcm-format")
+        .ok_or_else(|| "Missing PCM format header".to_string())?;
+    if format != "f32le-16000-mono" {
+        return Err(format!("Unsupported PCM format: {format}"));
+    }
+
+    let bytes = match request.body() {
+        InvokeBody::Raw(bytes) => bytes,
+        InvokeBody::Json(_) => return Err("PCM audio must be sent as raw bytes".into()),
+    };
+    if bytes.is_empty() {
+        return Err("Empty audio buffer".into());
+    }
+    if bytes.len() % std::mem::size_of::<f32>() != 0 {
+        return Err("PCM byte length must be divisible by 4".into());
+    }
+
+    let pcm = bytes
+        .chunks_exact(4)
+        .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+        .collect();
+
+    let tier = request_header(request, "x-verbatim-tier")
+        .ok_or_else(|| "Missing Whisper tier header".to_string())?;
+    let language = request_header(request, "x-verbatim-language");
+    let compute_preference = request_header(request, "x-verbatim-compute-preference");
+    let translate = request_header(request, "x-verbatim-translate")
+        .map(|v| matches!(v.as_str(), "1" | "true" | "yes"));
+
+    Ok(TranscribeArgs {
+        tier,
+        language,
+        translate,
+        compute_preference,
+        pcm,
+    })
+}
+
 #[derive(Serialize)]
 pub struct TranscribeOutput {
-    text: String,
-    language_detected: String,
-    duration_ms: u64,
+    pub(crate) text: String,
+    pub(crate) language_detected: String,
+    pub(crate) duration_ms: u64,
 }
 
 struct WhisperRunError {
     message: String,
     stderr: String,
     code: Option<i32>,
+}
+
+/// Write 16 kHz mono f32 PCM to a fresh temp WAV under `whisper-tmp` and return
+/// its path. Shared by the CLI path and the persistent whisper-server path.
+pub(crate) fn write_pcm_wav(app: &AppHandle, samples: &[f32]) -> Result<PathBuf, String> {
+    let tmp_dir = app_data(app)?.join("whisper-tmp");
+    std::fs::create_dir_all(&tmp_dir).map_err(|e| e.to_string())?;
+    let wav_path = tmp_dir.join(format!(
+        "rec-{}.wav",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0)
+    ));
+    write_wav(&wav_path, samples)?;
+    Ok(wav_path)
 }
 
 fn write_wav(path: &Path, samples: &[f32]) -> Result<(), String> {
@@ -859,6 +1034,13 @@ async fn run_whisper_cli(
     }
 
     let duration_ms = started.elapsed().as_millis() as u64;
+    if perf_enabled() {
+        eprintln!(
+            "[verbatim-perf] whisper-cli total_ms={} variant={}",
+            duration_ms,
+            variant.as_str()
+        );
+    }
     Ok(TranscribeOutput {
         text: stdout_text,
         language_detected: lang_detected,
@@ -899,10 +1081,20 @@ struct RuntimeFallbackPayload {
 }
 
 #[tauri::command]
+pub async fn transcribe_local_pcm(
+    app: AppHandle,
+    request: Request<'_>,
+) -> Result<TranscribeOutput, String> {
+    let args = transcribe_args_from_pcm_request(&request)?;
+    transcribe_local(app, args).await
+}
+
+#[tauri::command]
 pub async fn transcribe_local(
     app: AppHandle,
     args: TranscribeArgs,
 ) -> Result<TranscribeOutput, String> {
+    let total_started = Instant::now();
     let t =
         WhisperTier::from_str(&args.tier).ok_or_else(|| format!("unknown tier: {}", args.tier))?;
     let model_path = models_dir(&app)?.join(t.file_name());
@@ -981,5 +1173,11 @@ pub async fn transcribe_local(
 
     let _ = fs::remove_file(&wav_path).await;
     let _ = fs::remove_file(json_stem.with_extension("json")).await;
+    if perf_enabled() {
+        eprintln!(
+            "[verbatim-perf] transcribe_local total_ms={}",
+            total_started.elapsed().as_millis()
+        );
+    }
     output
 }

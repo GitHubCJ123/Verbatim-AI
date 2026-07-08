@@ -6,6 +6,7 @@
  * cleanup function for now (Phase 2: local LLM via Ollama/llama.cpp).
  */
 import { invoke } from "@tauri-apps/api/core";
+import { isPerfDebugEnabled } from "../preferences";
 import { decodeToMonoF32_16k } from "./audioDecode";
 import { CLOUD_FEATURES_ENABLED } from "../features";
 import type {
@@ -198,6 +199,72 @@ export function whisperRuntimeVariantLabel(v: WhisperRuntimeVariant): string {
 // Decode arbitrary audio Blob → 16 kHz mono Float32 PCM.
 // (moved to ./audioDecode.ts so the Parakeet provider can reuse it)
 
+export type LocalWhisperEngine = "auto" | "server" | "cli";
+
+const LS_WHISPER_ENGINE = "sw.ai.whisperEngine";
+
+/**
+ * Which local Whisper execution path to use:
+ * - "auto" (default): warm persistent `whisper-server` when its binary is present,
+ *   otherwise the `whisper-cli` one-shot path (previous behaviour).
+ * - "server": always the warm server (errors if not installed).
+ * - "cli": always the one-shot CLI.
+ */
+export function getLocalWhisperEngine(): LocalWhisperEngine {
+  const v = localStorage.getItem(LS_WHISPER_ENGINE);
+  return v === "server" || v === "cli" ? v : "auto";
+}
+
+export function setLocalWhisperEngine(v: LocalWhisperEngine): void {
+  localStorage.setItem(LS_WHISPER_ENGINE, v);
+}
+
+/** Is the warm `whisper-server` binary available for the selected compute variant? */
+export function isWhisperServerAvailable(): Promise<boolean> {
+  return invoke<boolean>("is_whisper_server_available", {
+    preference: getWhisperComputePreference(),
+  });
+}
+
+export function ensureWhisperEngineReady(tier: WhisperTier): Promise<void> {
+  return invoke("ensure_engine_ready", {
+    tier,
+    computePreference: getWhisperComputePreference(),
+  });
+}
+
+// The probe is stable within a session per compute preference; cache it so we
+// don't touch the filesystem on every utterance.
+const serverAvailByPref = new Map<string, boolean>();
+
+async function warmServerAvailable(): Promise<boolean> {
+  const key = getWhisperComputePreference();
+  const cached = serverAvailByPref.get(key);
+  if (cached !== undefined) return cached;
+  try {
+    const ok = await isWhisperServerAvailable();
+    serverAvailByPref.set(key, ok);
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
+/** Clear the cached availability probe (e.g. after installing/updating the runtime). */
+export function resetWhisperEngineProbe(): void {
+  serverAvailByPref.clear();
+}
+
+/** Resolve the Tauri command to use for the current engine setting. */
+export async function resolveWhisperCommand(): Promise<
+  "transcribe_local_pcm" | "transcribe_local_server_pcm"
+> {
+  const engine = getLocalWhisperEngine();
+  if (engine === "cli") return "transcribe_local_pcm";
+  if (engine === "server") return "transcribe_local_server_pcm";
+  return (await warmServerAvailable()) ? "transcribe_local_server_pcm" : "transcribe_local_pcm";
+}
+
 export interface LocalWhisperConfig {
   tier: WhisperTier;
   /** Provider used for the cleanup/polish step until local LLM ships. */
@@ -211,26 +278,40 @@ export class LocalWhisperProvider implements AIProvider {
   }
 
   async transcribe(input: TranscribeInput): Promise<TranscribeResult> {
+    const totalStarted = performance.now();
     const samples = await decodeToMonoF32_16k(input.audio);
-    const started = performance.now();
+    const decodeMs = Math.round(performance.now() - totalStarted);
+    const command = await resolveWhisperCommand();
+    const perf = isPerfDebugEnabled();
+    const pcmView = new Uint8Array(samples.buffer, samples.byteOffset, samples.byteLength);
+    const pcmBytes = new Uint8Array(pcmView.byteLength);
+    pcmBytes.set(pcmView);
+    const headers = {
+      "content-type": "application/octet-stream",
+      "x-verbatim-pcm-format": "f32le-16000-mono",
+      "x-verbatim-tier": this.cfg.tier,
+      "x-verbatim-language": input.language ?? "",
+      "x-verbatim-translate": "false",
+      "x-verbatim-compute-preference": getWhisperComputePreference(),
+    };
+    const ipcPayloadBytes = pcmBytes.byteLength;
+    const invokeStarted = performance.now();
     const out = await invoke<{
       text: string;
       language_detected: string;
       duration_ms: number;
-    }>("transcribe_local", {
-      args: {
-        tier: this.cfg.tier,
-        language: input.language ?? null,
-        translate: false,
-        compute_preference: getWhisperComputePreference(),
-        pcm: Array.from(samples),
-      },
-    });
-    const wallMs = Math.round(performance.now() - started);
+    }>(command, pcmBytes, { headers });
+    const invokeMs = Math.round(performance.now() - invokeStarted);
+    const totalMs = Math.round(performance.now() - totalStarted);
+    if (perf) {
+      console.debug(
+        `[Verbatim AI][perf] local-whisper command=${command} decode_ms=${decodeMs} ipc_payload_bytes=${ipcPayloadBytes} invoke_ms=${invokeMs} total_ms=${totalMs}`,
+      );
+    }
     return {
       text: out.text,
       languageDetected: out.language_detected || (input.language ?? "auto"),
-      durationMs: out.duration_ms || wallMs,
+      durationMs: out.duration_ms || invokeMs,
     };
   }
 

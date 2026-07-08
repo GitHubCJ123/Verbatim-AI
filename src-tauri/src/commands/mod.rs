@@ -8,3 +8,4 @@ pub mod parakeet;
 pub mod paste;
 pub mod process_list;
 pub mod relay;
+pub mod whisper_server;

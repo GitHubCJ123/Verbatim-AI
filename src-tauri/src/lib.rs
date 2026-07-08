@@ -12,7 +12,7 @@ use commands::{
     local_whisper::{
         delete_local_model, detect_whisper_compute_backend, download_local_model,
         get_active_whisper_runtime_variant, install_whisper_runtime,
-        is_whisper_runtime_installed, list_local_models, transcribe_local,
+        is_whisper_runtime_installed, list_local_models, transcribe_local, transcribe_local_pcm,
     },
     parakeet::{
         delete_parakeet_model, download_parakeet_model, install_parakeet_runtime,
@@ -25,6 +25,10 @@ use commands::{
     },
     process_list::list_running_apps,
     relay::relay_event,
+    whisper_server::{
+        ensure_engine_ready, is_whisper_server_available, transcribe_local_server,
+        transcribe_local_server_pcm, unload_engine, WhisperServerState,
+    },
 };
 use tauri::Manager;
 
@@ -65,6 +69,7 @@ pub fn run() {
         .manage(HotkeyState::default())
         .manage(FnHotkeyState::default())
         .manage(TargetWindowState::default())
+        .manage(WhisperServerState::default())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_autostart::init(
@@ -95,6 +100,7 @@ pub fn run() {
             download_local_model,
             delete_local_model,
             transcribe_local,
+            transcribe_local_pcm,
             is_whisper_runtime_installed,
             detect_whisper_compute_backend,
             get_active_whisper_runtime_variant,
@@ -112,10 +118,16 @@ pub fn run() {
             open_devtools,
             open_main_devtools,
             open_input_monitoring_settings,
+            ensure_engine_ready,
+            unload_engine,
+            transcribe_local_server,
+            transcribe_local_server_pcm,
+            is_whisper_server_available,
         ])
         .setup(|app| {
             install_default(&app.handle());
             tray::install(&app.handle())?;
+            commands::whisper_server::init(&app.handle());
             // Close-to-hide for the main window (plan §5 lifecycle).
             if let Some(window) = app.get_webview_window("main") {
                 // Fit the window to the available monitor so all UI is visible.
@@ -153,6 +165,11 @@ pub fn run() {
             }
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app_handle, event| {
+            if let tauri::RunEvent::Exit = event {
+                commands::whisper_server::shutdown(app_handle);
+            }
+        });
 }

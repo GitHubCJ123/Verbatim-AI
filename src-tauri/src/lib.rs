@@ -12,7 +12,8 @@ use commands::{
     local_whisper::{
         delete_local_model, detect_whisper_compute_backend, download_local_model,
         get_active_whisper_runtime_variant, install_whisper_runtime,
-        is_whisper_runtime_installed, list_local_models, transcribe_local, transcribe_local_pcm,
+        is_whisper_runtime_installed, list_custom_whisper_models, list_local_models,
+        rescan_local_models, transcribe_local, transcribe_local_pcm,
     },
     parakeet::{
         delete_parakeet_model, download_parakeet_model, install_parakeet_runtime,
@@ -97,6 +98,8 @@ pub fn run() {
             paste_to_target,
             relay_event,
             list_local_models,
+            list_custom_whisper_models,
+            rescan_local_models,
             download_local_model,
             delete_local_model,
             transcribe_local,

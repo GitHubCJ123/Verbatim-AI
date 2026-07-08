@@ -21,7 +21,7 @@ import {
   getAiProviderKind,
   getLocalWhisperEngine,
   getLocalWhisperTier,
-  type WhisperTier,
+  type WhisperModelId,
 } from "./ai/localWhisper";
 
 const LS_HOTKEY = "sw.hotkey.spec";
@@ -113,7 +113,7 @@ function preloadWhisperIfNeeded(mode: {
   const kind = mode.transcribeProviderOverride ?? getAiProviderKind();
   if (kind !== "local-whisper" || getLocalWhisperEngine() === "cli") return;
 
-  const tier = (mode.whisperTierOverride ?? getLocalWhisperTier()) as WhisperTier;
+  const tier = (mode.whisperTierOverride ?? getLocalWhisperTier()) as WhisperModelId;
   void ensureWhisperEngineReady(tier).catch((e) => {
     if (import.meta.env.DEV) {
       console.debug("[Verbatim AI] local whisper preload skipped", e);

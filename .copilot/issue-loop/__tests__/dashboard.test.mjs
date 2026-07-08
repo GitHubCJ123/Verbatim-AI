@@ -4,53 +4,65 @@ import {
   startAction,
   finishAction,
   buildPhaseView,
-  demoIssue,
-  markDownstreamNeedsRedo,
   PHASES,
   recordFeedback,
   recordReflection,
   assertTextOnlyAgentCommand,
 } from "../lib/dashboard.mjs";
 
-describe("dashboard state", () => {
-  it("keeps demo issue local and non-numeric", () => {
-    expect(demoIssue().id).toBe("demo-9001");
-    expect(String(demoIssue().number)).toContain("DEMO");
-  });
+const issueFixture = {
+  id: "gh-18",
+  number: 18,
+  title: "Issues installing 0.5.9 on Windows",
+  body: "When I selected Local - Whisper I got HTTP status client error 404 for whisper-runtimes.json.",
+  labels: ["bug"],
+  source: "github",
+};
 
+describe("dashboard state", () => {
   it("approves a phase and makes the next phase ready", () => {
     const state = { issues: {} };
-    applyApproval(state, "demo-9001", "requirements", { approver: "tester" });
+    applyApproval(state, "gh-18", "requirements", { approver: "tester" });
 
-    expect(state.issues["demo-9001"].overrides.requirements).toBe("approved");
-    expect(state.issues["demo-9001"].overrides.spec).toBe("ready");
-    expect(state.issues["demo-9001"].overrides["adversarial-review"]).toBe("needs-redo");
+    expect(state.issues["gh-18"].overrides.requirements).toBe("approved");
+    expect(state.issues["gh-18"].overrides.spec).toBe("ready");
+    expect(state.issues["gh-18"].overrides["adversarial-review"]).toBe("needs-redo");
   });
 
   it("records feedback and reflection locally", () => {
     const state = { issues: {} };
-    recordFeedback(state, "demo-9001", "spec", "make it clearer", "agent output");
-    recordReflection(state, "demo-9001", "improve reviewer prompt");
+    recordFeedback(state, "gh-18", "spec", "make it clearer", "agent output");
+    recordReflection(state, "gh-18", "improve reviewer prompt");
 
-    expect(state.issues["demo-9001"].feedback[0].feedback).toContain("clearer");
-    expect(state.issues["demo-9001"].reflections[0].result).toContain("reviewer");
-    expect(state.issues["demo-9001"].overrides["adversarial-review"]).toBe("needs-redo");
+    expect(state.issues["gh-18"].feedback[0].feedback).toContain("clearer");
+    expect(state.issues["gh-18"].reflections[0].result).toContain("reviewer");
+    expect(state.issues["gh-18"].overrides["adversarial-review"]).toBe("needs-redo");
   });
 
   it("tracks running actions so polling can show live state", () => {
     const state = { issues: {} };
-    const action = startAction(state, "demo-9001", "spec", "feedback-agent", "Running");
-    let phases = buildPhaseView(demoIssue(), state.issues["demo-9001"], {});
+    const action = startAction(state, "gh-18", "spec", "feedback-agent", "Running");
+    let phases = buildPhaseView(issueFixture, state.issues["gh-18"], {});
     expect(phases.find((phase) => phase.id === "spec").status).toBe("running");
 
-    finishAction(state, "demo-9001", action.id, "complete", "Done");
-    phases = buildPhaseView(demoIssue(), state.issues["demo-9001"], {});
+    finishAction(state, "gh-18", action.id, "complete", "Done");
+    phases = buildPhaseView(issueFixture, state.issues["gh-18"], {});
     expect(phases.find((phase) => phase.id === "spec").status).not.toBe("running");
   });
 
   it("builds all phases", () => {
-    const phases = buildPhaseView(demoIssue(), {}, {});
+    const phases = buildPhaseView(issueFixture, {}, {});
     expect(phases.map((phase) => phase.id)).toEqual(PHASES.map((phase) => phase.id));
+  });
+
+  it("marks implementation ready after clean spec review", () => {
+    const phases = buildPhaseView(issueFixture, {}, {
+      spec: { status: "complete", output: "# Spec" },
+      "adversarial-review": { status: "complete", output: "No blocking findings." },
+      implementation: { status: "ready", output: "Spec review is clear." },
+    });
+
+    expect(phases.find((phase) => phase.id === "implementation").status).toBe("ready");
   });
 
   it("rejects agent commands that grant tools or repo access", () => {

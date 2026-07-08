@@ -9,6 +9,7 @@ export const DEFAULT_CONFIG = {
   pollIntervalSeconds: 300,
   maxConcurrentIssues: 1,
   maxIssuesPerTick: 1,
+  triageAllOpenIssues: true,
   requiredLabels: ["automate"],
   excludedLabels: ["wontfix", "blocked", "needs-human"],
   automationLabels: {
@@ -38,7 +39,7 @@ export const DEFAULT_CONFIG = {
     verifier: { model: "gpt-5.5" },
   },
   gates: {
-    requireHumanSpecApproval: true,
+    requireHumanOnSpecReviewQuestions: true,
     requireHumanMerge: true,
     requireScreenshotsForUxChanges: true,
   },

@@ -6,6 +6,7 @@
   "pollIntervalSeconds": 300,
   "maxConcurrentIssues": 1,
   "maxIssuesPerTick": 1,
+  "triageAllOpenIssues": true,
   "requiredLabels": ["automate"],
   "excludedLabels": ["wontfix", "blocked", "needs-human"],
   "automationLabels": {
@@ -42,7 +43,7 @@
     }
   },
   "gates": {
-    "requireHumanSpecApproval": true,
+    "requireHumanOnSpecReviewQuestions": true,
     "requireHumanMerge": true,
     "requireScreenshotsForUxChanges": true
   },

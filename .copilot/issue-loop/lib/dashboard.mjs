@@ -4,28 +4,19 @@ import { createHash, randomUUID } from "node:crypto";
 import { spawnFile } from "./process.mjs";
 import { redactSecrets } from "./redaction.mjs";
 import { issueFolderName } from "./markers.mjs";
+import { critiqueRequirements, requirementsReview } from "./requirements.mjs";
 
 export const PHASES = [
   { id: "requirements", title: "Requirements critique", sideEffect: "local state only" },
   { id: "spec", title: "Architect spec", sideEffect: "repo spec files" },
   { id: "adversarial-review", title: "Adversarial review", sideEffect: "repo spec files" },
-  { id: "approval", title: "Human spec gate", sideEffect: "local approval by default" },
   { id: "implementation", title: "Implementation", sideEffect: "branch + draft PR when enabled" },
+  { id: "agent-pr-review", title: "Agent PR review", sideEffect: "local/PR review notes" },
   { id: "verification", title: "Verification", sideEffect: "sandbox verifier" },
   { id: "finalization", title: "Ready for review", sideEffect: "GitHub PR metadata when enabled" },
+  { id: "human-pr-review", title: "Human PR review", sideEffect: "GitHub PR review" },
   { id: "self-reflection", title: "Self-reflection", sideEffect: "local state only" },
 ];
-
-export const DEMO_ISSUE = {
-  id: "demo-9001",
-  number: "DEMO-9001",
-  title: "Demo: add a low-risk settings tooltip",
-  url: null,
-  labels: ["automate", "demo"],
-  body:
-    "A local-only demo issue for testing approvals, feedback, and self-reflection without touching GitHub.",
-  source: "demo",
-};
 
 export async function ensureDashboardState(runtimeDir) {
   await fs.mkdir(runtimeDir, { recursive: true });
@@ -158,7 +149,7 @@ export function buildPhaseView(issue, stateIssue, derived) {
       approvals,
       transitions,
       activeActions,
-      canApprove: activeActions.length === 0 && ["ready", "needs-revision"].includes(status),
+      canApprove: activeActions.length === 0 && ["ready", "needs-revision", "local-approved"].includes(status),
       canGiveFeedback:
         activeActions.length === 0 &&
         ["ready", "complete", "approved", "needs-revision", "needs-redo"].includes(status),
@@ -168,15 +159,19 @@ export function buildPhaseView(issue, stateIssue, derived) {
 
 export async function deriveIssueState({ root, issue, prs, localIssue }) {
   const spec = await specInfo(root, issue);
+  const requirements = critiqueRequirements(issue);
   const linkedPr = prs.find((pr) =>
     pr.closingIssuesReferences?.some((ref) => String(ref.number) === String(issue.number)),
   );
   const hasSpec = Boolean(spec.content);
   const hasReview = Boolean(spec.adversarialReview && !/Pending\./i.test(spec.adversarialReview));
+  const reviewNeedsHuman = /\b(needs[-\s]?human|requires human|open question|cannot proceed|blocked)\b/i.test(
+    spec.adversarialReview,
+  );
   const derived = {
     requirements: {
-      status: issue.body && issue.body.length > 120 ? "complete" : "needs-revision",
-      output: issue.body ?? "",
+      status: requirements.status === "clear" ? "complete" : "needs-revision",
+      output: requirementsReview(issue, requirements),
     },
     spec: {
       status: hasSpec ? "complete" : "ready",
@@ -184,20 +179,23 @@ export async function deriveIssueState({ root, issue, prs, localIssue }) {
       path: spec.path,
     },
     "adversarial-review": {
-      status: hasReview ? "complete" : hasSpec ? "ready" : "blocked",
+      status: hasReview ? (reviewNeedsHuman ? "needs-human" : "complete") : hasSpec ? "ready" : "blocked",
       output: spec.adversarialReview || "No adversarial review yet.",
       path: spec.adversarialPath,
     },
-    approval: {
-      status: localIssue?.approvals?.approval ? "approved" : hasReview ? "ready" : "blocked",
-      output: "Requires a trusted, hash-bound approval marker before implementation.",
-      path: spec.path,
-    },
     implementation: {
-      status: linkedPr ? "complete" : localIssue?.approvals?.approval ? "ready" : "blocked",
+      status: linkedPr ? "complete" : hasReview && !reviewNeedsHuman ? "ready" : "blocked",
       output: linkedPr
         ? `PR #${linkedPr.number}: ${linkedPr.title}`
-        : "No implementation PR linked yet.",
+        : hasReview && !reviewNeedsHuman
+          ? "Spec review is clear. Implementation can proceed automatically."
+          : "No implementation PR linked yet.",
+    },
+    "agent-pr-review": {
+      status: linkedPr ? "ready" : "blocked",
+      output: linkedPr
+        ? "Agent reviewer should critique the PR and iterate with the developer agent until no blocking findings remain."
+        : "No PR to review yet.",
     },
     verification: {
       status: linkedPr?.mergeStateStatus === "CLEAN" ? "complete" : linkedPr ? "ready" : "blocked",
@@ -206,6 +204,12 @@ export async function deriveIssueState({ root, issue, prs, localIssue }) {
     finalization: {
       status: linkedPr && !linkedPr.isDraft ? "complete" : linkedPr ? "ready" : "blocked",
       output: linkedPr ? (linkedPr.isDraft ? "Draft PR." : "Ready for review.") : "No PR.",
+    },
+    "human-pr-review": {
+      status: linkedPr && !linkedPr.isDraft ? "ready" : "blocked",
+      output: linkedPr
+        ? "Human review gate. Review the PR, screenshots, verifier output, and agent PR review results."
+        : "No ready PR for human review yet.",
     },
     "self-reflection": {
       status: localIssue?.reflections?.length ? "complete" : linkedPr ? "ready" : "blocked",
@@ -351,27 +355,12 @@ export function reflectionPrompt(issue, phases, feedback) {
   ].join("\n");
 }
 
-export function demoIssue() {
-  return { ...DEMO_ISSUE };
-}
-
 function nextPhase(phaseId) {
   const index = PHASES.findIndex((phase) => phase.id === phaseId);
   return index >= 0 ? PHASES[index + 1]?.id : null;
 }
 
 async function specInfo(root, issue) {
-  if (String(issue.number).startsWith("DEMO")) {
-    return {
-      path: "docs/automation/specs/demo-9001/spec.md",
-      sha: "demo-spec",
-      content:
-        "# Demo spec\n\nAdd a tooltip in Settings. This is local demo content and will not touch GitHub.",
-      adversarialPath: "docs/automation/specs/demo-9001/adversarial-review.md",
-      adversarialReview:
-        "# Demo adversarial review\n\nBlocking concern: tooltip copy should be accessible and concise.",
-    };
-  }
   const folder = issueFolderName(issue);
   const specPath = path.join(root, "docs/automation/specs", folder, "spec.md");
   const reviewPath = path.join(root, "docs/automation/specs", folder, "adversarial-review.md");

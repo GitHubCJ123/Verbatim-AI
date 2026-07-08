@@ -30,7 +30,7 @@ For a visual control room, start the local dashboard:
 pnpm automation:dashboard
 ```
 
-Open the printed localhost URL. The dashboard includes a local demo issue (`DEMO-9001`) so you can test approvals, feedback, and self-reflection without touching GitHub.
+Open the printed localhost URL. The dashboard shows real open repository issues; actions remain local/read-only unless the loop is explicitly enabled.
 
 1. Copy and edit local config:
 
@@ -76,19 +76,20 @@ To approve implementation, add a trusted `spec-approval` marker bound to the spe
 
 ## Workflow
 
-1. **Monitor**: find open issues with an allowlist label such as `automate`.
-2. **Requirements critique**: stop and ask for human input if the issue is ambiguous, missing acceptance criteria, or involves secrets/external access.
+1. **Monitor**: list open issues. The dashboard shows all of them; implementation still requires an allowlist label such as `automate`.
+2. **Requirements critique**: all open issues can receive a requirements critique marker. Clear requirements proceed to spec drafting; ambiguous requirements ask for human input.
 3. **Spec**: create or refresh `docs/automation/specs/issue-<number>-<slug>/`.
 4. **Adversarial review**: use a different model family than the architect.
-5. **Human spec gate**: require a trusted `spec-approval` marker bound to the current spec path and SHA-256 hash. A label alone is never enough.
+5. **Spec review gate**: continue automatically if the adversarial review has no open questions; ask for human input only when it raises blockers/questions.
 6. **Implementation**: isolated worktree, deterministic branch, draft PR.
-7. **Verification**: run configured commands, redact logs, require UX screenshots for UI changes.
-8. **Finalization**: mark ready for review and request configured reviewers only after current-head verification passes.
-9. **Merge**: human only.
+7. **Agent PR review**: an agent reviewer critiques the PR and iterates with the developer agent until no blocking findings remain.
+8. **Verification**: run configured commands, redact logs, require UX screenshots for UI changes.
+9. **Finalization**: mark ready for human review and request configured reviewers only after current-head verification passes.
+10. **Human PR review/merge**: human only.
 
 ## Trigger options
 
-Recommended first: run the local watcher and use the GitHub `automate` label as opt-in.
+Recommended first: run the local watcher and use the GitHub `automate` label as implementation opt-in. Requirements-only triage for all open issues is available with `triageAllOpenIssues`, but it is off by default and still skips excluded/stop-labeled issues.
 
 Hosted GitHub Actions, if added later, should be metadata-only: `issues: write`, `contents: read`, no Copilot credentials, no implementation, no `pull_request_target`.
 
@@ -102,10 +103,9 @@ pnpm automation:dashboard -- --port 8787
 
 It shows:
 
-- Real open GitHub issues from this repo, read-only by default.
-- A built-in demo issue for safe testing.
+- Real open GitHub issues from this repo, read-only by default. There is no built-in demo issue.
 - Each automation phase and its current artifacts.
-- Local approvals that move the demo/local state forward.
+- Local approvals that record review decisions. For real GitHub issues, implementation still requires the trusted hash-bound spec approval marker.
 - Feedback prompts that can run a reviewed text-only agent wrapper only when the server is started with `--allow-agent-runs --agent-command`.
 - A self-reflection phase that summarizes loop history and human feedback.
 
@@ -116,9 +116,9 @@ Security defaults:
 - Renders GitHub/spec content as text, not HTML.
 - Does not write to GitHub.
 - Stores dashboard state in ignored `.copilot-issue-loop/dashboard-state.json`.
-- Agent runs are disabled unless an explicit reviewed text-only command template is provided. The current implementation only permits the demo-safe `cat {promptFile}` command.
+- Agent runs are disabled unless an explicit reviewed text-only command template is provided. The current implementation only permits the safe `cat {promptFile}` command.
 
-Example demo-only text agent:
+Example local text echo:
 
 ```bash
 pnpm automation:dashboard -- --allow-agent-runs --agent-command "cat {promptFile}"
@@ -134,7 +134,17 @@ Approval markers are intentionally bound to a specific spec path and content has
 <!-- verbatim-ai:spec-approval:v1 issue=3 approvedBy=@maintainer path=docs/automation/specs/issue-0003-demo/spec.md sha=<sha256> -->
 ```
 
-The loop verifies the comment author has write, maintain, or admin permission on the repository, or is listed in `trustedApprovers`. It ignores labels by themselves and ignores markers whose `issue`, `path`, or `sha` does not match the current spec.
+The next human gate is PR review. The old spec-approval marker format is still documented for manual override workflows, but the default loop only blocks before implementation when the adversarial spec review raises open questions or concerns requiring maintainer input.
+
+## Requirements critique markers
+
+Requirements critique markers are idempotent and bound to the current issue title/body/comments hash:
+
+```md
+<!-- verbatim-ai:requirements:v1 issue=18 status=clear issueInputSha=<sha256> artifactSha=<sha256> -->
+```
+
+If the critique is `clear`, the loop may proceed to spec drafting without a human requirements gate. If the adversarial spec review is clear, implementation may proceed automatically to a draft PR. Human review happens at the PR stage after agent PR review, verification, and required screenshots.
 
 The architect and adversarial reviewer run in read-only mode by default. Issue text is wrapped as untrusted input, and the driver writes only controlled spec scaffold files under `docs/automation/specs/`.
 

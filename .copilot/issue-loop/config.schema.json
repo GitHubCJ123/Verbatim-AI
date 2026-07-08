@@ -20,9 +20,9 @@
     "claimTtlMinutes": { "type": "integer", "minimum": 15 },
     "gates": {
       "type": "object",
-      "required": ["requireHumanSpecApproval", "requireHumanMerge", "requireScreenshotsForUxChanges"],
+      "required": ["requireHumanMerge", "requireScreenshotsForUxChanges"],
       "properties": {
-        "requireHumanSpecApproval": { "type": "boolean" },
+        "requireHumanOnSpecReviewQuestions": { "type": "boolean" },
         "requireHumanMerge": { "type": "boolean" },
         "requireScreenshotsForUxChanges": { "type": "boolean" }
       }

@@ -10,10 +10,11 @@ export const PHASES = [
   { id: "requirements", title: "Requirements critique", sideEffect: "local state only" },
   { id: "spec", title: "Architect spec", sideEffect: "repo spec files" },
   { id: "adversarial-review", title: "Adversarial review", sideEffect: "repo spec files" },
-  { id: "approval", title: "Human spec gate", sideEffect: "local approval by default" },
   { id: "implementation", title: "Implementation", sideEffect: "branch + draft PR when enabled" },
+  { id: "agent-pr-review", title: "Agent PR review", sideEffect: "local/PR review notes" },
   { id: "verification", title: "Verification", sideEffect: "sandbox verifier" },
   { id: "finalization", title: "Ready for review", sideEffect: "GitHub PR metadata when enabled" },
+  { id: "human-pr-review", title: "Human PR review", sideEffect: "GitHub PR review" },
   { id: "self-reflection", title: "Self-reflection", sideEffect: "local state only" },
 ];
 
@@ -46,8 +47,6 @@ export function applyApproval(state, issueId, phaseId, context) {
   const issue = issueState(state, issueId);
   const previous = issue.overrides[phaseId] ?? "ready";
   const spec = context?.spec ?? {};
-  const isGithubIssue = String(issueId).startsWith("gh-");
-  const status = isGithubIssue && phaseId === "approval" ? "local-approved" : "approved";
   issue.approvals[phaseId] = {
     id: randomUUID(),
     issueId,
@@ -57,19 +56,14 @@ export function applyApproval(state, issueId, phaseId, context) {
     specSha: spec.sha ?? null,
     createdAt: new Date().toISOString(),
   };
-  setPhaseStatus(issue, phaseId, status, {
+  setPhaseStatus(issue, phaseId, "approved", {
     from: previous,
     source: "human-approval",
-    message:
-      status === "local-approved"
-        ? `Recorded local approval for ${phaseId}; trusted GitHub marker is still required`
-        : `Approved ${phaseId}`,
+    message: `Approved ${phaseId}`,
   });
-  if (!(isGithubIssue && phaseId === "approval")) {
-    markDownstreamNeedsRedo(issue, phaseId, "Upstream phase was approved by a human reviewer.");
-  }
+  markDownstreamNeedsRedo(issue, phaseId, "Upstream phase was approved by a human reviewer.");
   const next = nextPhase(phaseId);
-  if (next && !(isGithubIssue && phaseId === "approval")) {
+  if (next) {
     setPhaseStatus(issue, next, "ready", {
       source: "state-machine",
       message: `Ready after ${phaseId} approval`,
@@ -171,6 +165,9 @@ export async function deriveIssueState({ root, issue, prs, localIssue }) {
   );
   const hasSpec = Boolean(spec.content);
   const hasReview = Boolean(spec.adversarialReview && !/Pending\./i.test(spec.adversarialReview));
+  const reviewNeedsHuman = /\b(needs[-\s]?human|requires human|open question|cannot proceed|blocked)\b/i.test(
+    spec.adversarialReview,
+  );
   const derived = {
     requirements: {
       status: requirements.status === "clear" ? "complete" : "needs-revision",
@@ -182,21 +179,23 @@ export async function deriveIssueState({ root, issue, prs, localIssue }) {
       path: spec.path,
     },
     "adversarial-review": {
-      status: hasReview ? "complete" : hasSpec ? "ready" : "blocked",
+      status: hasReview ? (reviewNeedsHuman ? "needs-human" : "complete") : hasSpec ? "ready" : "blocked",
       output: spec.adversarialReview || "No adversarial review yet.",
       path: spec.adversarialPath,
     },
-    approval: {
-      status: localIssue?.overrides?.approval ?? (hasReview ? "ready" : "blocked"),
-      output:
-        "Requires a trusted, hash-bound spec-approval marker before implementation. Dashboard approvals are local review notes only for GitHub issues.",
-      path: spec.path,
-    },
     implementation: {
-      status: linkedPr ? "complete" : "blocked",
+      status: linkedPr ? "complete" : hasReview && !reviewNeedsHuman ? "ready" : "blocked",
       output: linkedPr
         ? `PR #${linkedPr.number}: ${linkedPr.title}`
-        : "No implementation PR linked yet. The loop requires trusted spec approval before implementation.",
+        : hasReview && !reviewNeedsHuman
+          ? "Spec review is clear. Implementation can proceed automatically."
+          : "No implementation PR linked yet.",
+    },
+    "agent-pr-review": {
+      status: linkedPr ? "ready" : "blocked",
+      output: linkedPr
+        ? "Agent reviewer should critique the PR and iterate with the developer agent until no blocking findings remain."
+        : "No PR to review yet.",
     },
     verification: {
       status: linkedPr?.mergeStateStatus === "CLEAN" ? "complete" : linkedPr ? "ready" : "blocked",
@@ -205,6 +204,12 @@ export async function deriveIssueState({ root, issue, prs, localIssue }) {
     finalization: {
       status: linkedPr && !linkedPr.isDraft ? "complete" : linkedPr ? "ready" : "blocked",
       output: linkedPr ? (linkedPr.isDraft ? "Draft PR." : "Ready for review.") : "No PR.",
+    },
+    "human-pr-review": {
+      status: linkedPr && !linkedPr.isDraft ? "ready" : "blocked",
+      output: linkedPr
+        ? "Human review gate. Review the PR, screenshots, verifier output, and agent PR review results."
+        : "No ready PR for human review yet.",
     },
     "self-reflection": {
       status: localIssue?.reflections?.length ? "complete" : linkedPr ? "ready" : "blocked",

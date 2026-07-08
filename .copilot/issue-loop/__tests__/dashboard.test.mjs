@@ -4,7 +4,6 @@ import {
   startAction,
   finishAction,
   buildPhaseView,
-  markDownstreamNeedsRedo,
   PHASES,
   recordFeedback,
   recordReflection,
@@ -28,14 +27,6 @@ describe("dashboard state", () => {
     expect(state.issues["gh-18"].overrides.requirements).toBe("approved");
     expect(state.issues["gh-18"].overrides.spec).toBe("ready");
     expect(state.issues["gh-18"].overrides["adversarial-review"]).toBe("needs-redo");
-  });
-
-  it("keeps GitHub spec approval local-only", () => {
-    const state = { issues: {} };
-    applyApproval(state, "gh-18", "approval", { approver: "tester" });
-
-    expect(state.issues["gh-18"].overrides.approval).toBe("local-approved");
-    expect(state.issues["gh-18"].overrides.implementation).toBeUndefined();
   });
 
   it("records feedback and reflection locally", () => {
@@ -62,6 +53,16 @@ describe("dashboard state", () => {
   it("builds all phases", () => {
     const phases = buildPhaseView(issueFixture, {}, {});
     expect(phases.map((phase) => phase.id)).toEqual(PHASES.map((phase) => phase.id));
+  });
+
+  it("marks implementation ready after clean spec review", () => {
+    const phases = buildPhaseView(issueFixture, {}, {
+      spec: { status: "complete", output: "# Spec" },
+      "adversarial-review": { status: "complete", output: "No blocking findings." },
+      implementation: { status: "ready", output: "Spec review is clear." },
+    });
+
+    expect(phases.find((phase) => phase.id === "implementation").status).toBe("ready");
   });
 
   it("rejects agent commands that grant tools or repo access", () => {

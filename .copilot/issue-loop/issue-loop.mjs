@@ -22,7 +22,12 @@ import {
   listOpenPRs,
 } from "./lib/github.mjs";
 import { ensureRuntimeDir, remoteBranchExists } from "./lib/git.mjs";
-import { assertArchitectReviewerDiversity, architectPrompt, runCopilot } from "./lib/copilot.mjs";
+import {
+  adversarialPrompt,
+  assertArchitectReviewerDiversity,
+  architectPrompt,
+  runCopilot,
+} from "./lib/copilot.mjs";
 import {
   critiqueRequirements,
   latestRequirementsMarker,
@@ -133,39 +138,48 @@ async function processIssue(config, issue, args) {
     return;
   }
 
-  await writeSpecScaffold(config, issue, specDir, critique);
+  const review = await writeSpecAndReview(config, issue, specDir, specPath, critique, args);
   await maybeCommentRequirements(config, issue, critique, path.join(specDir, "requirements-review.md"));
   await maybeClaim(config, issue, branch);
 
-  if (!config.dryRun && !args.dryRun) {
-    const result = await runCopilot(config, {
-      role: "architect",
-      worktree: ROOT,
-      prompt: architectPrompt(issue, path.relative(ROOT, specPath)),
-    });
-    if (result.code !== 0) throw new Error(result.stderr);
-  }
-
-  if (config.gates.requireHumanSpecApproval) {
-    const approved = await hasTrustedSpecApproval(config, issue, specPath);
-    if (!approved) {
-      const body = `${specMarker({
-        issue: issue.number,
-        status: "needs-approval",
-        path: path.relative(ROOT, specPath),
-        sha: config.dryRun ? "dry-run" : await fileSha256(specPath),
-      })}\n\nSpec created or refreshed. Add the \`${config.automationLabels.specApproved}\` label or a trusted spec-approval marker after review to allow implementation.`;
-      await maybeComment(config, issue.number, body);
+  if (review && config.gates.requireHumanOnSpecReviewQuestions !== false && specReviewNeedsHuman(review)) {
+      await maybeComment(
+        config,
+        issue.number,
+        `${specMarker({
+          issue: issue.number,
+          status: "needs-human",
+          path: path.relative(ROOT, specPath),
+          sha: await fileSha256(specPath),
+        })}\n\nSpec review raised open questions that require maintainer input before implementation.\n\n${review.slice(0, 6000)}`,
+      );
       return;
-    }
   }
 
-  console.log("Spec gate passed. Implementation phase is intentionally delegated to issue-implementer.");
+  console.log("Requirements/spec review gates passed. Implementation phase is intentionally delegated to issue-implementer.");
 }
 
 async function maybeProcessRequirementsOnly(config, issue) {
   const critique = critiqueRequirements(issue);
-  await maybeCommentRequirements(config, issue, critique);
+  if (critique.status === "clear") {
+    const specDir = path.join(ROOT, "docs/automation/specs", issueFolderName(issue));
+    const specPath = path.join(specDir, "spec.md");
+    await writeSpecAndReview(config, issue, specDir, specPath, critique, { dryRun: config.dryRun });
+    await maybeCommentRequirements(config, issue, critique, path.join(specDir, "requirements-review.md"));
+  } else {
+    await maybeCommentRequirements(config, issue, critique);
+  }
+}
+
+async function writeSpecAndReview(config, issue, specDir, specPath, critique, args) {
+  await writeSpecScaffold(config, issue, specDir, critique);
+  if (config.dryRun || args.dryRun) {
+    console.log(`[dry-run] would run architect and adversarial reviewer for issue #${issue.number}`);
+    return "";
+  }
+  await writeArchitectSpec(config, issue, specPath);
+  const reviewPath = path.join(specDir, "adversarial-review.md");
+  return writeAdversarialReview(config, issue, specPath, reviewPath);
 }
 
 async function writeSpecScaffold(config, issue, specDir, critique) {
@@ -182,6 +196,44 @@ async function writeSpecScaffold(config, issue, specDir, critique) {
   await writeIfMissing(path.join(specDir, "test-plan.md"), "# Test plan\n\nPending.\n");
   await writeIfMissing(path.join(specDir, "security-notes.md"), "# Security notes\n\nPending.\n");
   await writeIfMissing(path.join(specDir, "ux-evidence.md"), "# UX evidence\n\nPending.\n");
+}
+
+async function writeArchitectSpec(config, issue, specPath) {
+  const result = await runCopilot(config, {
+    role: "architect",
+    worktree: ROOT,
+    prompt: architectPrompt(issue, path.relative(ROOT, specPath)),
+  });
+  if (result.code !== 0) throw new Error(result.stderr);
+  await fs.writeFile(specPath, normalizeAgentMarkdown(result.stdout, "Spec"));
+}
+
+async function writeAdversarialReview(config, issue, specPath, reviewPath) {
+  const specContent = await fs.readFile(specPath, "utf8");
+  const result = await runCopilot(config, {
+    role: "adversarialReviewer",
+    worktree: ROOT,
+    prompt: adversarialPrompt(issue, path.relative(ROOT, specPath), specContent),
+  });
+  if (result.code !== 0) throw new Error(result.stderr);
+  const review = normalizeAgentMarkdown(result.stdout, "Adversarial review");
+  await fs.writeFile(reviewPath, review);
+  return review;
+}
+
+function specReviewNeedsHuman(review) {
+  const decision = String(review).match(/^SPEC_REVIEW_DECISION:\s*(proceed|needs-human)\s*$/im)?.[1];
+  if (!decision) return true;
+  if (decision === "needs-human") return true;
+  return /\b(needs[-\s]?human|requires human|open question|cannot proceed|blocked)\b/i.test(
+    review,
+  );
+}
+
+function normalizeAgentMarkdown(text, fallbackTitle) {
+  const trimmed = String(text ?? "").trim();
+  if (!trimmed) return `# ${fallbackTitle}\n\nNo content returned.\n`;
+  return trimmed.startsWith("#") ? `${trimmed}\n` : `# ${fallbackTitle}\n\n${trimmed}\n`;
 }
 
 async function writeIfMissing(file, content) {

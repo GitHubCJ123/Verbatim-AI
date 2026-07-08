@@ -15,7 +15,7 @@ describe("issue loop config", () => {
     expect(modelFamily("gemini-3.1-pro")).toBe("google");
   });
 
-  it("keeps all-open requirements triage disabled by default", () => {
-    expect(DEFAULT_CONFIG.triageAllOpenIssues).toBe(false);
+  it("triages all open issues for requirements clarity by default", () => {
+    expect(DEFAULT_CONFIG.triageAllOpenIssues).toBe(true);
   });
 });

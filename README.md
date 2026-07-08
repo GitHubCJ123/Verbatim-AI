@@ -108,7 +108,7 @@ To trigger it:
 4. Run `pnpm automation:issues -- --once --config .copilot/issue-loop/config.local.json`.
 5. If the dry run is correct, set `dryRun: false` and run the same command, or use `--watch` for continuous polling.
 
-The loop first critiques requirements and creates a repo-tracked spec in `docs/automation/specs/`. Implementation does not start until the spec is approved by a trusted, hash-bound approval marker. Any PR it opens starts as a draft, must pass verification, and still requires human review/merge.
+The loop first critiques requirements and creates a repo-tracked spec in `docs/automation/specs/`. Clear requirements and clear spec review can move forward automatically; human input is requested only when review raises open questions. Any PR it opens starts as a draft, must pass agent PR review, verification, and screenshot requirements, and still requires human review/merge.
 
 For a visual workflow, run `pnpm automation:dashboard` and open the printed localhost URL. The dashboard shows real open issues, requirements critique status, phase approvals, feedback, and self-reflection without writing to GitHub by default. There is no demo issue; use a real issue and the `automate` label when you want implementation to become eligible.
 

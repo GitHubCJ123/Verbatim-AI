@@ -80,11 +80,12 @@ To approve implementation, add a trusted `spec-approval` marker bound to the spe
 2. **Requirements critique**: all open issues can receive a requirements critique marker. Clear requirements proceed to spec drafting; ambiguous requirements ask for human input.
 3. **Spec**: create or refresh `docs/automation/specs/issue-<number>-<slug>/`.
 4. **Adversarial review**: use a different model family than the architect.
-5. **Human spec gate**: require a trusted `spec-approval` marker bound to the current spec path and SHA-256 hash. A label alone is never enough.
+5. **Spec review gate**: continue automatically if the adversarial review has no open questions; ask for human input only when it raises blockers/questions.
 6. **Implementation**: isolated worktree, deterministic branch, draft PR.
-7. **Verification**: run configured commands, redact logs, require UX screenshots for UI changes.
-8. **Finalization**: mark ready for review and request configured reviewers only after current-head verification passes.
-9. **Merge**: human only.
+7. **Agent PR review**: an agent reviewer critiques the PR and iterates with the developer agent until no blocking findings remain.
+8. **Verification**: run configured commands, redact logs, require UX screenshots for UI changes.
+9. **Finalization**: mark ready for human review and request configured reviewers only after current-head verification passes.
+10. **Human PR review/merge**: human only.
 
 ## Trigger options
 
@@ -133,7 +134,7 @@ Approval markers are intentionally bound to a specific spec path and content has
 <!-- verbatim-ai:spec-approval:v1 issue=3 approvedBy=@maintainer path=docs/automation/specs/issue-0003-demo/spec.md sha=<sha256> -->
 ```
 
-The loop verifies the comment author has write, maintain, or admin permission on the repository, or is listed in `trustedApprovers`. It ignores labels by themselves and ignores markers whose `issue`, `path`, or `sha` does not match the current spec.
+The next human gate is PR review. The old spec-approval marker format is still documented for manual override workflows, but the default loop only blocks before implementation when the adversarial spec review raises open questions or concerns requiring maintainer input.
 
 ## Requirements critique markers
 
@@ -143,7 +144,7 @@ Requirements critique markers are idempotent and bound to the current issue titl
 <!-- verbatim-ai:requirements:v1 issue=18 status=clear issueInputSha=<sha256> artifactSha=<sha256> -->
 ```
 
-If the critique is `clear`, the loop may proceed to spec drafting without a human requirements gate. Implementation is still blocked until spec review and trusted spec approval complete.
+If the critique is `clear`, the loop may proceed to spec drafting without a human requirements gate. If the adversarial spec review is clear, implementation may proceed automatically to a draft PR. Human review happens at the PR stage after agent PR review, verification, and required screenshots.
 
 The architect and adversarial reviewer run in read-only mode by default. Issue text is wrapped as untrusted input, and the driver writes only controlled spec scaffold files under `docs/automation/specs/`.
 

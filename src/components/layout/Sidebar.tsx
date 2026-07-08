@@ -1,17 +1,10 @@
 import { NavLink } from "react-router-dom";
-import {
-  Home,
-  Layers,
-  BookText,
-  History,
-  Settings,
-  CircleUser,
-  Search,
-} from "lucide-react";
+import { Home, Layers, BookText, History, Settings, CircleUser, Search } from "lucide-react";
 import { openCommandPalette } from "../CommandPalette";
 import { cn } from "../../lib/utils";
 import { useAuth } from "../../lib/store/useAuth";
 import { isLocalMode } from "../../lib/appMode";
+import { CLOUD_FEATURES_ENABLED } from "../../lib/features";
 import { useProfile } from "../../lib/store/useProfile";
 import { FeedbackDialog } from "../feedback/FeedbackDialog";
 
@@ -24,11 +17,17 @@ const navItems = [
   { to: "/account", label: "Account", icon: CircleUser },
 ];
 
+// The Account page is a cloud/account-sync surface — hide it while cloud
+// features are disabled (issue #21).
+const visibleNavItems = navItems.filter((item) => CLOUD_FEATURES_ENABLED || item.to !== "/account");
+
 export function Sidebar() {
   const user = useAuth((s) => s.user);
   const profile = useProfile((s) => s.profile);
   const local = isLocalMode();
-  const name = local ? "Local mode" : profile?.display_name || user?.email?.split("@")[0] || "Signed in";
+  const name = local
+    ? "Local mode"
+    : profile?.display_name || user?.email?.split("@")[0] || "Signed in";
   const sub = local ? "No account" : (user?.email ?? "—");
   return (
     <aside className="flex h-full w-48 shrink-0 flex-col gap-4 border-r border-border-subtle bg-bg-base/60 px-3 py-4 backdrop-blur-xl">
@@ -53,7 +52,7 @@ export function Sidebar() {
 
       {/* Nav */}
       <nav className="flex flex-1 flex-col gap-0.5">
-        {navItems.map((item) => (
+        {visibleNavItems.map((item) => (
           <NavLink
             key={item.to}
             to={item.to}

@@ -19,6 +19,7 @@ import { hydrateAll, clearAllCaches, loadModes, useModes } from "./lib/store/use
 import { useAppMappings } from "./lib/store/useAppMappings";
 import { useProfile } from "./lib/store/useProfile";
 import { getAppMode } from "./lib/appMode";
+import { CLOUD_FEATURES_ENABLED } from "./lib/features";
 import { isMigrationPending } from "./lib/migration";
 import { pruneExpiredTranscriptions } from "./lib/history";
 import MigrationPicker from "./routes/MigrationPicker";
@@ -76,10 +77,13 @@ function hasExistingCloudConfig(): boolean {
 const router = createMemoryRouter(
   [
     { path: "/picker", element: <ModePicker /> },
-    { path: "/auth", element: <AuthGate /> },
+    {
+      path: "/auth",
+      element: CLOUD_FEATURES_ENABLED ? <AuthGate /> : <Navigate to="/" replace />,
+    },
     {
       path: "/migrate",
-      element: (
+      element: CLOUD_FEATURES_ENABLED ? (
         <MigrationPicker
           onDone={() =>
             router.navigate(onboardingDestination(hasExistingCloudConfig()), {
@@ -87,6 +91,8 @@ const router = createMemoryRouter(
             })
           }
         />
+      ) : (
+        <Navigate to="/" replace />
       ),
     },
     { path: "/onboarding", element: <Onboarding /> },
@@ -101,7 +107,10 @@ const router = createMemoryRouter(
         { path: "vocabulary", element: <Vocabulary /> },
         { path: "history", element: <History /> },
         { path: "settings", element: <Settings /> },
-        { path: "account", element: <Account /> },
+        {
+          path: "account",
+          element: CLOUD_FEATURES_ENABLED ? <Account /> : <Navigate to="/" replace />,
+        },
       ],
     },
     { path: "*", element: <Navigate to="/" replace /> },

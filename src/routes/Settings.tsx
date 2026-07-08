@@ -20,6 +20,7 @@ import {
 import { HotkeyRecorder } from "../components/settings/HotkeyRecorder";
 import { applyHotkey, isMacSingleKeySpec, loadHotkeyConfig, saveHotkeyConfig } from "../lib/hotkey";
 import { isAutostartEnabled, setAutostart } from "../lib/preferences";
+import { CLOUD_FEATURES_ENABLED } from "../lib/features";
 import { useOnboarding } from "../lib/store/useOnboarding";
 import {
   testTranscriptionProvider,
@@ -960,14 +961,20 @@ function ModelTab() {
           <SettingRow
             id="transcription-provider"
             title="Transcription engine"
-            description="Where speech-to-text runs. Cloud is the default. Local engines keep audio on this machine once a model is downloaded."
+            description={
+              CLOUD_FEATURES_ENABLED
+                ? "Where speech-to-text runs. Cloud is the default. Local engines keep audio on this machine once a model is downloaded."
+                : "Where speech-to-text runs. Whisper and Parakeet keep audio on this machine once a model is downloaded."
+            }
           >
             <Select value={kind} onValueChange={(v) => handleProviderChange(v as AiProviderKind)}>
               <SelectTrigger className="w-56">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="cloud">Cloud — Azure Whisper</SelectItem>
+                {CLOUD_FEATURES_ENABLED && (
+                  <SelectItem value="cloud">Cloud — Azure Whisper</SelectItem>
+                )}
                 <SelectItem value="local-whisper">Local — Whisper</SelectItem>
                 <SelectItem value="local-parakeet">Local — Parakeet</SelectItem>
               </SelectContent>
@@ -1594,7 +1601,7 @@ function CleanupSection() {
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="cloud">Cloud — Azure GPT</SelectItem>
+              {CLOUD_FEATURES_ENABLED && <SelectItem value="cloud">Cloud — Azure GPT</SelectItem>}
               <SelectItem value="local-ollama">Local — Ollama</SelectItem>
               <SelectItem value="local-llama-cpp">Local — llama.cpp</SelectItem>
               <SelectItem value="none">None — raw transcript</SelectItem>

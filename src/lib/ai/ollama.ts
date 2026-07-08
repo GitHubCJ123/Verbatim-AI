@@ -14,6 +14,7 @@
  * it isn't subject to that policy.
  */
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
+import { CLOUD_FEATURES_ENABLED } from "../features";
 
 // Ollama enforces a CORS-style origin allowlist (OLLAMA_ORIGINS).
 // In production our webview origin is `https://tauri.localhost`, which
@@ -65,10 +66,25 @@ export type CleanupProviderKind = "cloud" | "local-ollama" | "local-llama-cpp";
 export function getCleanupProviderKind(): CleanupProviderKind {
   const v = localStorage.getItem(LS_CLEANUP_PROVIDER);
   if (v === "local-ollama" || v === "local-llama-cpp") return v;
-  return "cloud";
+  if (v === "cloud" && CLOUD_FEATURES_ENABLED) return "cloud";
+  // Default / cloud-disabled fallback. A stored "cloud" is preserved but
+  // resolves to local Ollama while the flag is off.
+  return CLOUD_FEATURES_ENABLED ? "cloud" : "local-ollama";
 }
 export function setCleanupProviderKind(v: CleanupProviderKind): void {
+  // Never persist a cloud selection while cloud is disabled; keep any
+  // existing stored value intact (non-destructive no-op).
+  if (v === "cloud" && !CLOUD_FEATURES_ENABLED) return;
   localStorage.setItem(LS_CLEANUP_PROVIDER, v);
+}
+
+/**
+ * Effective cleanup engine for an already-resolved kind (global setting
+ * or per-Mode override). Coerces "cloud" → local while cloud is disabled.
+ * Shared by provider resolution (ai/index.ts) and the privacy indicator.
+ */
+export function effectiveCleanupKind(kind: CleanupProviderKind): CleanupProviderKind {
+  return !CLOUD_FEATURES_ENABLED && kind === "cloud" ? "local-ollama" : kind;
 }
 
 export function getOllamaHost(): string {

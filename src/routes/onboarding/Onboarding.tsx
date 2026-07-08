@@ -60,6 +60,7 @@ import {
 import { cn } from "../../lib/utils";
 import { useAuth } from "../../lib/store/useAuth";
 import { isLocalMode } from "../../lib/appMode";
+import { CLOUD_FEATURES_ENABLED } from "../../lib/features";
 import { toast } from "../../components/ui/Toast";
 import { useVocabulary } from "../../lib/store/useModes";
 import {
@@ -933,7 +934,11 @@ function AIStep() {
     <div>
       <StepHeading
         title="Pick your AI"
-        subtitle="Verbatim AI uses two models: one to transcribe your speech, one to polish the text. Both can run in the cloud or fully on this machine."
+        subtitle={
+          CLOUD_FEATURES_ENABLED
+            ? "Verbatim AI uses two models: one to transcribe your speech, one to polish the text. Both can run in the cloud or fully on this machine."
+            : "Verbatim AI uses two models: one to transcribe your speech, one to polish the text. Both run fully on this machine."
+        }
       />
       <Card className="mt-6">
         <CardContent className="flex items-start gap-3 p-4">
@@ -941,9 +946,10 @@ function AIStep() {
             <ShieldCheck className="h-4 w-4" />
           </span>
           <div className="text-xs leading-relaxed text-text-secondary">
-            <span className="font-medium text-text-primary">Privacy:</span> cloud mode sends audio
-            to our Azure endpoint just long enough to transcribe — we never store the raw recording.
-            Local mode keeps everything on your computer, even when you're offline.
+            <span className="font-medium text-text-primary">Privacy:</span>{" "}
+            {CLOUD_FEATURES_ENABLED
+              ? "cloud mode sends audio to our Azure endpoint just long enough to transcribe — we never store the raw recording. Local mode keeps everything on your computer, even when you're offline."
+              : "everything runs on your computer, even when you're offline. Your audio never leaves this machine."}
           </div>
         </CardContent>
       </Card>
@@ -952,54 +958,56 @@ function AIStep() {
         Transcription
       </div>
       <div className="mt-2 flex flex-col gap-2">
-        {PROVIDER_OPTIONS.map((opt) => {
-          const selected = kind === opt.kind;
-          return (
-            <button
-              key={opt.kind}
-              type="button"
-              onClick={() => choose(opt.kind)}
-              className={cn(
-                "flex items-start gap-3 rounded-md border px-4 py-3 text-left transition-all",
-                selected
-                  ? "border-accent-solid/60 bg-accent-solid/10"
-                  : "border-border-subtle bg-bg-elevated hover:border-border-strong",
-              )}
-            >
-              <span
+        {PROVIDER_OPTIONS.filter((opt) => CLOUD_FEATURES_ENABLED || opt.kind !== "cloud").map(
+          (opt) => {
+            const selected = kind === opt.kind;
+            return (
+              <button
+                key={opt.kind}
+                type="button"
+                onClick={() => choose(opt.kind)}
                 className={cn(
-                  "flex h-9 w-9 shrink-0 items-center justify-center rounded-md",
+                  "flex items-start gap-3 rounded-md border px-4 py-3 text-left transition-all",
                   selected
-                    ? "bg-accent-solid/20 text-accent-solid"
-                    : "bg-bg-base text-text-secondary",
+                    ? "border-accent-solid/60 bg-accent-solid/10"
+                    : "border-border-subtle bg-bg-elevated hover:border-border-strong",
                 )}
               >
-                <opt.Icon className="h-4 w-4" />
-              </span>
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2">
-                  <div className="text-sm font-medium">{opt.title}</div>
-                  <div className="text-[11px] text-text-muted">{opt.subtitle}</div>
+                <span
+                  className={cn(
+                    "flex h-9 w-9 shrink-0 items-center justify-center rounded-md",
+                    selected
+                      ? "bg-accent-solid/20 text-accent-solid"
+                      : "bg-bg-base text-text-secondary",
+                  )}
+                >
+                  <opt.Icon className="h-4 w-4" />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <div className="text-sm font-medium">{opt.title}</div>
+                    <div className="text-[11px] text-text-muted">{opt.subtitle}</div>
+                  </div>
+                  <ul className="mt-1 flex flex-col gap-0.5 text-[11px] text-text-muted">
+                    {opt.bullets.map((b) => (
+                      <li key={b}>• {b}</li>
+                    ))}
+                  </ul>
                 </div>
-                <ul className="mt-1 flex flex-col gap-0.5 text-[11px] text-text-muted">
-                  {opt.bullets.map((b) => (
-                    <li key={b}>• {b}</li>
-                  ))}
-                </ul>
-              </div>
-              <span
-                className={cn(
-                  "mt-1 flex h-4 w-4 shrink-0 items-center justify-center rounded-pill border",
-                  selected
-                    ? "border-transparent bg-accent-solid text-white"
-                    : "border-border-strong",
-                )}
-              >
-                {selected && <Check className="h-3 w-3" strokeWidth={3} />}
-              </span>
-            </button>
-          );
-        })}
+                <span
+                  className={cn(
+                    "mt-1 flex h-4 w-4 shrink-0 items-center justify-center rounded-pill border",
+                    selected
+                      ? "border-transparent bg-accent-solid text-white"
+                      : "border-border-strong",
+                  )}
+                >
+                  {selected && <Check className="h-3 w-3" strokeWidth={3} />}
+                </span>
+              </button>
+            );
+          },
+        )}
       </div>
 
       {kind === "local-whisper" && <LocalWhisperInstaller />}
@@ -1015,9 +1023,10 @@ function AIStep() {
           </span>
           <div className="text-xs leading-relaxed text-text-secondary">
             After transcription, a language model rewrites the raw text using the active Mode —
-            fixing grammar, removing fillers, and shaping the tone. Cloud uses Azure GPT and is
-            fastest. Local uses your own Ollama install so the polish step also stays on your
-            machine.
+            fixing grammar, removing fillers, and shaping the tone.{" "}
+            {CLOUD_FEATURES_ENABLED
+              ? "Cloud uses Azure GPT and is fastest. Local uses your own Ollama install so the polish step also stays on your machine."
+              : "It runs on your own Ollama or llama.cpp install, so the polish step also stays on your machine. Choose None to paste the raw transcript."}
           </div>
         </CardContent>
       </Card>
@@ -1040,7 +1049,7 @@ function AIStep() {
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="cloud">Cloud (Azure)</SelectItem>
+              {CLOUD_FEATURES_ENABLED && <SelectItem value="cloud">Cloud (Azure)</SelectItem>}
               <SelectItem value="local-ollama">Local Ollama</SelectItem>
               <SelectItem value="local-llama-cpp">Local llama.cpp</SelectItem>
               <SelectItem value="none">None — raw text</SelectItem>

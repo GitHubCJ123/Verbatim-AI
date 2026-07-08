@@ -28,6 +28,16 @@ struct HotkeyPayload<'a> {
 }
 
 pub fn handle_event<R: Runtime>(app: &AppHandle<R>, shortcut: &Shortcut, event: ShortcutEvent) {
+    // The cancel shortcut (Escape) is armed only while recording. Route
+    // its press to `hotkey:cancel` and never emit down/up for it, so the
+    // recording pipeline can discard the in-progress dictation.
+    if super::cancel_hotkey::matches(app, shortcut) {
+        if let ShortcutState::Pressed = event.state() {
+            let _ = app.emit("hotkey:cancel", ());
+        }
+        return;
+    }
+
     let spec = shortcut.into_string();
     match event.state() {
         ShortcutState::Pressed => {
@@ -54,10 +64,11 @@ pub fn set_hotkey<R: Runtime>(
 ) -> Result<(), String> {
     let manager = app.global_shortcut();
 
-    // Sentinel: the macOS fn key can't be a plugin shortcut — it's
-    // handled by a flags-changed event tap (commands/fn_hotkey.rs).
-    if spec == super::fn_hotkey::FN_SPEC {
-        super::fn_hotkey::start(app.clone(), &fn_state)?;
+    // Sentinel: the macOS fn key and bare Right ⌘ can't be plugin
+    // shortcuts — they're hardware modifiers handled by a flags-changed
+    // event tap (commands/fn_hotkey.rs).
+    if let Some(trigger) = super::fn_hotkey::trigger_for_spec(&spec) {
+        super::fn_hotkey::start(app.clone(), &fn_state, trigger)?;
         // The tap owns the hotkey now; release any plugin registration.
         let mut current = state.current.lock().map_err(|e| e.to_string())?;
         if let Some(prev) = current.take() {
@@ -65,7 +76,8 @@ pub fn set_hotkey<R: Runtime>(
         }
         return Ok(());
     }
-    // Switching from fn back to a normal shortcut tears the tap down.
+    // Switching from a modifier trigger back to a normal shortcut tears
+    // the tap down.
     super::fn_hotkey::stop(&fn_state);
 
     let parsed = Shortcut::from_str(&spec).map_err(|e| format!("Invalid shortcut: {e}"))?;

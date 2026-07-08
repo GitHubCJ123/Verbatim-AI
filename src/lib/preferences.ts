@@ -27,6 +27,7 @@ const LS_SILERO_VAD = "sw.vad.silero";
 const LS_FILLER_FILTER = "sw.postproc.fillerFilter";
 const LS_FUZZY_VOCAB = "sw.postproc.fuzzyVocab";
 const LS_LIVE_PARTIAL = "sw.transcribe.livePartial";
+const LS_TRUE_STREAMING = "sw.transcribe.trueStreaming";
 const LS_NATIVE_CAPTURE = "sw.audio.nativeCapture";
 
 export type OverlayPosition =
@@ -198,6 +199,26 @@ export function isLivePartialEnabled(): boolean {
 
 export function setLivePartialEnabled(v: boolean): void {
   localStorage.setItem(LS_LIVE_PARTIAL, v ? "1" : "0");
+}
+
+/**
+ * True token-level streaming via a dedicated streaming sidecar
+ * (docs/proposals/streaming-sidecar.md, issue #33).
+ *
+ * **Default off.** When on *and* the streaming sidecar binary is bundled for
+ * the active runtime variant, the overlay streams live 16 kHz PCM frames to the
+ * sidecar and paints its token-level partials into the live preview — superseding
+ * the chunked `livePartial` preview. If the sidecar is missing (the binary is a
+ * deferred CI build piece) or a session fails to start, the overlay gracefully
+ * falls back to the chunked path. The final stop→transcribe pipeline is never
+ * affected either way.
+ */
+export function isTrueStreamingEnabled(): boolean {
+  return localStorage.getItem(LS_TRUE_STREAMING) === "1";
+}
+
+export function setTrueStreamingEnabled(v: boolean): void {
+  localStorage.setItem(LS_TRUE_STREAMING, v ? "1" : "0");
 }
 
 /**

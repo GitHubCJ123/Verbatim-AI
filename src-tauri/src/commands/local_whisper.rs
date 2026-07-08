@@ -351,6 +351,108 @@ pub(crate) fn whisper_server_available(app: &AppHandle, preference: Option<&str>
         .is_some()
 }
 
+// --- Streaming sidecar support (issue #33) ---------------------------------
+// True token-level streaming needs a streaming-capable engine fed by the app's
+// own 16 kHz PCM frames (see docs/proposals/streaming-sidecar.md). The chosen
+// design is a headless `whisper-stream` binary (no SDL2/mic): it reads
+// length-prefixed f32 frames on stdin and emits line-delimited JSON partials on
+// stdout. It is discovered from the exact same per-variant runtime layout as
+// `whisper-cli` / `whisper-server`. The binary itself is a deferred CI build
+// piece; until it is bundled, `streaming_sidecar_available` returns false and
+// the app falls back to the existing chunked path.
+
+fn whisper_stream_name() -> &'static str {
+    #[cfg(windows)]
+    {
+        "whisper-stream.exe"
+    }
+    #[cfg(not(windows))]
+    {
+        "whisper-stream"
+    }
+}
+
+fn locate_whisper_stream_in_dir(dir: &Path) -> Option<PathBuf> {
+    let target = whisper_stream_name();
+    fn walk(dir: &Path, target: &str) -> Option<PathBuf> {
+        let entries = std::fs::read_dir(dir).ok()?;
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_file() {
+                if p.file_name().and_then(|n| n.to_str()) == Some(target) {
+                    return Some(p);
+                }
+            } else if p.is_dir() {
+                if let Some(found) = walk(&p, target) {
+                    return Some(found);
+                }
+            }
+        }
+        None
+    }
+    walk(dir, target)
+}
+
+fn locate_whisper_stream_for_variant(
+    app: &AppHandle,
+    variant: WhisperRuntimeVariant,
+) -> Result<Option<PathBuf>, String> {
+    let dir = variant_bin_dir(app, variant)?;
+    Ok(locate_whisper_stream_in_dir(&dir))
+}
+
+/// Everything the streaming sidecar manager needs to launch the sidecar.
+#[derive(Clone)]
+pub(crate) struct StreamingSidecarLaunch {
+    pub model_path: PathBuf,
+    pub sidecar_bin: PathBuf,
+    /// GPU-variant label ("cpu" | "vulkan" | "cuda" | "metal").
+    pub variant_label: &'static str,
+    /// Pass `-fa` (flash attention) for CUDA/Metal, mirroring the CLI path.
+    pub flash_attn: bool,
+}
+
+/// Resolve the model path, `whisper-stream` binary, and GPU variant for a tier,
+/// or a user-facing error if the model / sidecar is missing.
+pub(crate) fn resolve_streaming_sidecar_launch(
+    app: &AppHandle,
+    tier: &str,
+    compute_preference: Option<&str>,
+) -> Result<StreamingSidecarLaunch, String> {
+    let model_path = resolve_model_path(app, tier)?;
+    if !model_path.exists() {
+        return Err(format!(
+            "Model '{tier}' is not downloaded yet. Download it from Settings → AI model."
+        ));
+    }
+    let variant = resolve_runtime_variant(compute_preference);
+    let sidecar_bin = locate_whisper_stream_for_variant(app, variant)?.ok_or_else(|| {
+        format!(
+            "streaming sidecar ({}) is not installed.",
+            variant.as_str()
+        )
+    })?;
+    Ok(StreamingSidecarLaunch {
+        model_path,
+        sidecar_bin,
+        variant_label: variant.as_str(),
+        flash_attn: matches!(
+            variant,
+            WhisperRuntimeVariant::Cuda | WhisperRuntimeVariant::Metal
+        ),
+    })
+}
+
+/// Cheap check: is a `whisper-stream` sidecar present for the resolved variant?
+/// Does not require the model to be downloaded (unlike the launch resolver).
+pub(crate) fn streaming_sidecar_available(app: &AppHandle, preference: Option<&str>) -> bool {
+    let variant = resolve_runtime_variant(preference);
+    locate_whisper_stream_for_variant(app, variant)
+        .ok()
+        .flatten()
+        .is_some()
+}
+
 /// Recursive list of every file under `root`. Used to chmod whisper-cli
 /// + dylibs after extraction (zip drops the executable bit).
 #[cfg(unix)]

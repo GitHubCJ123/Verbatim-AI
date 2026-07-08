@@ -27,6 +27,11 @@ import {
 } from "../lib/vad/speechModel";
 import { PartialSegmenter, type PartialTranscriptionPayload } from "../lib/transcribe/segmenter";
 import { TranscriptionCoordinator } from "../lib/transcribe/coordinator";
+import {
+  StreamingTranscriber,
+  isStreamingSidecarAvailable,
+} from "../lib/transcribe/streamingClient";
+import { getLocalWhisperTier, getWhisperComputePreference } from "../lib/ai/localWhisper";
 import { mergeRollingPartialText } from "../lib/transcribe/textMerge";
 import type { RecordingState } from "../lib/store/useRecording";
 import { getActiveProvider } from "../lib/ai";
@@ -47,6 +52,7 @@ import {
   isFillerFilterEnabled,
   isFuzzyVocabEnabled,
   isLivePartialEnabled,
+  isTrueStreamingEnabled,
 } from "../lib/preferences";
 import { applyInlinePostProcessing } from "../lib/postProcess";
 import { getPrivacyStatus, type DataLocality } from "../lib/privacyStatus";
@@ -88,6 +94,7 @@ export default function Overlay() {
   const partialCoordinatorRef = useRef<
     TranscriptionCoordinator<PartialTranscriptionPayload, string> | null
   >(null);
+  const streamingRef = useRef<StreamingTranscriber | null>(null);
   const partialTextRef = useRef("");
   // Monotonic recording session id — guards stale live-partial results
   // from a previous recording landing in the current UI.
@@ -130,6 +137,55 @@ export default function Overlay() {
     partialSegmenterRef.current = null;
     partialCoordinatorRef.current?.dispose();
     partialCoordinatorRef.current = null;
+    if (streamingRef.current) {
+      // Terminate the streaming sidecar session (best-effort, async).
+      void streamingRef.current.dispose();
+      streamingRef.current = null;
+    }
+  };
+
+  /**
+   * True token-level streaming (issue #33, opt-in, default off). Streams live
+   * 16 kHz PCM frames to a dedicated streaming sidecar and paints its
+   * token-level partials into `partialText`. Supersedes the chunked
+   * live-partial preview when active. Returns true if streaming was wired;
+   * false (with no side effects) if unavailable, so the caller falls back to
+   * the chunked path. The final stop→transcribe pipeline is never affected.
+   */
+  const setupTrueStreaming = async (
+    sinks: Array<(frame: Float32Array) => void>,
+  ): Promise<boolean> => {
+    const session = sessionRef.current;
+    const compute = getWhisperComputePreference();
+    try {
+      const available = await isStreamingSidecarAvailable(compute);
+      // A stop/cancel may have superseded this recording during the probe.
+      if (!available || sessionRef.current !== session) return false;
+
+      const transcriber = new StreamingTranscriber({
+        tier: getLocalWhisperTier(),
+        computePreference: compute,
+        onPartial: (partial) => {
+          if (sessionRef.current !== session) return;
+          const trimmed = partial.text.trim();
+          if (!trimmed) return;
+          partialTextRef.current = trimmed;
+          setPartialText(trimmed);
+        },
+      });
+      await transcriber.start();
+      if (sessionRef.current !== session) {
+        void transcriber.dispose();
+        return false;
+      }
+      streamingRef.current = transcriber;
+      sinks.push((frame) => transcriber.push(frame));
+      return true;
+    } catch (e) {
+      // Sidecar missing / failed to start — fall back to the chunked path.
+      if (import.meta.env.DEV) console.warn("[Verbatim AI] true streaming unavailable:", e);
+      return false;
+    }
   };
 
   /**
@@ -199,6 +255,7 @@ export default function Overlay() {
       autoStopRef.current = null;
       partialSegmenterRef.current = null;
       partialCoordinatorRef.current = null;
+      streamingRef.current = null;
       const sinks: Array<(frame: Float32Array) => void> = [];
 
       // Hands-free auto-stop (opt-in): feed live frames to a VAD
@@ -218,13 +275,16 @@ export default function Overlay() {
         sinks.push((frame) => detector.push(frame));
       }
 
-      // Live partial (chunked pseudo-streaming, Phase 6 / issue #23 P2.6,
-      // opt-in). A segmenter re-transcribes full-context / rolling-window
-      // chunks on VAD boundaries or a fixed cadence; a coordinator
-      // serializes overlapping requests. The final stop→transcribe path is
-      // untouched and replaces the partial. Best-effort: failures are
-      // swallowed.
-      if (isLivePartialEnabled()) {
+      // Live preview engines (opt-in). True token-level streaming (#33)
+      // supersedes the chunked pseudo-streaming preview when enabled and its
+      // sidecar is available; otherwise we fall back to the chunked path.
+      // Both are best-effort previews — the final stop→transcribe pipeline is
+      // authoritative and untouched.
+      let previewWired = false;
+      if (isTrueStreamingEnabled()) {
+        previewWired = await setupTrueStreaming(sinks);
+      }
+      if (!previewWired && isLivePartialEnabled()) {
         setupLivePartial(modeRef.current, sinks);
       }
 

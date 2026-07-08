@@ -183,6 +183,96 @@ fn locate_legacy_whisper_cli(app: &AppHandle) -> Result<Option<PathBuf>, String>
     Ok(locate_whisper_cli_in_dir(&dir))
 }
 
+// --- Persistent whisper-server support (issue #23, P0) ---------------------
+// Clean-room reimplementation of the "warm resident model" behaviour: instead
+// of spawning `whisper-cli` per utterance (cold model load each time), we run
+// the official `whisper-server` binary once and keep the model resident. These
+// helpers resolve the model + server binary + GPU variant, reusing the exact
+// same runtime layout as the CLI path. No code is copied from any other project.
+
+fn whisper_server_name() -> &'static str {
+    #[cfg(windows)]
+    {
+        "whisper-server.exe"
+    }
+    #[cfg(not(windows))]
+    {
+        "whisper-server"
+    }
+}
+
+fn locate_whisper_server_in_dir(dir: &Path) -> Option<PathBuf> {
+    let target = whisper_server_name();
+    fn walk(dir: &Path, target: &str) -> Option<PathBuf> {
+        let entries = std::fs::read_dir(dir).ok()?;
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_file() {
+                if p.file_name().and_then(|n| n.to_str()) == Some(target) {
+                    return Some(p);
+                }
+            } else if p.is_dir() {
+                if let Some(found) = walk(&p, target) {
+                    return Some(found);
+                }
+            }
+        }
+        None
+    }
+    walk(dir, target)
+}
+
+fn locate_whisper_server_for_variant(
+    app: &AppHandle,
+    variant: WhisperRuntimeVariant,
+) -> Result<Option<PathBuf>, String> {
+    let dir = variant_bin_dir(app, variant)?;
+    Ok(locate_whisper_server_in_dir(&dir))
+}
+
+/// Everything the persistent whisper-server manager needs to launch a server.
+pub(crate) struct WhisperServerLaunch {
+    pub model_path: PathBuf,
+    pub server_bin: PathBuf,
+    /// GPU-variant label ("cpu" | "vulkan" | "cuda" | "metal"), part of the
+    /// warm-server cache key so a variant change forces a respawn.
+    pub variant_label: &'static str,
+    /// Pass `-fa` (flash attention) for CUDA/Metal, mirroring `run_whisper_cli`.
+    pub flash_attn: bool,
+}
+
+/// Resolve the model path, `whisper-server` binary, and GPU variant for a tier,
+/// or a user-facing error if the model / runtime is missing.
+pub(crate) fn resolve_whisper_server_launch(
+    app: &AppHandle,
+    tier: &str,
+    compute_preference: Option<&str>,
+) -> Result<WhisperServerLaunch, String> {
+    let t = WhisperTier::from_str(tier).ok_or_else(|| format!("unknown tier: {tier}"))?;
+    let model_path = models_dir(app)?.join(t.file_name());
+    if !model_path.exists() {
+        return Err(format!(
+            "Model '{tier}' is not downloaded yet. Download it from Settings → AI model."
+        ));
+    }
+    let variant = resolve_runtime_variant(compute_preference);
+    let server_bin = locate_whisper_server_for_variant(app, variant)?.ok_or_else(|| {
+        format!(
+            "whisper-server ({}) is not installed. Update the Whisper runtime in Settings → AI model.",
+            variant.as_str()
+        )
+    })?;
+    Ok(WhisperServerLaunch {
+        model_path,
+        server_bin,
+        variant_label: variant.as_str(),
+        flash_attn: matches!(
+            variant,
+            WhisperRuntimeVariant::Cuda | WhisperRuntimeVariant::Metal
+        ),
+    })
+}
+
 /// Recursive list of every file under `root`. Used to chmod whisper-cli
 /// + dylibs after extraction (zip drops the executable bit).
 #[cfg(unix)]
@@ -731,15 +821,31 @@ pub struct TranscribeArgs {
 
 #[derive(Serialize)]
 pub struct TranscribeOutput {
-    text: String,
-    language_detected: String,
-    duration_ms: u64,
+    pub(crate) text: String,
+    pub(crate) language_detected: String,
+    pub(crate) duration_ms: u64,
 }
 
 struct WhisperRunError {
     message: String,
     stderr: String,
     code: Option<i32>,
+}
+
+/// Write 16 kHz mono f32 PCM to a fresh temp WAV under `whisper-tmp` and return
+/// its path. Shared by the CLI path and the persistent whisper-server path.
+pub(crate) fn write_pcm_wav(app: &AppHandle, samples: &[f32]) -> Result<PathBuf, String> {
+    let tmp_dir = app_data(app)?.join("whisper-tmp");
+    std::fs::create_dir_all(&tmp_dir).map_err(|e| e.to_string())?;
+    let wav_path = tmp_dir.join(format!(
+        "rec-{}.wav",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0)
+    ));
+    write_wav(&wav_path, samples)?;
+    Ok(wav_path)
 }
 
 fn write_wav(path: &Path, samples: &[f32]) -> Result<(), String> {

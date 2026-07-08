@@ -28,9 +28,9 @@ serde_json = "1"
 # Local Whisper transcription via whisper.cpp sidecar binary.
 # We download the official prebuilt whisper-cli executable + GGML model
 # files into the app data dir, and shell out to it per transcription.
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "multipart"] }
 futures-util = "0.3"
-tokio = { version = "1", features = ["fs", "io-util", "sync", "macros", "process"] }
+tokio = { version = "1", features = ["fs", "io-util", "sync", "macros", "process", "time"] }
 zip = { version = "2", default-features = false, features = ["deflate"] }
 
 # Parakeet transcription via sherpa-onnx CPU sidecar (Windows x64 + macOS arm64).

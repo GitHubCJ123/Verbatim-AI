@@ -25,6 +25,9 @@ use commands::{
     },
     process_list::list_running_apps,
     relay::relay_event,
+    whisper_server::{
+        ensure_engine_ready, transcribe_local_server, unload_engine, WhisperServerState,
+    },
 };
 use tauri::Manager;
 
@@ -65,6 +68,7 @@ pub fn run() {
         .manage(HotkeyState::default())
         .manage(FnHotkeyState::default())
         .manage(TargetWindowState::default())
+        .manage(WhisperServerState::default())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_autostart::init(
@@ -112,10 +116,14 @@ pub fn run() {
             open_devtools,
             open_main_devtools,
             open_input_monitoring_settings,
+            ensure_engine_ready,
+            unload_engine,
+            transcribe_local_server,
         ])
         .setup(|app| {
             install_default(&app.handle());
             tray::install(&app.handle())?;
+            commands::whisper_server::init(&app.handle());
             // Close-to-hide for the main window (plan §5 lifecycle).
             if let Some(window) = app.get_webview_window("main") {
                 // Fit the window to the available monitor so all UI is visible.
@@ -153,6 +161,11 @@ pub fn run() {
             }
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app_handle, event| {
+            if let tauri::RunEvent::Exit = event {
+                commands::whisper_server::shutdown(app_handle);
+            }
+        });
 }

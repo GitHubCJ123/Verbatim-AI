@@ -106,6 +106,10 @@ jobs:
             } catch {
               Write-Warning "whisper-stream not bundled for $Variant; true streaming unavailable this release (app falls back): $($_.Exception.Message)"
             }
+            # The sidecar is optional (the app falls back to chunked streaming).
+            # A failed build must NOT fail the release step, so clear any leaked
+            # native exit code before the surrounding step continues.
+            $global:LASTEXITCODE = 0
           }
 
           # Upstream CPU ZIPs have no separate CMake build tree, so use the
@@ -161,6 +165,10 @@ jobs:
             } catch {
               Write-Warning "whisper-stream not bundled for $Variant; true streaming unavailable this release (app falls back): $($_.Exception.Message)"
             }
+            # The sidecar is optional (the app falls back to chunked streaming).
+            # A failed build must NOT fail the release step, so clear any leaked
+            # native exit code before the surrounding step continues.
+            $global:LASTEXITCODE = 0
           }
 
           # Upstream CUDA ZIPs have no separate CMake build tree, so use the
@@ -235,6 +243,10 @@ jobs:
             } catch {
               Write-Warning "whisper-stream not bundled for $Variant; true streaming unavailable this release (app falls back): $($_.Exception.Message)"
             }
+            # The sidecar is optional (the app falls back to chunked streaming).
+            # A failed build must NOT fail the release step, so clear any leaked
+            # native exit code before the surrounding step continues.
+            $global:LASTEXITCODE = 0
           }
 
           Invoke-WhisperStreamBuild `

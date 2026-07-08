@@ -20,7 +20,7 @@ use tokio::sync::Mutex;
 
 use super::local_whisper::{
     resolve_whisper_server_launch, transcribe_args_from_pcm_request, write_pcm_wav, TranscribeArgs,
-    TranscribeOutput,
+    TranscribeOutput, WhisperServerLaunch,
 };
 
 fn perf_enabled() -> bool {
@@ -52,6 +52,9 @@ pub struct WhisperServerState {
     /// Serializes spawns so concurrent hotkey presses don't launch two servers.
     starting: Arc<Mutex<()>>,
     idle: Duration,
+    idle_check: Duration,
+    health_timeout: Duration,
+    health_poll: Duration,
 }
 
 impl Default for WhisperServerState {
@@ -60,6 +63,9 @@ impl Default for WhisperServerState {
             inner: Arc::new(Mutex::new(None)),
             starting: Arc::new(Mutex::new(())),
             idle: DEFAULT_IDLE,
+            idle_check: IDLE_CHECK,
+            health_timeout: HEALTH_TIMEOUT,
+            health_poll: HEALTH_POLL,
         }
     }
 }
@@ -74,7 +80,14 @@ impl WhisperServerState {
     ) -> Result<String, String> {
         let launch = resolve_whisper_server_launch(app, tier, compute)?;
         let key = format!("{tier}:{}", launch.variant_label);
+        self.ensure_launch(key, launch).await
+    }
 
+    async fn ensure_launch(
+        &self,
+        key: String,
+        launch: WhisperServerLaunch,
+    ) -> Result<String, String> {
         // Fast path: reuse a live matching server.
         {
             let mut guard = self.inner.lock().await;
@@ -141,7 +154,9 @@ impl WhisperServerState {
             last_used: Instant::now(),
         };
 
-        if let Err(e) = wait_until_ready(&base_url).await {
+        if let Err(e) =
+            wait_until_ready(&base_url, self.health_timeout, self.health_poll).await
+        {
             let _ = handle.child.start_kill();
             return Err(e);
         }
@@ -177,21 +192,26 @@ impl WhisperServerState {
     fn spawn_idle_watcher(&self) {
         let inner = self.inner.clone();
         let idle = self.idle;
+        let idle_check = self.idle_check;
         tauri::async_runtime::spawn(async move {
             loop {
-                tokio::time::sleep(IDLE_CHECK).await;
-                let mut guard = inner.lock().await;
-                let stale = guard
-                    .as_ref()
-                    .map(|h| h.last_used.elapsed() > idle)
-                    .unwrap_or(false);
-                if stale {
-                    if let Some(mut h) = guard.take() {
-                        let _ = h.child.start_kill();
-                    }
-                }
+                tokio::time::sleep(idle_check).await;
+                evict_idle_once(&inner, idle).await;
             }
         });
+    }
+}
+
+async fn evict_idle_once(inner: &Arc<Mutex<Option<ServerHandle>>>, idle: Duration) {
+    let mut guard = inner.lock().await;
+    let stale = guard
+        .as_ref()
+        .map(|h| h.last_used.elapsed() > idle)
+        .unwrap_or(false);
+    if stale {
+        if let Some(mut h) = guard.take() {
+            let _ = h.child.start_kill();
+        }
     }
 }
 
@@ -203,9 +223,9 @@ fn pick_free_port() -> Result<u16, String> {
 
 /// Poll the server root until it accepts connections (whisper-server starts
 /// listening only after the model is loaded, so this doubles as a warm signal).
-async fn wait_until_ready(base_url: &str) -> Result<(), String> {
+async fn wait_until_ready(base_url: &str, timeout: Duration, poll: Duration) -> Result<(), String> {
     let client = reqwest::Client::new();
-    let deadline = Instant::now() + HEALTH_TIMEOUT;
+    let deadline = Instant::now() + timeout;
     loop {
         let ok = client
             .get(base_url)
@@ -219,7 +239,7 @@ async fn wait_until_ready(base_url: &str) -> Result<(), String> {
         if Instant::now() >= deadline {
             return Err("whisper-server did not become ready in time".into());
         }
-        tokio::time::sleep(HEALTH_POLL).await;
+        tokio::time::sleep(poll).await;
     }
 }
 
@@ -355,5 +375,277 @@ pub fn init(app: &AppHandle) {
 pub fn shutdown(app: &AppHandle) {
     if let Some(state) = app.try_state::<WhisperServerState>() {
         state.kill_now();
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+    use std::path::{Path, PathBuf};
+
+    fn test_state() -> WhisperServerState {
+        WhisperServerState {
+            inner: Arc::new(Mutex::new(None)),
+            starting: Arc::new(Mutex::new(())),
+            idle: Duration::from_millis(50),
+            idle_check: Duration::from_millis(10),
+            health_timeout: Duration::from_secs(3),
+            health_poll: Duration::from_millis(20),
+        }
+    }
+
+    fn test_dir(name: &str) -> PathBuf {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::current_dir()
+            .unwrap()
+            .join("target")
+            .join("whisper-server-tests")
+            .join(format!("{name}-{}-{stamp}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn write_fake_server(dir: &Path) -> PathBuf {
+        let script = dir.join("fake-whisper-server.py");
+        fs::write(
+            &script,
+            r#"#!/usr/bin/env python3
+import http.server
+import os
+import socketserver
+import sys
+
+port = None
+for i, arg in enumerate(sys.argv):
+    if arg == "--port" and i + 1 < len(sys.argv):
+        port = int(sys.argv[i + 1])
+if port is None:
+    raise SystemExit("missing --port")
+
+with open(__file__ + ".count", "a", encoding="utf-8") as f:
+    f.write(str(os.getpid()) + "\n")
+
+class Handler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"ok")
+
+    def do_POST(self):
+        length = int(self.headers.get("content-length", "0"))
+        if length:
+            self.rfile.read(length)
+        body = b'{"text":"fake transcript","language":"en"}'
+        self.send_response(200)
+        self.send_header("content-type", "application/json")
+        self.send_header("content-length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, format, *args):
+        pass
+
+class Server(socketserver.TCPServer):
+    allow_reuse_address = True
+
+with Server(("127.0.0.1", port), Handler) as server:
+    server.serve_forever()
+"#,
+        )
+        .unwrap();
+        let mut perms = fs::metadata(&script).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&script, perms).unwrap();
+        script
+    }
+
+    fn launch_for(script: &Path, model: &Path, variant_label: &'static str) -> WhisperServerLaunch {
+        WhisperServerLaunch {
+            model_path: model.to_path_buf(),
+            server_bin: script.to_path_buf(),
+            variant_label,
+            flash_attn: false,
+        }
+    }
+
+    fn count_path(script: &Path) -> PathBuf {
+        script.with_file_name(format!(
+            "{}.count",
+            script.file_name().unwrap().to_string_lossy()
+        ))
+    }
+
+    fn spawn_count(script: &Path) -> usize {
+        fs::read_to_string(count_path(script))
+            .unwrap_or_default()
+            .lines()
+            .count()
+    }
+
+    async fn assert_serves(base_url: &str) {
+        let body = reqwest::get(base_url)
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap();
+        assert_eq!(body, "ok");
+    }
+
+    async fn wait_until_unreachable(base_url: &str) {
+        let client = reqwest::Client::new();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            let reachable = client
+                .get(base_url)
+                .timeout(Duration::from_millis(100))
+                .send()
+                .await
+                .is_ok();
+            if !reachable {
+                return;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "server stayed reachable at {base_url}"
+            );
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn concurrent_ensure_spawns_one_server() {
+        let dir = test_dir("single-flight");
+        let script = write_fake_server(&dir);
+        let model = dir.join("model.bin");
+        fs::write(&model, b"fake").unwrap();
+        let state = Arc::new(test_state());
+        let launch = launch_for(&script, &model, "cpu");
+
+        let mut tasks = Vec::new();
+        for _ in 0..8 {
+            let state = state.clone();
+            let launch = launch.clone();
+            tasks.push(tokio::spawn(async move {
+                state.ensure_launch("tiny:cpu".into(), launch).await.unwrap()
+            }));
+        }
+        let urls = futures_util::future::join_all(tasks).await;
+        let first = urls[0].as_ref().unwrap().clone();
+        for url in urls {
+            assert_eq!(url.unwrap(), first);
+        }
+        assert_serves(&first).await;
+        assert_eq!(spawn_count(&script), 1);
+
+        state.unload().await;
+        wait_until_unreachable(&first).await;
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn same_key_reuses_existing_server() {
+        let dir = test_dir("reuse");
+        let script = write_fake_server(&dir);
+        let model = dir.join("model.bin");
+        fs::write(&model, b"fake").unwrap();
+        let state = test_state();
+        let launch = launch_for(&script, &model, "cpu");
+
+        let first = state
+            .ensure_launch("tiny:cpu".into(), launch.clone())
+            .await
+            .unwrap();
+        let second = state.ensure_launch("tiny:cpu".into(), launch).await.unwrap();
+        assert_eq!(first, second);
+        assert_eq!(spawn_count(&script), 1);
+
+        state.unload().await;
+        wait_until_unreachable(&first).await;
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn different_key_replaces_existing_server() {
+        let dir = test_dir("replace");
+        let script = write_fake_server(&dir);
+        let model = dir.join("model.bin");
+        fs::write(&model, b"fake").unwrap();
+        let state = test_state();
+
+        let first = state
+            .ensure_launch("tiny:cpu".into(), launch_for(&script, &model, "cpu"))
+            .await
+            .unwrap();
+        let second = state
+            .ensure_launch("base:cpu".into(), launch_for(&script, &model, "cpu"))
+            .await
+            .unwrap();
+        assert_ne!(first, second);
+        wait_until_unreachable(&first).await;
+        assert_serves(&second).await;
+        assert_eq!(spawn_count(&script), 2);
+
+        state.unload().await;
+        wait_until_unreachable(&second).await;
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn idle_eviction_stops_server() {
+        let dir = test_dir("idle");
+        let script = write_fake_server(&dir);
+        let model = dir.join("model.bin");
+        fs::write(&model, b"fake").unwrap();
+        let state = test_state();
+
+        let url = state
+            .ensure_launch("tiny:cpu".into(), launch_for(&script, &model, "cpu"))
+            .await
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(75)).await;
+        evict_idle_once(&state.inner, state.idle).await;
+        wait_until_unreachable(&url).await;
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn dead_handle_is_respawned() {
+        let dir = test_dir("dead");
+        let script = write_fake_server(&dir);
+        let model = dir.join("model.bin");
+        fs::write(&model, b"fake").unwrap();
+        let state = test_state();
+        let launch = launch_for(&script, &model, "cpu");
+
+        let first = state
+            .ensure_launch("tiny:cpu".into(), launch.clone())
+            .await
+            .unwrap();
+        {
+            let mut guard = state.inner.lock().await;
+            let handle = guard.as_mut().unwrap();
+            let _ = handle.child.start_kill();
+            let _ = handle.child.wait().await;
+        }
+        wait_until_unreachable(&first).await;
+
+        let second = state
+            .ensure_launch("tiny:cpu".into(), launch)
+            .await
+            .unwrap();
+        assert_ne!(first, second);
+        assert_serves(&second).await;
+        assert_eq!(spawn_count(&script), 2);
+
+        state.unload().await;
+        wait_until_unreachable(&second).await;
+        let _ = fs::remove_dir_all(&dir);
     }
 }

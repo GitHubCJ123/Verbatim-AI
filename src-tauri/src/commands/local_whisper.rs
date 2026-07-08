@@ -238,6 +238,7 @@ fn locate_whisper_server_for_variant(
 }
 
 /// Everything the persistent whisper-server manager needs to launch a server.
+#[derive(Clone)]
 pub(crate) struct WhisperServerLaunch {
     pub model_path: PathBuf,
     pub server_bin: PathBuf,

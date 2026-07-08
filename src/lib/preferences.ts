@@ -25,6 +25,7 @@ const LS_SILENCE_TRIM = "sw.vad.silenceTrim";
 const LS_AUTO_STOP = "sw.vad.autoStop";
 const LS_FILLER_FILTER = "sw.postproc.fillerFilter";
 const LS_FUZZY_VOCAB = "sw.postproc.fuzzyVocab";
+const LS_LIVE_PARTIAL = "sw.transcribe.livePartial";
 
 export type OverlayPosition =
   | "bottom-center"
@@ -108,10 +109,14 @@ export type HistoryRetentionDays = 7 | 30 | 90 | null;
 
 export function getHistoryRetentionDays(): HistoryRetentionDays {
   switch (localStorage.getItem(LS_HISTORY_RETENTION)) {
-    case "7": return 7;
-    case "30": return 30;
-    case "90": return 90;
-    default: return null;
+    case "7":
+      return 7;
+    case "30":
+      return 30;
+    case "90":
+      return 90;
+    default:
+      return null;
   }
 }
 
@@ -155,6 +160,26 @@ export function isAutoStopEnabled(): boolean {
 
 export function setAutoStopEnabled(v: boolean): void {
   localStorage.setItem(LS_AUTO_STOP, v ? "1" : "0");
+}
+
+/**
+ * Live partial (chunked pseudo-streaming) transcription
+ * (docs/proposals/handy-adoption.md §Phase 6, issue #23 P2.6). While
+ * recording, the accumulated real-time frames are re-transcribed on VAD
+ * segment boundaries / every ~1.75 s and shown as a LIVE partial in the
+ * overlay; the final full-quality transcription on stop replaces it.
+ *
+ * **Default off** — the local engines are request/response (no native
+ * token streaming), so this is a best-effort preview that adds repeated
+ * transcribe calls. Leaving it off keeps the existing
+ * stop→transcribe→postprocess pipeline byte-for-byte unchanged.
+ */
+export function isLivePartialEnabled(): boolean {
+  return localStorage.getItem(LS_LIVE_PARTIAL) === "1";
+}
+
+export function setLivePartialEnabled(v: boolean): void {
+  localStorage.setItem(LS_LIVE_PARTIAL, v ? "1" : "0");
 }
 
 export function isClipboardRestoreEnabled(): boolean {

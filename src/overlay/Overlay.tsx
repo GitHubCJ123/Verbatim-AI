@@ -20,14 +20,13 @@ import { encodeWavBlob } from "../lib/audio/wav";
 import { trimSilence } from "../lib/vad/trim";
 import { AutoStopDetector } from "../lib/vad/autoStop";
 import { VAD_SAMPLE_RATE } from "../lib/vad/vad";
+import { PartialSegmenter } from "../lib/transcribe/segmenter";
+import { TranscriptionCoordinator } from "../lib/transcribe/coordinator";
 import type { RecordingState } from "../lib/store/useRecording";
 import { getActiveProvider } from "../lib/ai";
 import { getModeById, getDefaultMode, loadVocabulary } from "../lib/store/useModes";
 import { applyVocabReplacements } from "../lib/vocab";
-import {
-  resizeOverlayToPill,
-  resizeOverlayToReview,
-} from "../lib/recording-bridge";
+import { resizeOverlayToPill, resizeOverlayToReview } from "../lib/recording-bridge";
 import { pasteCleanedText, copyCleanedText, clearCapturedTarget } from "../lib/output";
 import { osKind } from "../lib/os";
 import { pasteMethodUsesClipboard } from "../lib/pasteMethod";
@@ -41,6 +40,7 @@ import {
   isAutoStopEnabled,
   isFillerFilterEnabled,
   isFuzzyVocabEnabled,
+  isLivePartialEnabled,
 } from "../lib/preferences";
 import { applyInlinePostProcessing } from "../lib/postProcess";
 import { getPrivacyStatus, type DataLocality } from "../lib/privacyStatus";
@@ -73,10 +73,16 @@ export default function Overlay() {
   const [error, setError] = useState<string | null>(null);
   const [streamingCleaned, setStreamingCleaned] = useState("");
   const [rawText, setRawText] = useState("");
+  const [partialText, setPartialText] = useState("");
   const [privacy, setPrivacy] = useState<DataLocality | null>(null);
 
   const controllerRef = useRef<AudioController | null>(null);
   const autoStopRef = useRef<AutoStopDetector | null>(null);
+  const partialSegmenterRef = useRef<PartialSegmenter | null>(null);
+  const partialCoordinatorRef = useRef<TranscriptionCoordinator<Float32Array, string> | null>(null);
+  // Monotonic recording session id — guards stale live-partial results
+  // from a previous recording landing in the current UI.
+  const sessionRef = useRef(0);
   // In-flight getUserMedia: a stop/cancel that lands while the mic is
   // still being acquired must await this so the stream is never leaked.
   const startingRef = useRef<Promise<AudioController> | null>(null);
@@ -96,25 +102,90 @@ export default function Overlay() {
     setView("pill");
     setStreamingCleaned("");
     setRawText("");
+    setPartialText("");
     setError(null);
     await resizeOverlayToPill();
     await clearCapturedTarget();
     await hideAfter(0);
   };
 
+  /**
+   * Tear down the live-partial machinery (Phase 6). Bumps the session id
+   * so any transcribe request still in flight can't paint a stale partial
+   * into the current UI, then disposes the coordinator + segmenter.
+   */
+  const disposeLivePartial = () => {
+    sessionRef.current++;
+    partialSegmenterRef.current?.dispose();
+    partialSegmenterRef.current = null;
+    partialCoordinatorRef.current?.dispose();
+    partialCoordinatorRef.current = null;
+  };
+
+  /**
+   * Build the live-partial coordinator + segmenter and register a frame
+   * sink into `sinks`. Each partial re-transcribes the audio-so-far
+   * through the active provider; results paint into `partialText` only if
+   * they belong to the current recording session (stale-result guard).
+   */
+  const setupLivePartial = (mode: Mode | null, sinks: Array<(frame: Float32Array) => void>) => {
+    const provider = getActiveProvider(mode);
+    const activeMode = mode ?? getDefaultMode();
+    if (!provider || !activeMode) return;
+    const session = sessionRef.current;
+    const vocab = loadVocabulary().map((t) => t.term);
+
+    const coordinator = new TranscriptionCoordinator<Float32Array, string>({
+      run: async (pcm) => {
+        const wav = encodeWavBlob(pcm, VAD_SAMPLE_RATE);
+        const res = await provider.transcribe({
+          audio: wav,
+          language: activeMode.language || "auto",
+          vocabularyHints: vocab,
+        });
+        return res.text ?? "";
+      },
+      onResult: (text) => {
+        // Ignore results from a superseded recording session.
+        if (sessionRef.current !== session) return;
+        const trimmed = text.trim();
+        if (trimmed) setPartialText(trimmed);
+      },
+      onError: (e) => {
+        // Partials are a best-effort preview — never surface their
+        // failures. Log only in dev.
+        if (import.meta.env.DEV) console.warn("[Verbatim AI] live partial failed:", e);
+      },
+    });
+    partialCoordinatorRef.current = coordinator;
+
+    const segmenter = new PartialSegmenter({
+      onPartial: (pcm) => coordinator.submit(pcm),
+    });
+    partialSegmenterRef.current = segmenter;
+    sinks.push((frame) => segmenter.push(frame));
+  };
+
   const start = async (mode: string, modeId: string | null, pressedAt?: number) => {
     setError(null);
     setStreamingCleaned("");
     setRawText("");
+    setPartialText("");
     setView("pill");
     setModeName(mode);
     modeRef.current = getModeById(modeId) ?? getDefaultMode();
     setPrivacy(getPrivacyStatus(modeRef.current).overall);
     try {
+      // Frame sinks fan out the real-time PCM frames (Phase 3) to any
+      // opt-in consumers. Each is independent and default-off, so the
+      // plain push-to-talk path wires nothing.
+      autoStopRef.current = null;
+      partialSegmenterRef.current = null;
+      partialCoordinatorRef.current = null;
+      const sinks: Array<(frame: Float32Array) => void> = [];
+
       // Hands-free auto-stop (opt-in): feed live frames to a VAD
       // endpointer that stops the recording after a hangover of silence.
-      autoStopRef.current = null;
-      let onFrame: ((frame: Float32Array) => void) | undefined;
       if (isAutoStopEnabled()) {
         const detector = new AutoStopDetector({
           onSilence: () => {
@@ -122,8 +193,24 @@ export default function Overlay() {
           },
         });
         autoStopRef.current = detector;
-        onFrame = (frame) => detector.push(frame);
+        sinks.push((frame) => detector.push(frame));
       }
+
+      // Live partial (chunked pseudo-streaming, Phase 6 / issue #23 P2.6,
+      // opt-in). A segmenter re-transcribes the audio-so-far on VAD
+      // boundaries / a fixed cadence; a coordinator serializes the
+      // overlapping requests. The final stop→transcribe path is untouched
+      // and replaces the partial. Best-effort: any failure is swallowed.
+      if (isLivePartialEnabled()) {
+        setupLivePartial(modeRef.current, sinks);
+      }
+
+      const onFrame =
+        sinks.length > 0
+          ? (frame: Float32Array) => {
+              for (const sink of sinks) sink(frame);
+            }
+          : undefined;
       // The bridge shows this window concurrently — don't wait for it.
       // Opening the mic immediately is what keeps the first syllable
       // from being lost (docs/improvement-plan/04-performance-latency.md).
@@ -320,6 +407,9 @@ export default function Overlay() {
   const stop = async () => {
     autoStopRef.current?.disable();
     autoStopRef.current = null;
+    // Tear down live partials up front so an in-flight partial transcribe
+    // can't contend with the final full-quality transcription below.
+    disposeLivePartial();
     let c = controllerRef.current;
     controllerRef.current = null;
     const starting = startingRef.current;
@@ -350,6 +440,7 @@ export default function Overlay() {
   const cancelActive = () => {
     autoStopRef.current?.disable();
     autoStopRef.current = null;
+    disposeLivePartial();
     const starting = startingRef.current;
     startingRef.current = null;
     const c = controllerRef.current;
@@ -483,6 +574,7 @@ export default function Overlay() {
           controller={controllerRef.current}
           error={error}
           privacy={privacy}
+          partialText={partialText}
         />
       )}
     </div>

@@ -12,20 +12,45 @@
  * default `startRecording` controller, so the overlay can swap capture backends
  * transparently.
  *
- * Deferred (follow-up): streaming native frames to the `onFrame` sink. The
- * native path does not yet emit per-frame PCM, so VAD auto-stop / live partials
- * (both opt-in, default off) keep relying on the default WebAudio capture.
+ * Frame streaming (route 3B follow-up, issue #23 / closed #35): when the caller
+ * provides an `onFrame` sink, Rust also streams live 16 kHz mono f32 frames
+ * (480 samples / ~30 ms, base64-encoded) via `native_audio:frame`. We decode
+ * and forward them to the same sink the WebAudio worklet feeds, so VAD
+ * silence-trim / auto-stop and live partials work under native capture too.
+ * When no `onFrame` sink is provided, `streamFrames` is false and Rust never
+ * emits frame events — the path is inert.
  */
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 import { encodeWavBlob } from "./audio/wav";
-import { VAD_SAMPLE_RATE } from "./vad/vad";
+import { VAD_FRAME_SAMPLES, VAD_SAMPLE_RATE } from "./vad/vad";
 import type { AudioController, AudioControllerOptions, RecordingResult } from "./audio";
 import { isPerfDebugEnabled } from "./preferences";
 
 interface LevelEvent {
   rms: number;
+}
+
+interface FrameEvent {
+  /** Base64 of `VAD_FRAME_SAMPLES` little-endian f32 samples. */
+  data: string;
+}
+
+/**
+ * Decode a base64 `native_audio:frame` payload into a 16 kHz mono Float32
+ * frame. Bytes are little-endian f32 (matching Rust `f32::to_le_bytes`); we
+ * read them explicitly little-endian so the result is correct regardless of
+ * host endianness.
+ */
+export function decodeFrame(data: string): Float32Array {
+  const binary = atob(data);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  const view = new DataView(bytes.buffer);
+  const out = new Float32Array(bytes.length >> 2);
+  for (let i = 0; i < out.length; i++) out[i] = view.getFloat32(i * 4, true);
+  return out;
 }
 
 /**
@@ -69,11 +94,34 @@ export async function startNativeRecording(
     /* level meter is best-effort; capture still works without it */
   }
 
+  // Per-frame streaming (VAD / live-partial parity). Only wired when a sink is
+  // provided; Rust is told via `streamFrames` so it never emits otherwise.
+  const streamFrames = !!opts.onFrame;
+  let frameUnlisten: UnlistenFn | null = null;
+  let frameCount = 0;
+  if (opts.onFrame) {
+    const sink = opts.onFrame;
+    try {
+      frameUnlisten = await listen<FrameEvent>("native_audio:frame", (event) => {
+        const data = event.payload?.data;
+        if (!data) return;
+        const frame = decodeFrame(data);
+        // Guard against a malformed payload before handing frames to VAD.
+        if (frame.length !== VAD_FRAME_SAMPLES) return;
+        frameCount++;
+        sink(frame);
+      });
+    } catch {
+      /* live frames are best-effort; final-PCM transcription still works */
+    }
+  }
+
   const startedAt = performance.now();
   try {
-    await invoke("start_native_capture", { deviceName: deviceName ?? null });
+    await invoke("start_native_capture", { deviceName: deviceName ?? null, streamFrames });
   } catch (err) {
     if (unlisten) unlisten();
+    if (frameUnlisten) frameUnlisten();
     const e = err instanceof Error ? err : new Error(String(err));
     opts.onError?.(e);
     throw e;
@@ -86,6 +134,10 @@ export async function startNativeRecording(
     if (unlisten) {
       unlisten();
       unlisten = null;
+    }
+    if (frameUnlisten) {
+      frameUnlisten();
+      frameUnlisten = null;
     }
   };
 
@@ -138,5 +190,5 @@ export async function startNativeRecording(
     detach();
   };
 
-  return { getLevel, getBars, getFrameCount: () => 0, stop, cancel };
+  return { getLevel, getBars, getFrameCount: () => frameCount, stop, cancel };
 }

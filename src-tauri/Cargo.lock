@@ -5524,6 +5524,7 @@ dependencies = [
 name = "verbatim-ai"
 version = "0.5.9"
 dependencies = [
+ "base64 0.22.1",
  "bzip2",
  "core-foundation 0.10.1",
  "core-graphics",

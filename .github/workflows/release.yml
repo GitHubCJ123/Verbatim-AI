@@ -293,7 +293,7 @@ jobs:
 
           cp whisper.cpp/build/bin/whisper-cli "$STAGE/"
           cp whisper.cpp/build/bin/whisper-server "$STAGE/" 2>/dev/null || echo "::warning::whisper-server not built; warm-server engine unavailable this release (app falls back to whisper-cli)"
-          build_stream_sidecar "macOS arm64 Metal" "whisper.cpp/build" "sidecars/whisper-stream/build-macos-metal" "$STAGE"
+          build_stream_sidecar "macOS arm64 Metal" "whisper.cpp" "sidecars/whisper-stream/build-macos-metal" "$STAGE"
           find whisper.cpp/build -type f -name "*.dylib" -exec cp -n {} "$STAGE/" \;
 
           cd "$STAGE"

@@ -10,6 +10,7 @@
 //! (see `local_whisper::resolve_whisper_server_launch`) so GPU-variant selection
 //! and model files are reused unchanged.
 
+use std::path::Path;
 use std::process::Stdio;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -34,8 +35,10 @@ const IDLE_CHECK: Duration = Duration::from_secs(30);
 
 struct ServerHandle {
     child: Child,
-    /// `"<tier>:<variant>"` — a change forces a respawn.
+    /// `"<tier>:<variant>"` — a change may be hot-swapped when the variant
+    /// matches.
     key: String,
+    variant_label: &'static str,
     base_url: String,
     last_used: Instant,
 }
@@ -113,7 +116,39 @@ impl WhisperServerState {
             }
         }
 
-        // Drop any stale / other-model server before allocating a new one.
+        // Reuse a live same-variant server by asking whisper-server to load the
+        // new model in-process. Any failure falls through to a fresh process.
+        {
+            let mut guard = self.inner.lock().await;
+            if let Some(h) = guard.as_mut() {
+                if h.is_alive() && h.variant_label == launch.variant_label {
+                    let swap_started = Instant::now();
+                    match load_model(&h.base_url, &launch.model_path).await {
+                        Ok(()) => {
+                            h.key = key;
+                            h.variant_label = launch.variant_label;
+                            h.last_used = Instant::now();
+                            if perf_enabled() {
+                                eprintln!(
+                                    "[verbatim-perf] whisper-server load_swap_ms={} key={}",
+                                    swap_started.elapsed().as_millis(),
+                                    h.key
+                                );
+                            }
+                            return Ok(h.base_url.clone());
+                        }
+                        Err(e) => {
+                            if perf_enabled() {
+                                eprintln!("[verbatim-perf] whisper-server load_swap_failed={e}");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Drop any stale / wrong-variant / failed-swap server before allocating
+        // a new one.
         {
             let mut guard = self.inner.lock().await;
             if let Some(mut h) = guard.take() {
@@ -150,6 +185,7 @@ impl WhisperServerState {
         let mut handle = ServerHandle {
             child,
             key,
+            variant_label: launch.variant_label,
             base_url: base_url.clone(),
             last_used: Instant::now(),
         };
@@ -180,8 +216,8 @@ impl WhisperServerState {
         }
     }
 
-    /// Best-effort synchronous kill for app shutdown (no async context).
-    fn kill_now(&self) {
+    /// Best-effort synchronous termination for app shutdown (no async context).
+    fn terminate_now(&self) {
         if let Ok(mut guard) = self.inner.try_lock() {
             if let Some(mut h) = guard.take() {
                 let _ = h.child.start_kill();
@@ -213,6 +249,24 @@ async fn evict_idle_once(inner: &Arc<Mutex<Option<ServerHandle>>>, idle: Duratio
             let _ = h.child.start_kill();
         }
     }
+}
+
+async fn load_model(base_url: &str, model_path: &Path) -> Result<(), String> {
+    let model = model_path.to_string_lossy().into_owned();
+    let form = reqwest::multipart::Form::new().text("model", model);
+    let resp = reqwest::Client::new()
+        .post(format!("{base_url}/load"))
+        .multipart(form)
+        .timeout(HEALTH_TIMEOUT)
+        .send()
+        .await
+        .map_err(|e| format!("request failed: {e}"))?;
+    if resp.status().is_success() {
+        return Ok(());
+    }
+    let code = resp.status();
+    let body = resp.text().await.unwrap_or_default();
+    Err(format!("server returned {code}: {body}"))
 }
 
 fn pick_free_port() -> Result<u16, String> {
@@ -371,10 +425,10 @@ pub fn init(app: &AppHandle) {
     }
 }
 
-/// Best-effort kill on shutdown. Call from `RunEvent::Exit`.
+/// Best-effort termination on shutdown. Call from `RunEvent::Exit`.
 pub fn shutdown(app: &AppHandle) {
     if let Some(state) = app.try_state::<WhisperServerState>() {
-        state.kill_now();
+        state.terminate_now();
     }
 }
 
@@ -438,8 +492,27 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def do_POST(self):
         length = int(self.headers.get("content-length", "0"))
-        if length:
-            self.rfile.read(length)
+        data = self.rfile.read(length) if length else b""
+        if self.path == "/load":
+            with open(__file__ + ".load", "a", encoding="utf-8") as f:
+                f.write(data.decode("utf-8", "replace"))
+                f.write("\n---load---\n")
+            status_path = __file__ + ".load_status"
+            status = ""
+            if os.path.exists(status_path):
+                with open(status_path, "r", encoding="utf-8") as f:
+                    status = f.read().strip()
+            if status == "fail":
+                body = b"load failed"
+                self.send_response(500)
+            else:
+                body = b"loaded"
+                self.send_response(200)
+            self.send_header("content-type", "text/plain")
+            self.send_header("content-length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         body = b'{"text":"fake transcript","language":"en"}'
         self.send_response(200)
         self.send_header("content-type", "application/json")
@@ -485,6 +558,28 @@ with Server(("127.0.0.1", port), Handler) as server:
             .unwrap_or_default()
             .lines()
             .count()
+    }
+
+    fn load_path(script: &Path) -> PathBuf {
+        script.with_file_name(format!(
+            "{}.load",
+            script.file_name().unwrap().to_string_lossy()
+        ))
+    }
+
+    fn load_status_path(script: &Path) -> PathBuf {
+        script.with_file_name(format!(
+            "{}.load_status",
+            script.file_name().unwrap().to_string_lossy()
+        ))
+    }
+
+    fn load_log(script: &Path) -> String {
+        fs::read_to_string(load_path(script)).unwrap_or_default()
+    }
+
+    fn load_count(script: &Path) -> usize {
+        load_log(script).matches("---load---").count()
     }
 
     async fn assert_serves(base_url: &str) {
@@ -571,8 +666,91 @@ with Server(("127.0.0.1", port), Handler) as server:
     }
 
     #[tokio::test]
-    async fn different_key_replaces_existing_server() {
-        let dir = test_dir("replace");
+    async fn different_model_same_variant_uses_load_endpoint() {
+        let dir = test_dir("load-swap");
+        let script = write_fake_server(&dir);
+        let first_model = dir.join("tiny.bin");
+        let second_model = dir.join("base.bin");
+        fs::write(&first_model, b"fake").unwrap();
+        fs::write(&second_model, b"fake").unwrap();
+        let state = test_state();
+
+        let first = state
+            .ensure_launch(
+                "tiny:cpu".into(),
+                launch_for(&script, &first_model, "cpu"),
+            )
+            .await
+            .unwrap();
+        let second = state
+            .ensure_launch(
+                "base:cpu".into(),
+                launch_for(&script, &second_model, "cpu"),
+            )
+            .await
+            .unwrap();
+        assert_eq!(first, second);
+        assert_serves(&second).await;
+        assert_eq!(spawn_count(&script), 1);
+        assert_eq!(load_count(&script), 1);
+        assert!(load_log(&script).contains(
+            second_model.to_string_lossy().as_ref()
+        ));
+
+        let third = state
+            .ensure_launch(
+                "base:cpu".into(),
+                launch_for(&script, &second_model, "cpu"),
+            )
+            .await
+            .unwrap();
+        assert_eq!(second, third);
+        assert_eq!(load_count(&script), 1);
+
+        state.unload().await;
+        wait_until_unreachable(&second).await;
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn load_failure_falls_back_to_respawn() {
+        let dir = test_dir("load-fallback");
+        let script = write_fake_server(&dir);
+        fs::write(load_status_path(&script), b"fail").unwrap();
+        let first_model = dir.join("tiny.bin");
+        let second_model = dir.join("base.bin");
+        fs::write(&first_model, b"fake").unwrap();
+        fs::write(&second_model, b"fake").unwrap();
+        let state = test_state();
+
+        let first = state
+            .ensure_launch(
+                "tiny:cpu".into(),
+                launch_for(&script, &first_model, "cpu"),
+            )
+            .await
+            .unwrap();
+        let second = state
+            .ensure_launch(
+                "base:cpu".into(),
+                launch_for(&script, &second_model, "cpu"),
+            )
+            .await
+            .unwrap();
+        assert_ne!(first, second);
+        wait_until_unreachable(&first).await;
+        assert_serves(&second).await;
+        assert_eq!(spawn_count(&script), 2);
+        assert_eq!(load_count(&script), 1);
+
+        state.unload().await;
+        wait_until_unreachable(&second).await;
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn variant_change_respawns_without_load_attempt() {
+        let dir = test_dir("variant-respawn");
         let script = write_fake_server(&dir);
         let model = dir.join("model.bin");
         fs::write(&model, b"fake").unwrap();
@@ -583,13 +761,14 @@ with Server(("127.0.0.1", port), Handler) as server:
             .await
             .unwrap();
         let second = state
-            .ensure_launch("base:cpu".into(), launch_for(&script, &model, "cpu"))
+            .ensure_launch("tiny:metal".into(), launch_for(&script, &model, "metal"))
             .await
             .unwrap();
         assert_ne!(first, second);
         wait_until_unreachable(&first).await;
         assert_serves(&second).await;
         assert_eq!(spawn_count(&script), 2);
+        assert_eq!(load_count(&script), 0);
 
         state.unload().await;
         wait_until_unreachable(&second).await;

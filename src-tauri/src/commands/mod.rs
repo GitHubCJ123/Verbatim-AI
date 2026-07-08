@@ -5,6 +5,7 @@ pub mod fn_hotkey;
 pub mod hotkey;
 pub mod llama_cpp;
 pub mod local_whisper;
+pub mod native_audio;
 pub mod parakeet;
 pub mod paste;
 pub mod process_list;

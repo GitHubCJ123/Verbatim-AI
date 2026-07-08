@@ -24,10 +24,13 @@ import {
   resizeOverlayToReview,
 } from "../lib/recording-bridge";
 import { pasteCleanedText, copyCleanedText, clearCapturedTarget } from "../lib/output";
+import { osKind } from "../lib/os";
+import { pasteMethodUsesClipboard } from "../lib/pasteMethod";
 import {
   isAiImproveDisabled,
   getMicDeviceId,
   getOutputBehavior,
+  getPasteMethod,
   isPerfDebugEnabled,
 } from "../lib/preferences";
 import { getPrivacyStatus, type DataLocality } from "../lib/privacyStatus";
@@ -35,13 +38,20 @@ import type { Mode } from "../types/mode";
 
 function noPasteTargetMessage(): string {
   const behavior = getOutputBehavior();
-  if (behavior === "insert-only") {
-    return "[Verbatim AI] no paste target; clipboard unchanged because insert-only is enabled";
+  const method = behavior === "insert-only" ? "direct" : getPasteMethod();
+  if (!pasteMethodUsesClipboard(method, osKind())) {
+    return "[Verbatim AI] no paste target; clipboard unchanged because direct paste is enabled";
   }
   if (behavior === "restore") {
     return "[Verbatim AI] no paste target; previous clipboard will be restored";
   }
   return "[Verbatim AI] no paste target; copied to clipboard";
+}
+
+function shouldShowReviewWhenPasteMisses(): boolean {
+  const behavior = getOutputBehavior();
+  const method = behavior === "insert-only" ? "direct" : getPasteMethod();
+  return !pasteMethodUsesClipboard(method, osKind()) || behavior === "restore";
 }
 
 type View = "pill" | "review";
@@ -206,7 +216,7 @@ export default function Overlay() {
 
       if (activeMode.outputStyle === "paste") {
         const pasted = await pasteCleanedText(cleaned);
-        if (!pasted && getOutputBehavior() !== "copy") {
+        if (!pasted && shouldShowReviewWhenPasteMisses()) {
           console.info(noPasteTargetMessage());
           await resizeOverlayToReview();
           setView("review");
@@ -287,7 +297,7 @@ export default function Overlay() {
 
   const handleReviewPaste = async (text: string) => {
     const ok = await pasteCleanedText(text);
-    if (!ok && getOutputBehavior() !== "copy") {
+    if (!ok && shouldShowReviewWhenPasteMisses()) {
       console.info(noPasteTargetMessage());
       return;
     }

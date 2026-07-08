@@ -7,6 +7,7 @@ import {
   enable as autostartEnable,
   disable as autostartDisable,
 } from "@tauri-apps/plugin-autostart";
+import { normalizePasteMethod, type PasteMethod } from "./pasteMethod";
 
 const LS_OVERLAY_POSITION = "sw.overlay.position";
 const LS_MIC_DEVICE = "sw.mic.deviceId";
@@ -14,6 +15,7 @@ const LS_HOTKEY_PAUSED = "sw.hotkey.paused";
 const LS_CLIPBOARD_RESTORE = "sw.clipboard.restore";
 const LS_OUTPUT_BEHAVIOR = "sw.output.behavior";
 const LS_OUTPUT_INSERT_ONLY = "sw.output.insertOnly";
+const LS_PASTE_METHOD = "sw.paste.method";
 const LS_TELEMETRY = "sw.telemetry.enabled";
 const LS_AI_DISABLED = "sw.ai.disabled";
 const LS_HISTORY_DISABLED = "sw.history.disabled";
@@ -164,6 +166,16 @@ export function setOutputBehavior(v: OutputBehavior): void {
   localStorage.setItem(LS_OUTPUT_BEHAVIOR, v);
   localStorage.setItem(LS_OUTPUT_INSERT_ONLY, v === "insert-only" ? "1" : "0");
   localStorage.setItem(LS_CLIPBOARD_RESTORE, v === "restore" ? "1" : "0");
+}
+
+export type { PasteMethod };
+
+export function getPasteMethod(): PasteMethod {
+  return normalizePasteMethod(localStorage.getItem(LS_PASTE_METHOD));
+}
+
+export function setPasteMethod(v: PasteMethod): void {
+  localStorage.setItem(LS_PASTE_METHOD, v);
 }
 
 /**

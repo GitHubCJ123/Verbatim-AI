@@ -14,11 +14,14 @@ use std::process::Stdio;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use tauri::{AppHandle, Manager, State};
+use tauri::{ipc::Request, AppHandle, Manager, State};
 use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
 
-use super::local_whisper::{resolve_whisper_server_launch, write_pcm_wav, TranscribeArgs, TranscribeOutput};
+use super::local_whisper::{
+    resolve_whisper_server_launch, transcribe_args_from_pcm_request, write_pcm_wav, TranscribeArgs,
+    TranscribeOutput,
+};
 
 fn perf_enabled() -> bool {
     std::env::var("VERBATIM_PERF").ok().as_deref() == Some("1")
@@ -245,6 +248,17 @@ pub async fn unload_engine(state: State<'_, WhisperServerState>) -> Result<(), S
 #[tauri::command]
 pub fn is_whisper_server_available(app: AppHandle, preference: Option<String>) -> bool {
     super::local_whisper::whisper_server_available(&app, preference.as_deref())
+}
+
+/// Transcribe via the persistent server. Output matches `transcribe_local`.
+#[tauri::command]
+pub async fn transcribe_local_server_pcm(
+    app: AppHandle,
+    state: State<'_, WhisperServerState>,
+    request: Request<'_>,
+) -> Result<TranscribeOutput, String> {
+    let args = transcribe_args_from_pcm_request(&request)?;
+    transcribe_local_server(app, state, args).await
 }
 
 /// Transcribe via the persistent server. Output matches `transcribe_local`.

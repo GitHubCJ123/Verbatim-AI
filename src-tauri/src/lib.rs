@@ -12,7 +12,7 @@ use commands::{
     local_whisper::{
         delete_local_model, detect_whisper_compute_backend, download_local_model,
         get_active_whisper_runtime_variant, install_whisper_runtime,
-        is_whisper_runtime_installed, list_local_models, transcribe_local,
+        is_whisper_runtime_installed, list_local_models, transcribe_local, transcribe_local_pcm,
     },
     parakeet::{
         delete_parakeet_model, download_parakeet_model, install_parakeet_runtime,
@@ -26,8 +26,8 @@ use commands::{
     process_list::list_running_apps,
     relay::relay_event,
     whisper_server::{
-        ensure_engine_ready, is_whisper_server_available, transcribe_local_server, unload_engine,
-        WhisperServerState,
+        ensure_engine_ready, is_whisper_server_available, transcribe_local_server,
+        transcribe_local_server_pcm, unload_engine, WhisperServerState,
     },
 };
 use tauri::Manager;
@@ -100,6 +100,7 @@ pub fn run() {
             download_local_model,
             delete_local_model,
             transcribe_local,
+            transcribe_local_pcm,
             is_whisper_runtime_installed,
             detect_whisper_compute_backend,
             get_active_whisper_runtime_variant,
@@ -120,6 +121,7 @@ pub fn run() {
             ensure_engine_ready,
             unload_engine,
             transcribe_local_server,
+            transcribe_local_server_pcm,
             is_whisper_server_available,
         ])
         .setup(|app| {

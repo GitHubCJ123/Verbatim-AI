@@ -17,7 +17,10 @@ use futures_util::StreamExt;
 use minisign_verify::{PublicKey, Signature};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{
+    ipc::{InvokeBody, Request},
+    AppHandle, Emitter, Manager,
+};
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
@@ -833,6 +836,57 @@ pub struct TranscribeArgs {
     pub pcm: Vec<f32>,
 }
 
+fn request_header(request: &Request<'_>, name: &str) -> Option<String> {
+    request
+        .headers()
+        .get(name)
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+pub(crate) fn transcribe_args_from_pcm_request(
+    request: &Request<'_>,
+) -> Result<TranscribeArgs, String> {
+    let format = request_header(request, "x-verbatim-pcm-format")
+        .ok_or_else(|| "Missing PCM format header".to_string())?;
+    if format != "f32le-16000-mono" {
+        return Err(format!("Unsupported PCM format: {format}"));
+    }
+
+    let bytes = match request.body() {
+        InvokeBody::Raw(bytes) => bytes,
+        InvokeBody::Json(_) => return Err("PCM audio must be sent as raw bytes".into()),
+    };
+    if bytes.is_empty() {
+        return Err("Empty audio buffer".into());
+    }
+    if bytes.len() % std::mem::size_of::<f32>() != 0 {
+        return Err("PCM byte length must be divisible by 4".into());
+    }
+
+    let pcm = bytes
+        .chunks_exact(4)
+        .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+        .collect();
+
+    let tier = request_header(request, "x-verbatim-tier")
+        .ok_or_else(|| "Missing Whisper tier header".to_string())?;
+    let language = request_header(request, "x-verbatim-language");
+    let compute_preference = request_header(request, "x-verbatim-compute-preference");
+    let translate = request_header(request, "x-verbatim-translate")
+        .map(|v| matches!(v.as_str(), "1" | "true" | "yes"));
+
+    Ok(TranscribeArgs {
+        tier,
+        language,
+        translate,
+        compute_preference,
+        pcm,
+    })
+}
+
 #[derive(Serialize)]
 pub struct TranscribeOutput {
     pub(crate) text: String,
@@ -1023,6 +1077,15 @@ struct RuntimeFallbackPayload {
     from: String,
     to: String,
     reason: String,
+}
+
+#[tauri::command]
+pub async fn transcribe_local_pcm(
+    app: AppHandle,
+    request: Request<'_>,
+) -> Result<TranscribeOutput, String> {
+    let args = transcribe_args_from_pcm_request(&request)?;
+    transcribe_local(app, args).await
 }
 
 #[tauri::command]

@@ -240,12 +240,12 @@ export function resetWhisperEngineProbe(): void {
 
 /** Resolve the Tauri command to use for the current engine setting. */
 export async function resolveWhisperCommand(): Promise<
-  "transcribe_local" | "transcribe_local_server"
+  "transcribe_local_pcm" | "transcribe_local_server_pcm"
 > {
   const engine = getLocalWhisperEngine();
-  if (engine === "cli") return "transcribe_local";
-  if (engine === "server") return "transcribe_local_server";
-  return (await warmServerAvailable()) ? "transcribe_local_server" : "transcribe_local";
+  if (engine === "cli") return "transcribe_local_pcm";
+  if (engine === "server") return "transcribe_local_server_pcm";
+  return (await warmServerAvailable()) ? "transcribe_local_server_pcm" : "transcribe_local_pcm";
 }
 
 export interface LocalWhisperConfig {
@@ -266,25 +266,24 @@ export class LocalWhisperProvider implements AIProvider {
     const decodeMs = Math.round(performance.now() - totalStarted);
     const command = await resolveWhisperCommand();
     const perf = isPerfDebugEnabled();
-    const pcm = Array.from(samples);
-    const args = {
-      tier: this.cfg.tier,
-      language: input.language ?? null,
-      translate: false,
-      compute_preference: getWhisperComputePreference(),
-      pcm,
+    const pcmView = new Uint8Array(samples.buffer, samples.byteOffset, samples.byteLength);
+    const pcmBytes = new Uint8Array(pcmView.byteLength);
+    pcmBytes.set(pcmView);
+    const headers = {
+      "content-type": "application/octet-stream",
+      "x-verbatim-pcm-format": "f32le-16000-mono",
+      "x-verbatim-tier": this.cfg.tier,
+      "x-verbatim-language": input.language ?? "",
+      "x-verbatim-translate": "false",
+      "x-verbatim-compute-preference": getWhisperComputePreference(),
     };
-    const ipcPayloadBytes = perf
-      ? new TextEncoder().encode(JSON.stringify({ args })).byteLength
-      : samples.byteLength;
+    const ipcPayloadBytes = pcmBytes.byteLength;
     const invokeStarted = performance.now();
     const out = await invoke<{
       text: string;
       language_detected: string;
       duration_ms: number;
-    }>(command, {
-      args,
-    });
+    }>(command, pcmBytes, { headers });
     const invokeMs = Math.round(performance.now() - invokeStarted);
     const totalMs = Math.round(performance.now() - totalStarted);
     if (perf) {

@@ -27,7 +27,30 @@ function render() {
     ? "Local + Copilot text runs"
     : "Local read-only";
   renderIssues();
+  renderPRs();
   renderDetail();
+}
+
+function renderPRs() {
+  const list = document.getElementById("prList");
+  list.textContent = "";
+  for (const pr of state.prs ?? []) {
+    const card = el("a", { className: "pr-card", text: `PR #${pr.number}` });
+    card.href = pr.url;
+    card.target = "_blank";
+    card.rel = "noreferrer";
+    card.append(
+      el("span", { className: "pr-title", text: pr.title }),
+      el("span", {
+        className: "pr-meta",
+        text: `${pr.isDraft ? "draft" : "ready/open"} · ${pr.mergeStateStatus ?? "unknown"} · issues ${pr.closingIssues.join(", ") || "none"}`,
+      }),
+    );
+    list.append(card);
+  }
+  if (!list.children.length) {
+    list.append(el("div", { className: "empty-prs", text: "No pull requests found." }));
+  }
 }
 
 function renderIssues() {
@@ -65,6 +88,23 @@ function renderDetail() {
   const labels = el("div", { className: "labels" });
   for (const label of issue.labels ?? []) labels.append(el("span", { className: "label", text: label }));
   title.append(labels);
+  const related = el("div", { className: "related-prs" });
+  if (issue.relatedPrs?.length) {
+    related.append(el("div", { className: "mini-title", text: "Related PRs" }));
+    for (const pr of issue.relatedPrs) {
+      const link = el("a", {
+        className: "related-pr",
+        text: `#${pr.number} ${pr.title} · ${pr.isDraft ? "draft" : "ready/open"} · ${pr.mergeStateStatus ?? "unknown"}`,
+      });
+      link.href = pr.url;
+      link.target = "_blank";
+      link.rel = "noreferrer";
+      related.append(link);
+    }
+  } else {
+    related.append(el("div", { className: "mini-title", text: "No related PR yet" }));
+  }
+  title.append(related);
   const reflect = el("button", { className: "reflection-btn", text: "Run self-reflection" });
   reflect.addEventListener("click", () => runReflection(issue.id));
   head.append(title, reflect);

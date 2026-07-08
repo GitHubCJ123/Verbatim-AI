@@ -203,10 +203,14 @@ async function buildState(ctx) {
   for (const issue of issues) {
     const local = ctx.state.issues[issue.id] ?? {};
     const { derived, spec, linkedPr } = await deriveIssueState({ root: ROOT, issue, prs, localIssue: local });
+    const relatedPrs = prs.filter((pr) =>
+      pr.closingIssuesReferences?.some((ref) => String(ref.number) === String(issue.number)),
+    );
     hydrated.push({
       ...issue,
       spec,
       linkedPr,
+      relatedPrs,
       phases: buildPhaseView(issue, local, derived),
       local: {
         approvals: local.approvals ?? {},
@@ -225,6 +229,14 @@ async function buildState(ctx) {
       host: "127.0.0.1",
     },
     phases: PHASES,
+    prs: prs.map((pr) => ({
+      number: pr.number,
+      title: pr.title,
+      url: pr.url,
+      isDraft: pr.isDraft,
+      mergeStateStatus: pr.mergeStateStatus,
+      closingIssues: pr.closingIssuesReferences?.map((ref) => ref.number) ?? [],
+    })),
     issues: hydrated,
   };
 }

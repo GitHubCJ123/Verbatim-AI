@@ -20,6 +20,10 @@ use tokio::sync::Mutex;
 
 use super::local_whisper::{resolve_whisper_server_launch, write_pcm_wav, TranscribeArgs, TranscribeOutput};
 
+fn perf_enabled() -> bool {
+    std::env::var("VERBATIM_PERF").ok().as_deref() == Some("1")
+}
+
 const HEALTH_TIMEOUT: Duration = Duration::from_secs(120);
 const HEALTH_POLL: Duration = Duration::from_millis(150);
 const DEFAULT_IDLE: Duration = Duration::from_secs(5 * 60);
@@ -104,6 +108,7 @@ impl WhisperServerState {
         let port = pick_free_port()?;
         let base_url = format!("http://127.0.0.1:{port}");
 
+        let spawn_started = Instant::now();
         let mut cmd = Command::new(&launch.server_bin);
         cmd.arg("-m")
             .arg(&launch.model_path)
@@ -136,6 +141,13 @@ impl WhisperServerState {
         if let Err(e) = wait_until_ready(&base_url).await {
             let _ = handle.child.start_kill();
             return Err(e);
+        }
+        if perf_enabled() {
+            eprintln!(
+                "[verbatim-perf] whisper-server spawn_ms={} key={}",
+                spawn_started.elapsed().as_millis(),
+                handle.key
+            );
         }
 
         let mut guard = self.inner.lock().await;
@@ -289,6 +301,12 @@ pub async fn transcribe_local_server(
         .await
         .map_err(|e| format!("failed to read whisper-server response: {e}"))?;
     let wall_ms = started.elapsed().as_millis() as u64;
+    if perf_enabled() {
+        eprintln!(
+            "[verbatim-perf] whisper-server request_ms={}",
+            wall_ms
+        );
+    }
     let value: serde_json::Value =
         serde_json::from_str(&body).map_err(|e| format!("invalid whisper-server response: {e}"))?;
 

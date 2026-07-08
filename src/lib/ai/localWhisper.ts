@@ -6,6 +6,7 @@
  * cleanup function for now (Phase 2: local LLM via Ollama/llama.cpp).
  */
 import { invoke } from "@tauri-apps/api/core";
+import { isPerfDebugEnabled } from "../preferences";
 import { decodeToMonoF32_16k } from "./audioDecode";
 import type {
   AIProvider,
@@ -253,27 +254,41 @@ export class LocalWhisperProvider implements AIProvider {
   }
 
   async transcribe(input: TranscribeInput): Promise<TranscribeResult> {
+    const totalStarted = performance.now();
     const samples = await decodeToMonoF32_16k(input.audio);
+    const decodeMs = Math.round(performance.now() - totalStarted);
     const command = await resolveWhisperCommand();
-    const started = performance.now();
+    const perf = isPerfDebugEnabled();
+    const pcm = Array.from(samples);
+    const args = {
+      tier: this.cfg.tier,
+      language: input.language ?? null,
+      translate: false,
+      compute_preference: getWhisperComputePreference(),
+      pcm,
+    };
+    const ipcPayloadBytes = perf
+      ? new TextEncoder().encode(JSON.stringify({ args })).byteLength
+      : samples.byteLength;
+    const invokeStarted = performance.now();
     const out = await invoke<{
       text: string;
       language_detected: string;
       duration_ms: number;
     }>(command, {
-      args: {
-        tier: this.cfg.tier,
-        language: input.language ?? null,
-        translate: false,
-        compute_preference: getWhisperComputePreference(),
-        pcm: Array.from(samples),
-      },
+      args,
     });
-    const wallMs = Math.round(performance.now() - started);
+    const invokeMs = Math.round(performance.now() - invokeStarted);
+    const totalMs = Math.round(performance.now() - totalStarted);
+    if (perf) {
+      console.debug(
+        `[Verbatim AI][perf] local-whisper command=${command} decode_ms=${decodeMs} ipc_payload_bytes=${ipcPayloadBytes} invoke_ms=${invokeMs} total_ms=${totalMs}`,
+      );
+    }
     return {
       text: out.text,
       languageDetected: out.language_detected || (input.language ?? "auto"),
-      durationMs: out.duration_ms || wallMs,
+      durationMs: out.duration_ms || invokeMs,
     };
   }
 

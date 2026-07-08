@@ -22,6 +22,10 @@ use tokio::fs;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 
+fn perf_enabled() -> bool {
+    std::env::var("VERBATIM_PERF").ok().as_deref() == Some("1")
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum WhisperRuntimeVariant {
@@ -975,6 +979,13 @@ async fn run_whisper_cli(
     }
 
     let duration_ms = started.elapsed().as_millis() as u64;
+    if perf_enabled() {
+        eprintln!(
+            "[verbatim-perf] whisper-cli total_ms={} variant={}",
+            duration_ms,
+            variant.as_str()
+        );
+    }
     Ok(TranscribeOutput {
         text: stdout_text,
         language_detected: lang_detected,
@@ -1019,6 +1030,7 @@ pub async fn transcribe_local(
     app: AppHandle,
     args: TranscribeArgs,
 ) -> Result<TranscribeOutput, String> {
+    let total_started = Instant::now();
     let t =
         WhisperTier::from_str(&args.tier).ok_or_else(|| format!("unknown tier: {}", args.tier))?;
     let model_path = models_dir(&app)?.join(t.file_name());
@@ -1097,5 +1109,11 @@ pub async fn transcribe_local(
 
     let _ = fs::remove_file(&wav_path).await;
     let _ = fs::remove_file(json_stem.with_extension("json")).await;
+    if perf_enabled() {
+        eprintln!(
+            "[verbatim-perf] transcribe_local total_ms={}",
+            total_started.elapsed().as_millis()
+        );
+    }
     output
 }

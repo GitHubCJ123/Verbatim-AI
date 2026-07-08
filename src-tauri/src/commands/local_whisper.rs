@@ -75,36 +75,71 @@ pub enum WhisperTier {
     Small,
     Turbo,
     LargeV3,
+    LargeV3Q5,
 }
+
+/// A single built-in Whisper model. The catalogue is data-driven: adding a
+/// model here (id + ggml filename) is enough to make it downloadable,
+/// selectable, and transcribable — no other match arms to update.
+struct BuiltinModel {
+    tier: WhisperTier,
+    id: &'static str,
+    file_name: &'static str,
+}
+
+const BUILTIN_MODELS: &[BuiltinModel] = &[
+    BuiltinModel {
+        tier: WhisperTier::Tiny,
+        id: "tiny",
+        file_name: "ggml-tiny.bin",
+    },
+    BuiltinModel {
+        tier: WhisperTier::Base,
+        id: "base",
+        file_name: "ggml-base.bin",
+    },
+    BuiltinModel {
+        tier: WhisperTier::Small,
+        id: "small",
+        file_name: "ggml-small.bin",
+    },
+    BuiltinModel {
+        tier: WhisperTier::Turbo,
+        id: "turbo",
+        file_name: "ggml-large-v3-turbo-q5_0.bin",
+    },
+    BuiltinModel {
+        tier: WhisperTier::LargeV3,
+        id: "large-v3",
+        file_name: "ggml-large-v3.bin",
+    },
+    BuiltinModel {
+        tier: WhisperTier::LargeV3Q5,
+        id: "large-v3-q5_0",
+        file_name: "ggml-large-v3-q5_0.bin",
+    },
+];
 
 impl WhisperTier {
     fn from_str(s: &str) -> Option<Self> {
-        match s {
-            "tiny" => Some(Self::Tiny),
-            "base" => Some(Self::Base),
-            "small" => Some(Self::Small),
-            "turbo" => Some(Self::Turbo),
-            "large-v3" => Some(Self::LargeV3),
-            _ => None,
-        }
+        BUILTIN_MODELS
+            .iter()
+            .find(|m| m.id == s)
+            .map(|m| m.tier)
     }
     fn as_str(&self) -> &'static str {
-        match self {
-            Self::Tiny => "tiny",
-            Self::Base => "base",
-            Self::Small => "small",
-            Self::Turbo => "turbo",
-            Self::LargeV3 => "large-v3",
-        }
+        BUILTIN_MODELS
+            .iter()
+            .find(|m| m.tier == *self)
+            .map(|m| m.id)
+            .unwrap_or("unknown")
     }
     fn file_name(&self) -> &'static str {
-        match self {
-            Self::Tiny => "ggml-tiny.bin",
-            Self::Base => "ggml-base.bin",
-            Self::Small => "ggml-small.bin",
-            Self::Turbo => "ggml-large-v3-turbo-q5_0.bin",
-            Self::LargeV3 => "ggml-large-v3.bin",
-        }
+        BUILTIN_MODELS
+            .iter()
+            .find(|m| m.tier == *self)
+            .map(|m| m.file_name)
+            .unwrap_or("")
     }
     fn download_url(&self) -> String {
         format!(
@@ -112,15 +147,41 @@ impl WhisperTier {
             self.file_name()
         )
     }
-    fn all() -> [Self; 5] {
-        [
-            Self::Tiny,
-            Self::Base,
-            Self::Small,
-            Self::Turbo,
-            Self::LargeV3,
-        ]
+    fn all() -> impl Iterator<Item = Self> {
+        BUILTIN_MODELS.iter().map(|m| m.tier)
     }
+}
+
+/// True if `name` is the ggml filename of a built-in model. Used to exclude
+/// managed models from the user-supplied (custom) model scan.
+fn is_builtin_file_name(name: &str) -> bool {
+    BUILTIN_MODELS.iter().any(|m| m.file_name == name)
+}
+
+/// True if `name` is a safe, single-segment filename (no path traversal).
+fn is_safe_custom_file_name(name: &str) -> bool {
+    !name.is_empty()
+        && !name.contains('/')
+        && !name.contains('\\')
+        && !name.contains("..")
+        && Path::new(name).file_name().and_then(|n| n.to_str()) == Some(name)
+}
+
+/// Resolve a model id — either a built-in tier id (e.g. `turbo`) or a custom
+/// model id of the form `custom:<filename>` — to a path inside the models
+/// dir. Rejects path-traversal in custom filenames.
+fn resolve_model_path(app: &AppHandle, id: &str) -> Result<PathBuf, String> {
+    let dir = models_dir(app)?;
+    if let Some(t) = WhisperTier::from_str(id) {
+        return Ok(dir.join(t.file_name()));
+    }
+    if let Some(name) = id.strip_prefix("custom:") {
+        if !is_safe_custom_file_name(name) {
+            return Err(format!("invalid custom model id: {id}"));
+        }
+        return Ok(dir.join(name));
+    }
+    Err(format!("unknown model id: {id}"))
 }
 
 fn app_data(app: &AppHandle) -> Result<PathBuf, String> {
@@ -256,8 +317,7 @@ pub(crate) fn resolve_whisper_server_launch(
     tier: &str,
     compute_preference: Option<&str>,
 ) -> Result<WhisperServerLaunch, String> {
-    let t = WhisperTier::from_str(tier).ok_or_else(|| format!("unknown tier: {tier}"))?;
-    let model_path = models_dir(app)?.join(t.file_name());
+    let model_path = resolve_model_path(app, tier)?;
     if !model_path.exists() {
         return Err(format!(
             "Model '{tier}' is not downloaded yet. Download it from Settings → AI model."
@@ -749,6 +809,80 @@ pub async fn list_local_models(app: AppHandle) -> Result<Vec<ModelInfo>, String>
     Ok(out)
 }
 
+/// A user-supplied Whisper model discovered in the models dir that is not one
+/// of the managed built-in tiers ("bring your own model").
+#[derive(Serialize, Clone)]
+pub struct CustomModelInfo {
+    /// Selectable id understood by `resolve_model_path` (e.g. `custom:foo.gguf`).
+    id: String,
+    file_name: String,
+    /// Human-friendly name derived from the filename.
+    display_name: String,
+    size_bytes: u64,
+}
+
+fn custom_display_name(file_name: &str) -> String {
+    let stem = file_name
+        .rsplit_once('.')
+        .map(|(s, _)| s)
+        .unwrap_or(file_name);
+    let stem = stem.strip_prefix("ggml-").unwrap_or(stem);
+    if stem.is_empty() {
+        file_name.to_string()
+    } else {
+        stem.to_string()
+    }
+}
+
+fn scan_custom_models(app: &AppHandle) -> Result<Vec<CustomModelInfo>, String> {
+    let dir = models_dir(app)?;
+    let mut out = Vec::new();
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(e) => e,
+        Err(_) => return Ok(out),
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        let lower = name.to_ascii_lowercase();
+        if !(lower.ends_with(".bin") || lower.ends_with(".gguf")) {
+            continue;
+        }
+        if is_builtin_file_name(name) {
+            continue;
+        }
+        let size_bytes = entry.metadata().map(|m| m.len()).unwrap_or(0);
+        out.push(CustomModelInfo {
+            id: format!("custom:{name}"),
+            file_name: name.to_string(),
+            display_name: custom_display_name(name),
+            size_bytes,
+        });
+    }
+    out.sort_by(|a, b| a.display_name.to_lowercase().cmp(&b.display_name.to_lowercase()));
+    Ok(out)
+}
+
+/// List user-supplied Whisper models (`.bin`/`.gguf` dropped into the models
+/// dir) that are not managed built-in tiers.
+#[tauri::command]
+pub async fn list_custom_whisper_models(app: AppHandle) -> Result<Vec<CustomModelInfo>, String> {
+    scan_custom_models(&app)
+}
+
+/// Re-scan the models dir for user-supplied models. Alias of
+/// `list_custom_whisper_models` for a clearer call-site name after a user
+/// drops a new file into the folder.
+#[tauri::command]
+pub async fn rescan_local_models(app: AppHandle) -> Result<Vec<CustomModelInfo>, String> {
+    scan_custom_models(&app)
+}
+
 #[derive(Serialize, Clone)]
 struct DownloadProgress {
     tier: String,
@@ -819,8 +953,7 @@ pub async fn download_local_model(app: AppHandle, tier: String) -> Result<(), St
 
 #[tauri::command]
 pub async fn delete_local_model(app: AppHandle, tier: String) -> Result<(), String> {
-    let t = WhisperTier::from_str(&tier).ok_or_else(|| format!("unknown tier: {tier}"))?;
-    let path = models_dir(&app)?.join(t.file_name());
+    let path = resolve_model_path(&app, &tier)?;
     if path.exists() {
         std::fs::remove_file(&path).map_err(|e| e.to_string())?;
     }
@@ -1095,9 +1228,7 @@ pub async fn transcribe_local(
     args: TranscribeArgs,
 ) -> Result<TranscribeOutput, String> {
     let total_started = Instant::now();
-    let t =
-        WhisperTier::from_str(&args.tier).ok_or_else(|| format!("unknown tier: {}", args.tier))?;
-    let model_path = models_dir(&app)?.join(t.file_name());
+    let model_path = resolve_model_path(&app, &args.tier)?;
     if !model_path.exists() {
         return Err(format!(
             "Model '{}' is not downloaded yet. Download it from Settings → AI model.",
@@ -1180,4 +1311,55 @@ pub async fn transcribe_local(
         );
     }
     output
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn builtin_catalogue_round_trips() {
+        for m in BUILTIN_MODELS {
+            let tier = WhisperTier::from_str(m.id).expect("id resolves to a tier");
+            assert_eq!(tier.as_str(), m.id);
+            assert_eq!(tier.file_name(), m.file_name);
+        }
+        // The quantized large variant is part of the catalogue.
+        assert!(WhisperTier::from_str("large-v3-q5_0").is_some());
+        assert_eq!(WhisperTier::all().count(), BUILTIN_MODELS.len());
+    }
+
+    #[test]
+    fn unknown_tier_is_none() {
+        assert!(WhisperTier::from_str("does-not-exist").is_none());
+    }
+
+    #[test]
+    fn safe_custom_names_accepted() {
+        assert!(is_safe_custom_file_name("my-model.gguf"));
+        assert!(is_safe_custom_file_name("ggml-foo.bin"));
+    }
+
+    #[test]
+    fn unsafe_custom_names_rejected() {
+        assert!(!is_safe_custom_file_name(""));
+        assert!(!is_safe_custom_file_name("../secret"));
+        assert!(!is_safe_custom_file_name("a/b.bin"));
+        assert!(!is_safe_custom_file_name("a\\b.bin"));
+        assert!(!is_safe_custom_file_name("..\\..\\etc"));
+    }
+
+    #[test]
+    fn builtin_file_names_are_recognized() {
+        assert!(is_builtin_file_name("ggml-large-v3-q5_0.bin"));
+        assert!(is_builtin_file_name("ggml-tiny.bin"));
+        assert!(!is_builtin_file_name("my-custom.gguf"));
+    }
+
+    #[test]
+    fn display_name_strips_prefix_and_extension() {
+        assert_eq!(custom_display_name("ggml-foo.bin"), "foo");
+        assert_eq!(custom_display_name("my-model.gguf"), "my-model");
+        assert_eq!(custom_display_name("plain"), "plain");
+    }
 }

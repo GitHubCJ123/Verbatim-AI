@@ -16,6 +16,12 @@ interface RecordingPillProps {
   error?: string | null;
   /** Where this recording's content goes (resolved per-mode). */
   privacy?: DataLocality | null;
+  /**
+   * Live partial (chunked pseudo-streaming) preview shown while
+   * recording. Empty unless the opt-in feature is on and a partial has
+   * arrived; replaced by the final transcript once recording stops.
+   */
+  partialText?: string;
 }
 
 function formatDuration(ms: number) {
@@ -46,7 +52,14 @@ function useElapsed(active: boolean) {
   return elapsed;
 }
 
-export function RecordingPill({ state, modeName, controller, error, privacy }: RecordingPillProps) {
+export function RecordingPill({
+  state,
+  modeName,
+  controller,
+  error,
+  privacy,
+  partialText,
+}: RecordingPillProps) {
   const elapsed = useElapsed(state === "recording");
 
   // Stable getter for the waveform that survives controller swaps.
@@ -106,9 +119,14 @@ export function RecordingPill({ state, modeName, controller, error, privacy }: R
 
           {/* Center: waveform or shimmer */}
           <div className="relative flex h-10 flex-1 items-center">
-            {state === "recording" && (
-              <Waveform getBars={getBars} className="h-full w-full" />
-            )}
+            {state === "recording" &&
+              (partialText ? (
+                <div className="w-full truncate text-xs italic text-text-muted" title={partialText}>
+                  {partialText}
+                </div>
+              ) : (
+                <Waveform getBars={getBars} className="h-full w-full" />
+              ))}
             {(state === "processing" || state === "polishing") && (
               <div className="relative h-1 w-full overflow-hidden rounded-pill bg-bg-elevated">
                 <motion.div
@@ -118,9 +136,7 @@ export function RecordingPill({ state, modeName, controller, error, privacy }: R
                 />
               </div>
             )}
-            {state === "success" && (
-              <div className="text-sm font-medium text-success">Done</div>
-            )}
+            {state === "success" && <div className="text-sm font-medium text-success">Done</div>}
             {state === "error" && (
               <div className="truncate text-xs text-danger">{error ?? "Something went wrong"}</div>
             )}

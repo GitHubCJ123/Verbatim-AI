@@ -15,33 +15,53 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { RecordingPill } from "../components/recording/RecordingPill";
 import { ReviewPanel } from "../components/recording/ReviewPanel";
 import { startRecording, type AudioController } from "../lib/audio";
+import { decodeToMonoF32_16k } from "../lib/ai/audioDecode";
+import { encodeWavBlob } from "../lib/audio/wav";
+import { trimSilence } from "../lib/vad/trim";
+import { AutoStopDetector } from "../lib/vad/autoStop";
+import { VAD_SAMPLE_RATE } from "../lib/vad/vad";
+import { PartialSegmenter } from "../lib/transcribe/segmenter";
+import { TranscriptionCoordinator } from "../lib/transcribe/coordinator";
 import type { RecordingState } from "../lib/store/useRecording";
 import { getActiveProvider } from "../lib/ai";
 import { getModeById, getDefaultMode, loadVocabulary } from "../lib/store/useModes";
 import { applyVocabReplacements } from "../lib/vocab";
-import {
-  resizeOverlayToPill,
-  resizeOverlayToReview,
-} from "../lib/recording-bridge";
+import { resizeOverlayToPill, resizeOverlayToReview } from "../lib/recording-bridge";
 import { pasteCleanedText, copyCleanedText, clearCapturedTarget } from "../lib/output";
+import { osKind } from "../lib/os";
+import { pasteMethodUsesClipboard } from "../lib/pasteMethod";
 import {
   isAiImproveDisabled,
   getMicDeviceId,
   getOutputBehavior,
+  getPasteMethod,
   isPerfDebugEnabled,
+  isSilenceTrimEnabled,
+  isAutoStopEnabled,
+  isFillerFilterEnabled,
+  isFuzzyVocabEnabled,
+  isLivePartialEnabled,
 } from "../lib/preferences";
+import { applyInlinePostProcessing } from "../lib/postProcess";
 import { getPrivacyStatus, type DataLocality } from "../lib/privacyStatus";
 import type { Mode } from "../types/mode";
 
 function noPasteTargetMessage(): string {
   const behavior = getOutputBehavior();
-  if (behavior === "insert-only") {
-    return "[Verbatim AI] no paste target; clipboard unchanged because insert-only is enabled";
+  const method = behavior === "insert-only" ? "direct" : getPasteMethod();
+  if (!pasteMethodUsesClipboard(method, osKind())) {
+    return "[Verbatim AI] no paste target; clipboard unchanged because direct paste is enabled";
   }
   if (behavior === "restore") {
     return "[Verbatim AI] no paste target; previous clipboard will be restored";
   }
   return "[Verbatim AI] no paste target; copied to clipboard";
+}
+
+function shouldShowReviewWhenPasteMisses(): boolean {
+  const behavior = getOutputBehavior();
+  const method = behavior === "insert-only" ? "direct" : getPasteMethod();
+  return !pasteMethodUsesClipboard(method, osKind()) || behavior === "restore";
 }
 
 type View = "pill" | "review";
@@ -53,9 +73,16 @@ export default function Overlay() {
   const [error, setError] = useState<string | null>(null);
   const [streamingCleaned, setStreamingCleaned] = useState("");
   const [rawText, setRawText] = useState("");
+  const [partialText, setPartialText] = useState("");
   const [privacy, setPrivacy] = useState<DataLocality | null>(null);
 
   const controllerRef = useRef<AudioController | null>(null);
+  const autoStopRef = useRef<AutoStopDetector | null>(null);
+  const partialSegmenterRef = useRef<PartialSegmenter | null>(null);
+  const partialCoordinatorRef = useRef<TranscriptionCoordinator<Float32Array, string> | null>(null);
+  // Monotonic recording session id — guards stale live-partial results
+  // from a previous recording landing in the current UI.
+  const sessionRef = useRef(0);
   // In-flight getUserMedia: a stop/cancel that lands while the mic is
   // still being acquired must await this so the stream is never leaked.
   const startingRef = useRef<Promise<AudioController> | null>(null);
@@ -75,26 +102,121 @@ export default function Overlay() {
     setView("pill");
     setStreamingCleaned("");
     setRawText("");
+    setPartialText("");
     setError(null);
     await resizeOverlayToPill();
     await clearCapturedTarget();
     await hideAfter(0);
   };
 
+  /**
+   * Tear down the live-partial machinery (Phase 6). Bumps the session id
+   * so any transcribe request still in flight can't paint a stale partial
+   * into the current UI, then disposes the coordinator + segmenter.
+   */
+  const disposeLivePartial = () => {
+    sessionRef.current++;
+    partialSegmenterRef.current?.dispose();
+    partialSegmenterRef.current = null;
+    partialCoordinatorRef.current?.dispose();
+    partialCoordinatorRef.current = null;
+  };
+
+  /**
+   * Build the live-partial coordinator + segmenter and register a frame
+   * sink into `sinks`. Each partial re-transcribes the audio-so-far
+   * through the active provider; results paint into `partialText` only if
+   * they belong to the current recording session (stale-result guard).
+   */
+  const setupLivePartial = (mode: Mode | null, sinks: Array<(frame: Float32Array) => void>) => {
+    const provider = getActiveProvider(mode);
+    const activeMode = mode ?? getDefaultMode();
+    if (!provider || !activeMode) return;
+    const session = sessionRef.current;
+    const vocab = loadVocabulary().map((t) => t.term);
+
+    const coordinator = new TranscriptionCoordinator<Float32Array, string>({
+      run: async (pcm) => {
+        const wav = encodeWavBlob(pcm, VAD_SAMPLE_RATE);
+        const res = await provider.transcribe({
+          audio: wav,
+          language: activeMode.language || "auto",
+          vocabularyHints: vocab,
+        });
+        return res.text ?? "";
+      },
+      onResult: (text) => {
+        // Ignore results from a superseded recording session.
+        if (sessionRef.current !== session) return;
+        const trimmed = text.trim();
+        if (trimmed) setPartialText(trimmed);
+      },
+      onError: (e) => {
+        // Partials are a best-effort preview — never surface their
+        // failures. Log only in dev.
+        if (import.meta.env.DEV) console.warn("[Verbatim AI] live partial failed:", e);
+      },
+    });
+    partialCoordinatorRef.current = coordinator;
+
+    const segmenter = new PartialSegmenter({
+      onPartial: (pcm) => coordinator.submit(pcm),
+    });
+    partialSegmenterRef.current = segmenter;
+    sinks.push((frame) => segmenter.push(frame));
+  };
+
   const start = async (mode: string, modeId: string | null, pressedAt?: number) => {
     setError(null);
     setStreamingCleaned("");
     setRawText("");
+    setPartialText("");
     setView("pill");
     setModeName(mode);
     modeRef.current = getModeById(modeId) ?? getDefaultMode();
     setPrivacy(getPrivacyStatus(modeRef.current).overall);
     try {
+      // Frame sinks fan out the real-time PCM frames (Phase 3) to any
+      // opt-in consumers. Each is independent and default-off, so the
+      // plain push-to-talk path wires nothing.
+      autoStopRef.current = null;
+      partialSegmenterRef.current = null;
+      partialCoordinatorRef.current = null;
+      const sinks: Array<(frame: Float32Array) => void> = [];
+
+      // Hands-free auto-stop (opt-in): feed live frames to a VAD
+      // endpointer that stops the recording after a hangover of silence.
+      if (isAutoStopEnabled()) {
+        const detector = new AutoStopDetector({
+          onSilence: () => {
+            void stop();
+          },
+        });
+        autoStopRef.current = detector;
+        sinks.push((frame) => detector.push(frame));
+      }
+
+      // Live partial (chunked pseudo-streaming, Phase 6 / issue #23 P2.6,
+      // opt-in). A segmenter re-transcribes the audio-so-far on VAD
+      // boundaries / a fixed cadence; a coordinator serializes the
+      // overlapping requests. The final stop→transcribe path is untouched
+      // and replaces the partial. Best-effort: any failure is swallowed.
+      if (isLivePartialEnabled()) {
+        setupLivePartial(modeRef.current, sinks);
+      }
+
+      const onFrame =
+        sinks.length > 0
+          ? (frame: Float32Array) => {
+              for (const sink of sinks) sink(frame);
+            }
+          : undefined;
       // The bridge shows this window concurrently — don't wait for it.
       // Opening the mic immediately is what keeps the first syllable
       // from being lost (docs/improvement-plan/04-performance-latency.md).
       const starting = startRecording({
         deviceId: getMicDeviceId() || undefined,
+        onFrame,
         onError: (e) => {
           setError(e.message);
           setState("error");
@@ -157,15 +279,56 @@ export default function Overlay() {
     const vocabularyAll = loadVocabulary();
     const vocabularyTerms = vocabularyAll.map((t) => t.term);
 
+    // Post-hoc VAD silence trim (Phase 4a). Runs before transcription to
+    // drop leading/trailing silence and pure-noise clips. Fails open: any
+    // decode/trim error falls back to the original audio untouched.
+    let audioForTranscribe = audio;
+    if (isSilenceTrimEnabled()) {
+      try {
+        const pcm = await decodeToMonoF32_16k(audio);
+        const trim = trimSilence(pcm);
+        if (trim.isSilent) {
+          // No detectable speech and ~no energy — treat as accidental.
+          void reset();
+          return;
+        }
+        if (trim.trimmed) {
+          audioForTranscribe = encodeWavBlob(trim.pcm, VAD_SAMPLE_RATE);
+          if (isPerfDebugEnabled()) {
+            console.info(
+              `[perf] VAD trim -${Math.round(trim.leadingTrimmedMs)}ms lead / -${Math.round(
+                trim.trailingTrimmedMs,
+              )}ms tail`,
+            );
+          }
+        }
+      } catch (e) {
+        if (import.meta.env.DEV) console.warn("[Verbatim AI] VAD trim skipped:", e);
+      }
+    }
+
     try {
       setState("processing");
       const transcript = await provider.transcribe({
-        audio,
+        audio: audioForTranscribe,
         durationMs,
         language: activeMode.language || "auto",
         vocabularyHints: vocabularyTerms,
       });
-      setRawText(transcript.text);
+
+      // ── Inline post-processing (P2.9) ──────────────────────────────────
+      // Deterministic, LLM-free step applied to the raw transcript BEFORE
+      // the cleanup-LLM so fillers are absent from the LLM context and
+      // near-miss vocab terms are corrected upfront.
+      // Both features are OFF by default; zero output change unless the
+      // user explicitly enables them in Settings.
+      const processedText = applyInlinePostProcessing(transcript.text, {
+        fillerFilter: isFillerFilterEnabled(),
+        fuzzyVocab: isFuzzyVocabEnabled(),
+        vocabularyTerms: vocabularyAll,
+      });
+
+      setRawText(processedText);
 
       // Branch on output style BEFORE polishing so review users see
       // tokens stream into the editor in real time.
@@ -177,11 +340,11 @@ export default function Overlay() {
       let cleaned: string;
       if (activeMode.skipCleanup || isAiImproveDisabled()) {
         // Fast path: skip the LLM entirely; vocab replacements still run.
-        cleaned = applyVocabReplacements(transcript.text, vocabularyAll);
+        cleaned = applyVocabReplacements(processedText, vocabularyAll);
         setStreamingCleaned(cleaned);
       } else {
         setState("polishing");
-        const cleanedRaw = await runCleanup(transcript.text, activeMode, vocabularyTerms);
+        const cleanedRaw = await runCleanup(processedText, activeMode, vocabularyTerms);
         cleaned = applyVocabReplacements(cleanedRaw, vocabularyAll);
         if (cleaned !== cleanedRaw) setStreamingCleaned(cleaned);
       }
@@ -207,7 +370,7 @@ export default function Overlay() {
 
       if (activeMode.outputStyle === "paste") {
         const pasted = await pasteCleanedText(cleaned);
-        if (!pasted && getOutputBehavior() !== "copy") {
+        if (!pasted && shouldShowReviewWhenPasteMisses()) {
           console.info(noPasteTargetMessage());
           await resizeOverlayToReview();
           setView("review");
@@ -243,6 +406,11 @@ export default function Overlay() {
   };
 
   const stop = async () => {
+    autoStopRef.current?.disable();
+    autoStopRef.current = null;
+    // Tear down live partials up front so an in-flight partial transcribe
+    // can't contend with the final full-quality transcription below.
+    disposeLivePartial();
     let c = controllerRef.current;
     controllerRef.current = null;
     const starting = startingRef.current;
@@ -271,6 +439,9 @@ export default function Overlay() {
   };
 
   const cancelActive = () => {
+    autoStopRef.current?.disable();
+    autoStopRef.current = null;
+    disposeLivePartial();
     const starting = startingRef.current;
     startingRef.current = null;
     const c = controllerRef.current;
@@ -288,7 +459,7 @@ export default function Overlay() {
 
   const handleReviewPaste = async (text: string) => {
     const ok = await pasteCleanedText(text);
-    if (!ok && getOutputBehavior() !== "copy") {
+    if (!ok && shouldShowReviewWhenPasteMisses()) {
       console.info(noPasteTargetMessage());
       return;
     }
@@ -404,6 +575,7 @@ export default function Overlay() {
           controller={controllerRef.current}
           error={error}
           privacy={privacy}
+          partialText={partialText}
         />
       )}
     </div>

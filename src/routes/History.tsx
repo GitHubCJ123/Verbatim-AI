@@ -34,7 +34,9 @@ import { isSupabaseConfigured } from "../lib/supabase";
 import { toast } from "../components/ui/Toast";
 import { confirmDialog } from "../components/ui/confirmDialog";
 import { copyCleanedText, pasteCleanedText } from "../lib/output";
-import { getOutputBehavior, isAiImproveDisabled } from "../lib/preferences";
+import { osKind } from "../lib/os";
+import { pasteMethodUsesClipboard } from "../lib/pasteMethod";
+import { getOutputBehavior, getPasteMethod, isAiImproveDisabled } from "../lib/preferences";
 import { useModes } from "../lib/store/useModes";
 import { getActiveProvider } from "../lib/ai";
 import { loadVocabulary } from "../lib/store/useModes";
@@ -231,10 +233,12 @@ function HistoryRow({
   const handlePaste = async () => {
     const pasted = await pasteCleanedText(cleaned);
     const behavior = getOutputBehavior();
+    const method = behavior === "insert-only" ? "direct" : getPasteMethod();
+    const usedClipboard = pasteMethodUsesClipboard(method, osKind());
     toast.success(
       pasted
         ? "Pasted"
-        : behavior === "insert-only"
+        : !usedClipboard
           ? "No target window; clipboard unchanged"
           : behavior === "restore"
             ? "No target window; clipboard restored"

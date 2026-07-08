@@ -17,7 +17,13 @@ import type {
   TranscribeResult,
 } from "./AIProvider";
 
-export type WhisperTier = "tiny" | "base" | "small" | "turbo" | "large-v3";
+export type WhisperTier = "tiny" | "base" | "small" | "turbo" | "large-v3" | "large-v3-q5_0";
+
+/**
+ * A selectable local Whisper model id: either a built-in tier or a
+ * user-supplied ("bring your own") model of the form `custom:<filename>`.
+ */
+export type WhisperModelId = WhisperTier | `custom:${string}`;
 
 export interface WhisperTierMeta {
   tier: WhisperTier;
@@ -58,6 +64,14 @@ export const WHISPER_TIERS: WhisperTierMeta[] = [
     recommendedFor: "Modern CPUs and GPUs",
   },
   {
+    tier: "large-v3-q5_0",
+    label: "Max (compact)",
+    approxSizeMB: 1080,
+    blurb:
+      "Quantized (q5_0) large-v3. Near-full SOTA accuracy at roughly a third of the disk of the full weights.",
+    recommendedFor: "Modern laptops wanting best quality without a 3 GB download",
+  },
+  {
     tier: "large-v3",
     label: "Max",
     approxSizeMB: 3100,
@@ -66,9 +80,26 @@ export const WHISPER_TIERS: WhisperTierMeta[] = [
   },
 ];
 
+/** Built-in tier ids, derived from the catalogue so adding a model is data-only. */
+export const WHISPER_TIER_IDS: WhisperTier[] = WHISPER_TIERS.map((t) => t.tier);
+
+/** True if `id` is a user-supplied (custom) model id rather than a built-in tier. */
+export function isCustomModelId(id: string): id is `custom:${string}` {
+  return id.startsWith("custom:");
+}
+
 export interface LocalModelInfo {
   tier: WhisperTier;
   installed: boolean;
+  sizeBytes: number;
+}
+
+/** A user-supplied model discovered in the models dir (bring-your-own). */
+export interface CustomModelInfo {
+  /** Selectable id understood by the backend (`custom:<filename>`). */
+  id: `custom:${string}`;
+  fileName: string;
+  displayName: string;
   sizeBytes: number;
 }
 
@@ -84,12 +115,41 @@ export async function listLocalModels(): Promise<LocalModelInfo[]> {
   }));
 }
 
+function mapCustomModels(
+  raw: Array<{ id: string; file_name: string; display_name: string; size_bytes: number }>,
+): CustomModelInfo[] {
+  return raw.map((r) => ({
+    id: r.id as `custom:${string}`,
+    fileName: r.file_name,
+    displayName: r.display_name,
+    sizeBytes: r.size_bytes,
+  }));
+}
+
+/** List user-supplied `.bin`/`.gguf` models not managed as built-in tiers. */
+export async function listCustomWhisperModels(): Promise<CustomModelInfo[]> {
+  const raw =
+    await invoke<
+      Array<{ id: string; file_name: string; display_name: string; size_bytes: number }>
+    >("list_custom_whisper_models");
+  return mapCustomModels(raw);
+}
+
+/** Re-scan the models dir for user-supplied models (after dropping in a file). */
+export async function rescanLocalModels(): Promise<CustomModelInfo[]> {
+  const raw =
+    await invoke<
+      Array<{ id: string; file_name: string; display_name: string; size_bytes: number }>
+    >("rescan_local_models");
+  return mapCustomModels(raw);
+}
+
 export function downloadLocalModel(tier: WhisperTier): Promise<void> {
   return invoke("download_local_model", { tier });
 }
 
-export function deleteLocalModel(tier: WhisperTier): Promise<void> {
-  return invoke("delete_local_model", { tier });
+export function deleteLocalModel(id: WhisperModelId): Promise<void> {
+  return invoke("delete_local_model", { tier: id });
 }
 
 export function isWhisperRuntimeInstalled(): Promise<boolean> {
@@ -140,13 +200,15 @@ export function effectiveTranscribeKind(kind: AiProviderKind): AiProviderKind {
   return !CLOUD_FEATURES_ENABLED && kind === "cloud" ? "local-whisper" : kind;
 }
 
-export function getLocalWhisperTier(): WhisperTier {
+export function getLocalWhisperTier(): WhisperModelId {
   const v = localStorage.getItem(LS_LOCAL_WHISPER_TIER);
-  if (v === "tiny" || v === "base" || v === "small" || v === "turbo" || v === "large-v3") return v;
+  if (v && (WHISPER_TIER_IDS.includes(v as WhisperTier) || isCustomModelId(v))) {
+    return v as WhisperModelId;
+  }
   return "turbo";
 }
 
-export function setLocalWhisperTier(v: WhisperTier): void {
+export function setLocalWhisperTier(v: WhisperModelId): void {
   localStorage.setItem(LS_LOCAL_WHISPER_TIER, v);
 }
 
@@ -226,7 +288,7 @@ export function isWhisperServerAvailable(): Promise<boolean> {
   });
 }
 
-export function ensureWhisperEngineReady(tier: WhisperTier): Promise<void> {
+export function ensureWhisperEngineReady(tier: WhisperModelId): Promise<void> {
   return invoke("ensure_engine_ready", {
     tier,
     computePreference: getWhisperComputePreference(),
@@ -266,7 +328,7 @@ export async function resolveWhisperCommand(): Promise<
 }
 
 export interface LocalWhisperConfig {
-  tier: WhisperTier;
+  tier: WhisperModelId;
   /** Provider used for the cleanup/polish step until local LLM ships. */
   cleanupFallback: AIProvider;
 }
@@ -321,7 +383,6 @@ export class LocalWhisperProvider implements AIProvider {
 
   async health(): Promise<ProviderHealth> {
     try {
-      const models = await listLocalModels();
       const runtime = await isWhisperRuntimeInstalled();
       if (!runtime) {
         return {
@@ -329,6 +390,21 @@ export class LocalWhisperProvider implements AIProvider {
           message: `${whisperRuntimeVariantLabel(await getActiveWhisperRuntimeVariant())} runtime is not installed.`,
         };
       }
+      if (isCustomModelId(this.cfg.tier)) {
+        const custom = await listCustomWhisperModels();
+        const target = custom.find((m) => m.id === this.cfg.tier);
+        if (!target) {
+          return {
+            ok: false,
+            message: `Custom model '${this.cfg.tier}' is not present in the models folder.`,
+          };
+        }
+        return {
+          ok: true,
+          message: `Local Whisper (${target.displayName}) ready (${(target.sizeBytes / 1024 / 1024).toFixed(0)} MB)`,
+        };
+      }
+      const models = await listLocalModels();
       const target = models.find((m) => m.tier === this.cfg.tier);
       if (!target?.installed) {
         return {

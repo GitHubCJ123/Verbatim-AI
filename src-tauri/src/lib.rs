@@ -3,6 +3,7 @@ mod tray;
 
 use commands::{
     active_window::get_active_window,
+    cancel_hotkey::{disable_cancel_shortcut, enable_cancel_shortcut, CancelHotkeyState},
     devtools::{open_devtools, open_main_devtools},
     fn_hotkey::{open_input_monitoring_settings, FnHotkeyState},
     hotkey::{clear_hotkey, handle_event as handle_hotkey_event, install_default, set_hotkey, HotkeyState},
@@ -12,7 +13,8 @@ use commands::{
     local_whisper::{
         delete_local_model, detect_whisper_compute_backend, download_local_model,
         get_active_whisper_runtime_variant, install_whisper_runtime,
-        is_whisper_runtime_installed, list_local_models, transcribe_local, transcribe_local_pcm,
+        is_whisper_runtime_installed, list_custom_whisper_models, list_local_models,
+        rescan_local_models, transcribe_local, transcribe_local_pcm,
     },
     parakeet::{
         delete_parakeet_model, download_parakeet_model, install_parakeet_runtime,
@@ -68,6 +70,7 @@ pub fn run() {
     builder
         .manage(HotkeyState::default())
         .manage(FnHotkeyState::default())
+        .manage(CancelHotkeyState::default())
         .manage(TargetWindowState::default())
         .manage(WhisperServerState::default())
         .plugin(tauri_plugin_opener::init())
@@ -90,6 +93,8 @@ pub fn run() {
             get_active_window,
             set_hotkey,
             clear_hotkey,
+            enable_cancel_shortcut,
+            disable_cancel_shortcut,
             list_running_apps,
             capture_target_window,
             clear_target_window,
@@ -97,6 +102,8 @@ pub fn run() {
             paste_to_target,
             relay_event,
             list_local_models,
+            list_custom_whisper_models,
+            rescan_local_models,
             download_local_model,
             delete_local_model,
             transcribe_local,

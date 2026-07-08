@@ -30,6 +30,8 @@ import {
   getLocalWhisperTier,
   setLocalWhisperTier,
   listLocalModels,
+  listCustomWhisperModels,
+  rescanLocalModels,
   downloadLocalModel,
   deleteLocalModel,
   isWhisperRuntimeInstalled,
@@ -41,8 +43,10 @@ import {
   whisperRuntimeVariantLabel,
   WHISPER_TIERS,
   type AiProviderKind,
+  type CustomModelInfo,
   type LocalModelInfo,
   type WhisperComputePreference,
+  type WhisperModelId,
   type WhisperRuntimeVariant,
   type WhisperTier,
   getCleanupProviderKind,
@@ -79,7 +83,7 @@ import {
 } from "../lib/ai";
 import { providerTestStatus, type ProviderTestStatus } from "../lib/ai/healthStatus";
 import { useTheme, type Theme } from "../lib/theme";
-import { osName } from "../lib/os";
+import { osKind, osName } from "../lib/os";
 import {
   checkForUpdate,
   getUpdateStatus,
@@ -94,6 +98,9 @@ import {
   getOutputBehavior,
   setOutputBehavior,
   type OutputBehavior,
+  getPasteMethod,
+  setPasteMethod,
+  type PasteMethod,
   isHistoryDisabled,
   setHistoryDisabled,
   getHistoryRetentionDays,
@@ -360,6 +367,31 @@ function ClipboardBehaviorSelect() {
         <SelectItem value="copy">Paste and keep copied</SelectItem>
         <SelectItem value="insert-only">Paste without clipboard</SelectItem>
         <SelectItem value="restore">Paste then restore previous clipboard</SelectItem>
+      </SelectContent>
+    </Select>
+  );
+}
+
+function PasteMethodSelect() {
+  const [value, setValue] = useState<PasteMethod>(() => getPasteMethod());
+  const autoLabel = osKind() === "linux" ? "Auto (direct type)" : "Auto (⌘/Ctrl+V)";
+  return (
+    <Select
+      value={value}
+      onValueChange={(next) => {
+        const method = next as PasteMethod;
+        setPasteMethod(method);
+        setValue(method);
+      }}
+    >
+      <SelectTrigger className="w-64">
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value="auto">{autoLabel}</SelectItem>
+        <SelectItem value="ctrl-v">⌘/Ctrl+V</SelectItem>
+        <SelectItem value="shift-insert">Shift+Insert</SelectItem>
+        <SelectItem value="direct">Direct type</SelectItem>
       </SelectContent>
     </Select>
   );
@@ -671,9 +703,16 @@ export default function Settings() {
               <SettingRow
                 id="clipboard-behavior"
                 title="Clipboard behavior"
-                description="Choose whether pasted dictation stays copied, bypasses the clipboard, or restores your previous clipboard after paste."
+                description="For clipboard-based paste methods, choose whether dictation stays copied or restores your previous clipboard. Direct output bypasses the clipboard."
               >
                 <ClipboardBehaviorSelect />
+              </SettingRow>
+              <SettingRow
+                id="paste-method"
+                title="Paste method"
+                description="Choose the keystroke used to paste. Auto keeps ⌘/Ctrl+V on macOS/Windows and direct-types on Linux; no-clipboard output always direct-types."
+              >
+                <PasteMethodSelect />
               </SettingRow>
               <SettingRow
                 id="overlay-position"
@@ -787,12 +826,14 @@ function formatSize(mb: number): string {
 
 function ModelTab() {
   const [kind, setKind] = useState<AiProviderKind>(getAiProviderKind());
-  const [selectedTier, setSelectedTier] = useState<WhisperTier>(getLocalWhisperTier());
+  const [selectedTier, setSelectedTier] = useState<WhisperModelId>(getLocalWhisperTier());
   const [computePreference, setComputePreference] = useState<WhisperComputePreference>(
     getWhisperComputePreference(),
   );
   const [activeRuntime, setActiveRuntime] = useState<WhisperRuntimeVariant | null>(null);
   const [models, setModels] = useState<LocalModelInfo[]>([]);
+  const [customModels, setCustomModels] = useState<CustomModelInfo[]>([]);
+  const [rescanning, setRescanning] = useState(false);
   const [runtimeInstalled, setRuntimeInstalled] = useState<boolean>(false);
   const [installingRuntime, setInstallingRuntime] = useState<{
     downloaded: number;
@@ -806,12 +847,14 @@ function ModelTab() {
 
   const refresh = async () => {
     try {
-      const [m, rt, active] = await Promise.all([
+      const [m, custom, rt, active] = await Promise.all([
         listLocalModels(),
+        listCustomWhisperModels(),
         isWhisperRuntimeInstalled(),
         getActiveWhisperRuntimeVariant(),
       ]);
       setModels(m);
+      setCustomModels(custom);
       setRuntimeInstalled(rt);
       setActiveRuntime(active);
     } catch (e) {
@@ -882,9 +925,28 @@ function ModelTab() {
     }
   };
 
-  const handleTierChange = (tier: WhisperTier) => {
+  const handleTierChange = (tier: WhisperModelId) => {
     setLocalWhisperTier(tier);
     setSelectedTier(tier);
+  };
+
+  const handleRescan = async () => {
+    setRescanning(true);
+    try {
+      const found = await rescanLocalModels();
+      setCustomModels(found);
+      toast.success(
+        found.length === 1
+          ? "Found 1 custom model"
+          : `Found ${found.length} custom models`,
+      );
+    } catch (e) {
+      toast.error("Couldn't scan for custom models", {
+        description: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setRescanning(false);
+    }
   };
 
   const handleComputeChange = (next: WhisperComputePreference) => {
@@ -906,10 +968,14 @@ function ModelTab() {
     }
   };
 
-  const handleDelete = async (tier: WhisperTier) => {
+  const handleDelete = async (id: WhisperModelId) => {
     try {
-      await deleteLocalModel(tier);
-      toast.success(`Removed ${tier}`);
+      await deleteLocalModel(id);
+      // If the deleted model was selected, fall back to the default tier.
+      if (selectedTier === id && id !== "turbo") {
+        handleTierChange("turbo");
+      }
+      toast.success(`Removed ${id.replace("custom:", "")}`);
       void refresh();
     } catch (e) {
       toast.error("Couldn't remove model", {
@@ -1136,6 +1202,85 @@ function ModelTab() {
                     </div>
                   );
                 })}
+              </div>
+
+              <div className="mt-5 border-t border-border-subtle pt-5">
+                <div className="mb-1 flex items-center justify-between gap-3">
+                  <div className="text-sm font-medium">Custom models</div>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={handleRescan}
+                    disabled={rescanning}
+                  >
+                    {rescanning ? (
+                      <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+                    ) : (
+                      <RefreshCw className="mr-1 h-4 w-4" />
+                    )}
+                    Rescan
+                  </Button>
+                </div>
+                <div className="mb-3 text-xs text-text-muted">
+                  Bring your own model: drop a <code>.bin</code> or <code>.gguf</code> whisper.cpp
+                  model into the models folder, then Rescan to select it here.
+                </div>
+                {customModels.length === 0 ? (
+                  <div className="rounded-md border border-dashed border-border-subtle p-3 text-xs text-text-muted">
+                    No custom models found. Add a <code>.bin</code>/<code>.gguf</code> file to the
+                    whisper-models folder and press Rescan.
+                  </div>
+                ) : (
+                  <div className="flex flex-col gap-2">
+                    {customModels.map((cm) => {
+                      const isSelected = selectedTier === cm.id;
+                      return (
+                        <div
+                          key={cm.id}
+                          className={`flex items-start justify-between gap-3 rounded-md border p-3 ${
+                            isSelected ? "border-accent bg-accent/5" : "border-border-subtle"
+                          }`}
+                        >
+                          <div className="flex min-w-0 flex-col gap-0.5">
+                            <div className="flex items-center gap-2">
+                              <span className="truncate text-sm font-medium">
+                                {cm.displayName}
+                              </span>
+                              <span className="text-xs text-text-muted">·</span>
+                              <span className="text-xs text-text-muted">Custom</span>
+                              <span className="text-xs text-text-muted">·</span>
+                              <span className="text-xs text-text-muted">
+                                {formatBytes(cm.sizeBytes)}
+                              </span>
+                              <span className="inline-flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
+                                <CheckCircle2 className="h-3.5 w-3.5" /> installed
+                              </span>
+                            </div>
+                            <div className="truncate text-xs text-text-muted">{cm.fileName}</div>
+                          </div>
+                          <div className="flex shrink-0 items-center gap-2">
+                            <Button
+                              variant={isSelected ? "primary" : "secondary"}
+                              size="sm"
+                              onClick={() => handleTierChange(cm.id)}
+                              disabled={isSelected}
+                            >
+                              {isSelected ? "In use" : "Use this"}
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => handleDelete(cm.id)}
+                              title="Remove model file"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             </div>
           )}

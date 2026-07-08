@@ -4,7 +4,9 @@
  */
 import { invoke } from "@tauri-apps/api/core";
 import { writeText, readText } from "@tauri-apps/plugin-clipboard-manager";
-import { getOutputBehavior } from "./preferences";
+import { osKind } from "./os";
+import { pasteMethodUsesClipboard } from "./pasteMethod";
+import { getOutputBehavior, getPasteMethod, type PasteMethod } from "./preferences";
 
 const CLIPBOARD_RESTORE_DELAY_MS = 1000;
 
@@ -33,18 +35,24 @@ function restoreClipboardSoon(prev: string, expected: string): void {
 }
 
 /**
- * Write `text` to the clipboard, then restore focus to the captured
- * target window and simulate Ctrl+V.
+ * Paste `text` into the captured target window using the configured method.
+ * Clipboard-based methods write `text` to the clipboard before sending the
+ * paste shortcut; direct mode types into the target and leaves the clipboard
+ * unchanged.
  *
- * Output behavior is controlled by Settings -> Recording -> Clipboard behavior.
+ * Output behavior is controlled by Settings -> Recording.
  */
 export async function pasteCleanedText(text: string): Promise<boolean> {
   const behavior = getOutputBehavior();
-  if (behavior === "insert-only") {
+  const configuredMethod = getPasteMethod();
+  const method: PasteMethod = behavior === "insert-only" ? "direct" : configuredMethod;
+  const usesClipboard = pasteMethodUsesClipboard(method, osKind());
+
+  if (!usesClipboard) {
     try {
-      return await invoke<boolean>("insert_text_to_target", { text });
+      return await invoke<boolean>("paste_to_target", { text, method });
     } catch (e) {
-      console.warn("[Verbatim AI] insert_text_to_target failed:", e);
+      console.warn("[Verbatim AI] direct paste failed:", e);
       return false;
     }
   }
@@ -59,7 +67,7 @@ export async function pasteCleanedText(text: string): Promise<boolean> {
   }
   await writeText(text);
   try {
-    const ok = await invoke<boolean>("paste_to_target");
+    const ok = await invoke<boolean>("paste_to_target", { text: null, method });
     if (behavior === "restore" && prev !== null) {
       if (ok) {
         restoreClipboardSoon(prev, text);

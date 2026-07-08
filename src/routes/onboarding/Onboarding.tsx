@@ -80,6 +80,7 @@ import {
   setAiProviderKind,
   getLocalWhisperTier,
   setLocalWhisperTier,
+  isCustomModelId,
   listLocalModels,
   downloadLocalModel,
   isWhisperRuntimeInstalled,
@@ -1212,7 +1213,10 @@ function OllamaConfig() {
 }
 
 function LocalWhisperInstaller() {
-  const [tier, setTier] = useState<WhisperTier>(getLocalWhisperTier());
+  const [tier, setTier] = useState<WhisperTier>(() => {
+    const id = getLocalWhisperTier();
+    return isCustomModelId(id) ? "turbo" : id;
+  });
   const [models, setModels] = useState<LocalModelInfo[]>([]);
   const [runtimeInstalled, setRuntimeInstalled] = useState(false);
   const [rtProgress, setRtProgress] = useState<{ downloaded: number; total: number } | null>(null);

@@ -1,0 +1,4 @@
+# Local verification scratch dir (whisper.cpp clone + build, models, harness).
+# Never committed.
+.verify/
+build/

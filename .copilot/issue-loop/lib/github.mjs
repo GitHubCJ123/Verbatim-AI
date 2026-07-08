@@ -46,6 +46,25 @@ export async function listOpenPRs(config) {
   ]);
 }
 
+export async function listMergedAutomationPRs(config) {
+  return ghJson([
+    "pr",
+    "list",
+    "--repo",
+    config.repository,
+    "--state",
+    "merged",
+    "--limit",
+    "50",
+    "--json",
+    "number,title,headRefName,mergedAt,headRepositoryOwner,closingIssuesReferences",
+  ]);
+}
+
+export async function getIssue(config, number) {
+  return ghJson(["issue", "view", String(number), "--repo", config.repository, "--json", "number,title,body,labels"]);
+}
+
 export async function issueComments(config, issueNumber) {
   const issue = await ghJson([
     "issue",

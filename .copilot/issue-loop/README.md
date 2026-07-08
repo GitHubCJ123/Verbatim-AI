@@ -8,7 +8,7 @@ The loop is intentionally local-first:
 - Does not store tokens in the repository.
 - Opens draft PRs only.
 - Never merges PRs.
-- Requires hash-bound spec approval before implementation.
+- Continues automatically through clear non-human phases and stops at human PR review.
 
 ## Quick start
 
@@ -70,9 +70,7 @@ Open the printed localhost URL. The dashboard shows real open repository issues;
    pnpm automation:issues -- --watch --config .copilot/issue-loop/config.local.json
    ```
 
-The first real run creates or refreshes the issue spec under `docs/automation/specs/`, posts a claim/spec marker, and then stops at the human spec gate.
-
-To approve implementation, add a trusted `spec-approval` marker bound to the spec hash, or use the configured approval flow described below. After implementation, the loop still opens draft PRs only and never merges.
+The first real run creates or refreshes durable artifacts under `docs/automation/specs/issue-<number>-<slug>/artifacts/`, posts a claim/spec marker, and continues automatically while requirements and adversarial review are clear. It stops for human input only when a phase emits `needs-human`/`blocked`, when verification fails/refuses to run, or when the PR is ready for human review.
 
 ## Workflow
 
@@ -86,6 +84,29 @@ To approve implementation, add a trusted `spec-approval` marker bound to the spe
 8. **Verification**: run configured commands, redact logs, require UX screenshots for UI changes.
 9. **Finalization**: mark ready for human review and request configured reviewers only after current-head verification passes.
 10. **Human PR review/merge**: human only.
+11. **Cleanup**: after a PR is confirmed merged, remove the automation worktree and delete the automation branch after containment checks.
+
+Each phase has a reviewable definition in `.copilot/issue-loop/agents/`. The definitions declare each agent's persona, allowed inputs, side effects, durable output, required summary format, and gate decision. The implementer and agent PR reviewer run a bounded retry loop controlled by `maxPrReviewIterations`; if review still requests changes after the limit, the workflow blocks for human input instead of silently stranding the PR.
+
+## Durable artifacts and IDs
+
+The loop writes durable summaries to `docs/automation/specs/issue-<number>-<slug>/artifacts/`:
+
+- `summary.json` is the current state/knowledge-graph index for the issue.
+- `runlog.jsonl` is an append-only event log for phase transitions and artifact creation.
+- Artifact Markdown files use standardized display IDs:
+  - `PRD-001` requirements critique
+  - `SPEC-001` architect spec
+  - `ADV-001` adversarial review
+  - `IMPL-001` implementation / draft PR
+  - `REVIEW-001` agent PR review
+  - `VER-001` verification
+  - `FINAL-001` ready-for-review finalization
+  - `HUMAN-001` human PR review marker
+  - `REFLECT-001` loop self-reflection
+  - `CLEAN-001` cleanup
+
+Every artifact also gets a canonical ID that includes the issue and run ID. Logs and artifact bodies are redacted before being persisted.
 
 ## Trigger options
 
@@ -104,7 +125,7 @@ pnpm automation:dashboard -- --port 8787
 It shows:
 
 - Real open GitHub issues from this repo, read-only by default. There is no built-in demo issue.
-- Each automation phase and its current artifacts.
+- Each automation phase, actively running jobs, durable artifact IDs, and artifact summaries.
 - Local approvals that record review decisions. For real GitHub issues, implementation still requires the trusted hash-bound spec approval marker.
 - Feedback prompts that can run a reviewed text-only agent wrapper only when the server is started with `--allow-agent-runs --agent-command`.
 - A self-reflection phase that summarizes loop history and human feedback.
@@ -116,6 +137,7 @@ Security defaults:
 - Renders GitHub/spec content as text, not HTML.
 - Does not write to GitHub.
 - Stores dashboard state in ignored `.copilot-issue-loop/dashboard-state.json`.
+- Reads durable artifact summaries from repo-tracked `docs/automation/specs/.../artifacts/`.
 - Agent runs are disabled unless an explicit reviewed text-only command template is provided. The current implementation only permits the safe `cat {promptFile}` command.
 
 Example local text echo:
@@ -146,7 +168,18 @@ Requirements critique markers are idempotent and bound to the current issue titl
 
 If the critique is `clear`, the loop may proceed to spec drafting without a human requirements gate. If the adversarial spec review is clear, implementation may proceed automatically to a draft PR. Human review happens at the PR stage after agent PR review, verification, and required screenshots.
 
-The architect and adversarial reviewer run in read-only mode by default. Issue text is wrapped as untrusted input, and the driver writes only controlled spec scaffold files under `docs/automation/specs/`.
+The architect, adversarial reviewer, and agent PR reviewer run in read-only mode by default. Issue and PR text is wrapped as untrusted input, and the driver writes only controlled spec/artifact files under `docs/automation/specs/`.
+
+## Worktree isolation and cleanup
+
+Implementation and PR handling happen in a dedicated git worktree under `.copilot-issue-loop/worktrees/` by default. The implementer can edit only that worktree, then the driver commits, pushes the deterministic automation branch, and opens a draft PR. After a PR is confirmed merged, cleanup may remove the matching worktree and delete the matching automation branch only if:
+
+- GitHub reports the PR is merged.
+- The branch starts with the configured `branchPrefix`.
+- The worktree path resolves inside the configured worktree root.
+- No active phase is using that worktree.
+
+Automation never deletes branches for closed-unmerged PRs by default and never deletes paths outside the configured worktree root.
 
 ## Verification sandbox
 

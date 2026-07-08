@@ -11,9 +11,17 @@
     "pollIntervalSeconds": { "type": "integer", "minimum": 60 },
     "maxConcurrentIssues": { "type": "integer", "minimum": 1, "maximum": 5 },
     "maxIssuesPerTick": { "type": "integer", "minimum": 1, "maximum": 5 },
+    "maxPrReviewIterations": { "type": "integer", "minimum": 1, "maximum": 5 },
     "requiredLabels": { "type": "array", "items": { "type": "string" } },
     "excludedLabels": { "type": "array", "items": { "type": "string" } },
     "branchPrefix": { "type": "string" },
+    "worktrees": {
+      "type": "object",
+      "properties": {
+        "root": { "type": "string", "minLength": 1 },
+        "cleanupMergedPrBranches": { "type": "boolean" }
+      }
+    },
     "reviewers": { "type": "array", "items": { "type": "string" } },
     "teamReviewers": { "type": "array", "items": { "type": "string" } },
     "trustedApprovers": { "type": "array", "items": { "type": "string" } },

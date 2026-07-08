@@ -19,6 +19,7 @@ const DENIED_TOKENS = [
 
 export async function runVerification(config, cwd) {
   const env = await credentialFreeEnv(cwd);
+  const baseRef = `origin/${config.baseBranch ?? "main"}`;
   const commands = [
     config.verification.installCommand,
     ...config.verification.commands,
@@ -34,9 +35,11 @@ export async function runVerification(config, cwd) {
       config.verification.sandboxCommand.replace("{worktree}", cwd),
     );
     const result = await spawnFile(bin, args, { cwd, env });
-    const files = await changedFiles(cwd);
+    const files = await changedFiles(cwd, baseRef);
+    const diffResult = await spawnFile("git", ["diff", `${baseRef}...HEAD`], { cwd, env });
+    const secretFindings = findSecretLikeText(diffResult.stdout);
     return {
-      ok: result.code === 0,
+      ok: result.code === 0 && secretFindings.length === 0,
       results: [
         {
           command: config.verification.sandboxCommand,
@@ -45,7 +48,7 @@ export async function runVerification(config, cwd) {
           stderr: truncateForComment(result.stderr, 6000),
         },
       ],
-      secretFindings: [],
+      secretFindings,
       screenshotsRequired: config.gates.requireScreenshotsForUxChanges && hasUiChanges(files),
       files,
     };
@@ -66,7 +69,7 @@ export async function runVerification(config, cwd) {
   }
 
   async function failClosedSandboxRequired(cwd, config) {
-    const files = await changedFiles(cwd);
+    const files = await changedFiles(cwd, baseRef);
     return {
       ok: false,
       results: [
@@ -84,9 +87,9 @@ export async function runVerification(config, cwd) {
     };
   }
 
-  const diffResult = await spawnFile("git", ["diff", "origin/main...HEAD"], { cwd, env });
+  const diffResult = await spawnFile("git", ["diff", `${baseRef}...HEAD`], { cwd, env });
   const secretFindings = findSecretLikeText(diffResult.stdout);
-  const files = await changedFiles(cwd);
+  const files = await changedFiles(cwd, baseRef);
   const screenshotsRequired = config.gates.requireScreenshotsForUxChanges && hasUiChanges(files);
 
   return {

@@ -28,6 +28,25 @@ Grab the latest installer from [Releases](../../releases) and run either:
 
 > Windows SmartScreen will warn on first launch because the binaries are not yet code-signed. Click **More info → Run anyway**.
 
+### macOS
+
+- `Verbatim AI_x.y.z_aarch64.dmg` (Apple Silicon)
+
+Verbatim AI for macOS is **not yet notarized**, so macOS quarantines it on download. Because of that quarantine, macOS runs the app from a temporary read-only copy (**App Translocation**), which stops the built-in auto-updater from replacing the app in `/Applications` — an update appears to download but `/Applications` stays on the old version.
+
+To install (and to let auto-updates work):
+
+1. Drag **Verbatim AI** into your **Applications** folder.
+2. Remove the quarantine flag so macOS stops translocating it:
+
+   ```bash
+   xattr -dr com.apple.quarantine "/Applications/Verbatim AI.app"
+   ```
+
+3. Launch it from Applications.
+
+After that, in-app updates install correctly. If you skip step 2, the app detects the situation and shows a **Download update** prompt (in the banner and in **Settings → App updates**) instead of silently updating a throwaway copy.
+
 ## Prerequisites (developers)
 
 - **Node.js 20+** and **pnpm 9+**

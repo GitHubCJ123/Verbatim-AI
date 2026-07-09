@@ -32,6 +32,7 @@ use commands::{
         finish_streaming_session, is_streaming_sidecar_available, push_streaming_frames,
         start_streaming_session, stop_streaming_session, StreamingSidecarState,
     },
+    updater_env::update_install_environment,
     whisper_server::{
         ensure_engine_ready, is_whisper_server_available, transcribe_local_server,
         transcribe_local_server_pcm, unload_engine, WhisperServerState,
@@ -132,6 +133,7 @@ pub fn run() {
             open_devtools,
             open_main_devtools,
             open_input_monitoring_settings,
+            update_install_environment,
             ensure_engine_ready,
             unload_engine,
             transcribe_local_server,

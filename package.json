@@ -8,6 +8,7 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "test": "vitest run",
+    "test:engines": "vitest run -c vitest.engines.config.ts",
     "automation:issues": "node .copilot/issue-loop/issue-loop.mjs",
     "automation:dashboard": "node .copilot/issue-loop/dashboard-server.mjs",
     "automation:test": "vitest run .copilot/issue-loop/__tests__",

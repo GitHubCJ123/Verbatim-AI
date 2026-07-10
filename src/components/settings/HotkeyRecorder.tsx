@@ -5,11 +5,20 @@
  *
  * Build-up UX: modifiers appear in the field as soon as you press them.
  * Press a non-modifier next to commit. Click again to start over.
+ *
+ * "Single key" dropdown offers fn, right ⌘ (macOS only), and
+ * function keys (all platforms) as a one-click alternative to recording.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Kbd } from "../ui/Kbd";
 import { Button } from "../ui/Button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+} from "../ui/Select";
 import { cn } from "../../lib/utils";
 import { applyHotkey, clearHotkey, isFunctionKey } from "../../lib/hotkey";
 import { toast } from "../ui/Toast";
@@ -40,12 +49,16 @@ const MODIFIER_LABEL: Record<string, string> = IS_MAC
       Super: "Win",
     };
 
+// Function keys offered in the "Single key" dropdown (all platforms).
+const FUNCTION_KEYS = [
+  "F1", "F2", "F3", "F4", "F5", "F6",
+  "F7", "F8", "F9", "F10", "F11", "F12",
+];
+
 function parts(spec: string): string[] {
   return spec.split("+").map((p) => p.trim()).filter(Boolean);
 }
 
-// Returns the canonical modifier name for this key event, or null if
-// it's not a modifier.
 function modifierFromEvent(e: KeyboardEvent): string | null {
   if (e.key === "Control" || e.code === "ControlLeft" || e.code === "ControlRight") return "Control";
   if (e.key === "Shift" || e.code === "ShiftLeft" || e.code === "ShiftRight") return "Shift";
@@ -140,152 +153,164 @@ export function HotkeyRecorder({ value, onChange }: HotkeyRecorderProps) {
     };
   }, [recording, handleKey, value]);
 
+  // Shared handler for Input-Monitoring-gated single keys (fn, right ⌘).
+  // fn / right ⌘ never produce a keydown in the WebView, so they can't be
+  // captured by the recorder — the "Single key" dropdown provides the path.
+  // The Rust side runs a flags-changed event tap (fn_hotkey.rs) and needs
+  // the Input Monitoring permission.
+  const applyInputMonitoringKey = async (spec: string, label: string) => {
+    try {
+      await applyHotkey(spec);
+      committedRef.current = spec;
+      setCommitted(spec);
+      onChange(spec);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg.includes("needs-input-monitoring")) {
+        toast.error("Input Monitoring permission needed", {
+          description:
+            "Enable Verbatim AI under System Settings → Privacy & Security → " +
+            `Input Monitoring (opening now), then relaunch the app and pick ${label} again.`,
+        });
+        void invoke("open_input_monitoring_settings").catch(() => {});
+      } else {
+        toast.error(`Couldn't enable the ${label} key`, { description: msg });
+      }
+    }
+  };
+
+  const handleSingleKey = async (val: string) => {
+    if (!val) return;
+    if (val === "Fn") {
+      await applyInputMonitoringKey("Fn", "fn");
+    } else if (val === "RightCommand") {
+      await applyInputMonitoringKey("RightCommand", "right ⌘");
+    } else {
+      // Plain function key — no special permission needed.
+      try {
+        await applyHotkey(val);
+        committedRef.current = val;
+        setCommitted(val);
+        onChange(val);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        toast.error(`Couldn't enable ${val}`, { description: msg });
+      }
+    }
+  };
+
   const displayed = committed ?? value;
   const tokens = recording && pendingMods.length > 0 ? pendingMods : parts(displayed);
 
-  // The fn key never produces a keydown in the WebView, so it can't be
-  // captured by the recorder — it gets an explicit chip instead. The
-  // Rust side runs a flags-changed event tap for it (fn_hotkey.rs) and
-  // needs the Input Monitoring permission.
-  const applyFnKey = async () => {
-    try {
-      await applyHotkey("Fn");
-      committedRef.current = "Fn";
-      setCommitted("Fn");
-      setRecording(false);
-      setPendingMods([]);
-      onChange("Fn");
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      if (msg.includes("needs-input-monitoring")) {
-        toast.error("Input Monitoring permission needed", {
-          description:
-            "Enable Verbatim AI under System Settings → Privacy & Security → " +
-            "Input Monitoring (opening now), then relaunch the app and pick fn again.",
-        });
-        void invoke("open_input_monitoring_settings").catch(() => {});
-      } else {
-        toast.error("Couldn't enable the fn key", { description: msg });
-      }
-    }
-  };
-
-  // Right ⌘ produces no keydown the recorder can capture on its own; it
-  // gets an explicit chip. The Rust side runs a flags-changed event tap
-  // for it (fn_hotkey.rs) and needs the Input Monitoring permission.
-  const applyRightCommand = async () => {
-    try {
-      await applyHotkey("RightCommand");
-      committedRef.current = "RightCommand";
-      setCommitted("RightCommand");
-      setRecording(false);
-      setPendingMods([]);
-      onChange("RightCommand");
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      if (msg.includes("needs-input-monitoring")) {
-        toast.error("Input Monitoring permission needed", {
-          description:
-            "Enable Verbatim AI under System Settings → Privacy & Security → " +
-            "Input Monitoring (opening now), then relaunch the app and pick Right ⌘ again.",
-        });
-        void invoke("open_input_monitoring_settings").catch(() => {});
-      } else {
-        toast.error("Couldn't enable the Right ⌘ key", { description: msg });
-      }
-    }
-  };
+  // One concise helper line beneath the controls, appropriate to the
+  // current selection. Shown only when there is something useful to say.
+  const helperContent =
+    displayed === "Fn" ? (
+      <p className="max-w-[280px] text-right text-[11px] leading-snug text-text-muted">
+        Hold <Kbd>fn</Kbd> to talk · If it opens the emoji picker, set System
+        Settings → Keyboard → &ldquo;Press 🌐 key to&rdquo; → Do Nothing.
+      </p>
+    ) : displayed === "RightCommand" ? (
+      <p className="max-w-[280px] text-right text-[11px] leading-snug text-text-muted">
+        Hold <Kbd>right ⌘</Kbd> to talk · Input Monitoring required; left ⌘ and
+        normal shortcuts are unaffected.
+      </p>
+    ) : displayed && parts(displayed).length === 1 ? (
+      <p className="max-w-[280px] text-right text-[11px] leading-snug text-text-muted">
+        Hold to talk.
+      </p>
+    ) : null;
 
   return (
     <div className="flex flex-col items-end gap-1.5">
       <div className="flex items-center gap-2">
-      <button
-        type="button"
-        onClick={async () => {
-          // Free the active global shortcut so its keys reach the
-          // recorder instead of triggering the recording pipeline.
-          try {
-            await clearHotkey();
-          } catch {
-            /* ignore */
-          }
-          setPendingMods([]);
-          setCommitted(null);
-          committedRef.current = null;
-          setRecording(true);
-        }}
-        className={cn(
-          "flex h-9 min-w-[160px] items-center justify-center gap-1 rounded-md border px-3 transition-colors",
-          recording
-            ? "border-accent-solid/60 bg-accent-solid/10 text-accent-start"
-            : "border-border-subtle bg-bg-base text-text-primary hover:border-border-strong",
-        )}
-      >
-        {tokens.length === 0 ? (
-          recording ? (
-            <span className="text-xs text-text-secondary">
-              {IS_MAC ? "Press a key or shortcut…" : "Press a shortcut or function key (e.g. F6)…"}
-            </span>
-          ) : (
-            <span className="text-xs text-text-muted">No shortcut</span>
-          )
-        ) : (
-          <>
-            {tokens.map((t, i) => (
-              <Kbd key={i}>{MODIFIER_LABEL[t] ?? t}</Kbd>
-            ))}
-            {recording && (
-              <span className="ml-1 text-xs text-text-muted">+ key…</span>
-            )}
-          </>
-        )}
-      </button>
-      {recording && (
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => {
-            setRecording(false);
+        {/* Primary capture button */}
+        <button
+          type="button"
+          onClick={async () => {
+            // Free the active global shortcut so its keys reach the
+            // recorder instead of triggering the recording pipeline.
+            try {
+              await clearHotkey();
+            } catch {
+              /* ignore */
+            }
             setPendingMods([]);
+            setCommitted(null);
             committedRef.current = null;
+            setRecording(true);
           }}
+          className={cn(
+            "flex h-9 min-w-[160px] items-center justify-center gap-1 rounded-md border px-3 transition-colors",
+            recording
+              ? "border-accent-solid/60 bg-accent-solid/10 text-accent-start"
+              : "border-border-subtle bg-bg-base text-text-primary hover:border-border-strong",
+          )}
         >
-          Cancel
-        </Button>
-      )}
-        {IS_MAC && !recording && displayed !== "Fn" && (
-          <button
-            type="button"
-            onClick={() => void applyFnKey()}
-            className="flex h-9 items-center gap-1 rounded-md border border-border-subtle bg-bg-elevated px-3 text-xs text-text-secondary transition-colors hover:border-border-strong hover:text-text-primary"
-            title="Use the fn key alone — hold to talk"
+          {tokens.length === 0 ? (
+            recording ? (
+              <span className="text-xs text-text-secondary">
+                {IS_MAC
+                  ? "Press a key or shortcut…"
+                  : "Press a shortcut or function key (e.g. F6)…"}
+              </span>
+            ) : (
+              <span className="text-xs text-text-muted">No shortcut</span>
+            )
+          ) : (
+            <>
+              {tokens.map((t, i) => (
+                <Kbd key={i}>{MODIFIER_LABEL[t] ?? t}</Kbd>
+              ))}
+              {recording && (
+                <span className="ml-1 text-xs text-text-muted">+ key…</span>
+              )}
+            </>
+          )}
+        </button>
+
+        {recording ? (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              setRecording(false);
+              setPendingMods([]);
+              committedRef.current = null;
+            }}
           >
-            Use <Kbd>fn</Kbd>
-          </button>
-        )}
-        {IS_MAC && !recording && displayed !== "RightCommand" && (
-          <button
-            type="button"
-            onClick={() => void applyRightCommand()}
-            className="flex h-9 items-center gap-1 rounded-md border border-border-subtle bg-bg-elevated px-3 text-xs text-text-secondary transition-colors hover:border-border-strong hover:text-text-primary"
-            title="Use the right ⌘ key alone — hold to talk"
-          >
-            Use <Kbd>right ⌘</Kbd>
-          </button>
+            Cancel
+          </Button>
+        ) : (
+          // "Single key" dropdown — replaces the two loose "Use fn" /
+          // "Use right ⌘" buttons. Offers macOS-specific single keys
+          // (fn, right ⌘) and function keys valid on all platforms.
+          // value="" keeps the trigger label fixed at "Single key".
+          <Select value="" onValueChange={(val) => void handleSingleKey(val)}>
+            <SelectTrigger
+              className="h-9 w-auto gap-1.5 px-3 text-xs text-text-secondary"
+              aria-label="Pick a single key shortcut"
+            >
+              <span>Single key</span>
+            </SelectTrigger>
+            <SelectContent>
+              {IS_MAC && (
+                <>
+                  <SelectItem value="Fn">fn — hold to talk</SelectItem>
+                  <SelectItem value="RightCommand">right ⌘ — hold to talk</SelectItem>
+                </>
+              )}
+              {FUNCTION_KEYS.map((fk) => (
+                <SelectItem key={fk} value={fk}>
+                  {fk}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         )}
       </div>
-      {IS_MAC && displayed === "Fn" && (
-        <p className="max-w-[260px] text-right text-[11px] leading-snug text-text-muted">
-          Hold <Kbd>fn</Kbd> to talk. If pressing it opens the emoji picker,
-          set System Settings → Keyboard → "Press 🌐 key to" → Do Nothing.
-        </p>
-      )}
-      {IS_MAC && displayed === "RightCommand" && (
-        <p className="max-w-[260px] text-right text-[11px] leading-snug text-text-muted">
-          Hold <Kbd>right ⌘</Kbd> to talk. Uses Input Monitoring; the left ⌘
-          and normal shortcuts are unaffected.
-        </p>
-      )}
+
+      {helperContent}
     </div>
   );
 }

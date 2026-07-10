@@ -16,7 +16,11 @@ use commands::{
         is_whisper_runtime_installed, list_custom_whisper_models, list_local_models,
         rescan_local_models, transcribe_local, transcribe_local_pcm,
     },
-    native_audio::{start_native_capture, stop_native_capture, NativeCaptureState},
+    native_audio::{
+        arm_native_capture, cancel_native_session, disarm_native_capture, is_native_capture_armed,
+        start_native_capture, start_native_session, stop_native_capture, stop_native_session,
+        take_native_recording, NativeCaptureState,
+    },
     parakeet::{
         delete_parakeet_model, download_parakeet_model, install_parakeet_runtime,
         is_parakeet_model_installed, is_parakeet_runtime_installed, list_parakeet_models,
@@ -144,6 +148,13 @@ pub fn run() {
             push_streaming_frames,
             finish_streaming_session,
             stop_streaming_session,
+            arm_native_capture,
+            disarm_native_capture,
+            start_native_session,
+            stop_native_session,
+            take_native_recording,
+            cancel_native_session,
+            is_native_capture_armed,
             start_native_capture,
             stop_native_capture,
         ])

@@ -19,7 +19,15 @@ import {
 } from "../components/ui/Select";
 import { HotkeyRecorder } from "../components/settings/HotkeyRecorder";
 import { applyHotkey, isMacSingleKeySpec, loadHotkeyConfig, saveHotkeyConfig } from "../lib/hotkey";
-import { isAutostartEnabled, setAutostart } from "../lib/preferences";
+import {
+  isAutostartEnabled,
+  setAutostart,
+  isNativeCaptureEnabled,
+  setNativeCaptureEnabled,
+  isLowLatencyModeEnabled,
+  setLowLatencyModeEnabled,
+} from "../lib/preferences";
+import { syncNativeCaptureArm } from "../lib/nativeAudio";
 import { CLOUD_FEATURES_ENABLED } from "../lib/features";
 import { useOnboarding } from "../lib/store/useOnboarding";
 import {
@@ -439,6 +447,70 @@ function HistoryDisabledSwitch() {
   );
 }
 
+type RecordingEngine = "standard" | "fast" | "instant";
+
+function currentRecordingEngine(): RecordingEngine {
+  if (!isNativeCaptureEnabled()) return "standard";
+  return isLowLatencyModeEnabled() ? "instant" : "fast";
+}
+
+/**
+ * Recording engine selector (docs/proposals/warm-ptt-capture.md). One clean
+ * control instead of two hidden flags:
+ * - standard: WebAudio getUserMedia (opens the mic on each press).
+ * - fast: native cpal capture, mic kept warm briefly then idle-closed.
+ * - instant: native capture with a persistent warm stream + pre-roll, so the
+ *   first push-to-talk press is instant — but the macOS mic indicator stays on.
+ */
+function RecordingEngineRow() {
+  const [engine, setEngine] = useState<RecordingEngine>(currentRecordingEngine());
+
+  const onChange = async (value: string) => {
+    const next = value as RecordingEngine;
+    setEngine(next);
+    setNativeCaptureEnabled(next !== "standard");
+    setLowLatencyModeEnabled(next === "instant");
+    try {
+      await syncNativeCaptureArm();
+    } catch {
+      /* best-effort: capture still works, just not pre-warmed */
+    }
+    toast.success("Recording engine updated", {
+      description:
+        next === "instant"
+          ? "Instant — mic stays on for zero-delay push-to-talk."
+          : next === "fast"
+            ? "Fast — native capture, mic warm between dictations."
+            : "Standard — WebAudio recorder.",
+    });
+  };
+
+  return (
+    <SettingRow
+      id="recording-engine"
+      title="Recording engine"
+      description={
+        engine === "instant"
+          ? "Keeps the microphone open so push-to-talk starts with no delay. The macOS mic indicator stays on the whole time the app runs."
+          : engine === "fast"
+            ? "Captures natively and keeps the mic warm between dictations, closing it when idle."
+            : "Built-in WebAudio recorder. Most compatible; opens the mic on each press."
+      }
+    >
+      <Select value={engine} onValueChange={(v) => void onChange(v)}>
+        <SelectTrigger className="w-44">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="standard">Standard</SelectItem>
+          <SelectItem value="fast">Fast (warm on use)</SelectItem>
+          <SelectItem value="instant">Instant (mic stays on)</SelectItem>
+        </SelectContent>
+      </Select>
+    </SettingRow>
+  );
+}
+
 function VersionRow() {
   const [version, setVersion] = useState<string>("");
   useEffect(() => {
@@ -778,6 +850,7 @@ export default function Settings() {
         <TabsContent value="advanced">
           <Card>
             <CardContent className="p-5 pt-5">
+              <RecordingEngineRow />
               <SettingRow id="log-level" title="Log level" description="Verbosity of log files.">
                 <Select defaultValue="info">
                   <SelectTrigger className="w-32">

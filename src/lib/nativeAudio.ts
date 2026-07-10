@@ -4,9 +4,11 @@
  *
  * When the `sw.audio.nativeCapture` flag is on, recording is performed in Rust
  * (`cpal` + `rubato` → 16 kHz mono f32) rather than by the WebView
- * `MediaRecorder`. The Rust `stop_native_capture` command returns the recorded
- * PCM, which we re-package as a WAV `Blob` so the rest of the pipeline — every
- * provider decodes the blob via `decodeToMonoF32_16k` — is untouched.
+ * `MediaRecorder`. The Rust warm-capture engine keeps a cpal stream armed and
+ * recording sessions are consumption markers over that warm stream. On stop,
+ * we take the session PCM and re-package it as a WAV `Blob` so the rest of the
+ * pipeline — every provider decodes the blob via `decodeToMonoF32_16k` — is
+ * untouched.
  *
  * This module exposes an {@link AudioController} that mirrors the shape of the
  * default `startRecording` controller, so the overlay can swap capture backends
@@ -26,13 +28,22 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { encodeWavBlob } from "./audio/wav";
 import { VAD_FRAME_SAMPLES, VAD_SAMPLE_RATE } from "./vad/vad";
 import type { AudioController, AudioControllerOptions, RecordingResult } from "./audio";
-import { isPerfDebugEnabled } from "./preferences";
+import * as preferences from "./preferences";
+
+const LS_MIC_DEVICE = "sw.mic.deviceId";
+const LS_NATIVE_CAPTURE = "sw.audio.nativeCapture";
+const LS_LOW_LATENCY_MODE = "sw.audio.lowLatencyMode";
+const LS_PRE_ROLL_MS = "sw.audio.preRollMs";
+const DEFAULT_PRE_ROLL_MS = 250;
+const MAX_PRE_ROLL_MS = 500;
 
 interface LevelEvent {
+  sessionId: number;
   rms: number;
 }
 
 interface FrameEvent {
+  sessionId: number;
   /** Base64 of `VAD_FRAME_SAMPLES` little-endian f32 samples. */
   data: string;
 }
@@ -69,23 +80,96 @@ async function resolveDeviceLabel(deviceId?: string): Promise<string | undefined
   }
 }
 
+function isLowLatencyModeEnabled(): boolean {
+  if ("isLowLatencyModeEnabled" in preferences) return preferences.isLowLatencyModeEnabled();
+  return storageItem(LS_LOW_LATENCY_MODE) === "1";
+}
+
+function getPreRollMs(): number {
+  if ("getPreRollMs" in preferences) return preferences.getPreRollMs();
+  const raw = storageItem(LS_PRE_ROLL_MS);
+  const n = raw === null ? DEFAULT_PRE_ROLL_MS : Number(raw);
+  if (!Number.isFinite(n)) return DEFAULT_PRE_ROLL_MS;
+  return Math.min(MAX_PRE_ROLL_MS, Math.max(0, Math.round(n)));
+}
+
+function isNativeCaptureEnabled(): boolean {
+  if ("isNativeCaptureEnabled" in preferences) return preferences.isNativeCaptureEnabled();
+  return storageItem(LS_NATIVE_CAPTURE) === "1";
+}
+
+function getStoredMicDeviceId(): string {
+  if ("getMicDeviceId" in preferences) return preferences.getMicDeviceId();
+  return storageItem(LS_MIC_DEVICE) || "";
+}
+
+function storageItem(key: string): string | null {
+  try {
+    return typeof localStorage === "undefined" ? null : localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function isPerfDebugEnabled(): boolean {
+  return "isPerfDebugEnabled" in preferences ? preferences.isPerfDebugEnabled() : false;
+}
+
 /**
- * Start native capture. Resolves once the Rust stream is live so callers can
- * treat it like the default `startRecording`.
+ * Best-effort boot/settings hook for the warm native capture engine.
+ *
+ * Low-latency mode keeps the mic persistently warm before the first press;
+ * default native capture remains on-demand so the OS mic indicator stays off
+ * until recording actually starts.
+ */
+export async function syncNativeCaptureArm(): Promise<void> {
+  if (!isNativeCaptureEnabled()) {
+    try {
+      await invoke("disarm_native_capture");
+    } catch {
+      /* best-effort */
+    }
+    return;
+  }
+
+  if (!isLowLatencyModeEnabled()) return;
+
+  try {
+    const deviceName = await resolveDeviceLabel(getStoredMicDeviceId());
+    await invoke("arm_native_capture", {
+      deviceName: deviceName ?? null,
+      keepWarm: true,
+      streamFrames: false,
+    });
+  } catch {
+    /* best-effort */
+  }
+}
+
+/**
+ * Start a native recording session over the warm Rust engine. Resolves once
+ * Rust has marked the session active so callers can treat it like the default
+ * `startRecording`.
  */
 export async function startNativeRecording(
   opts: AudioControllerOptions = {},
 ): Promise<AudioController> {
   const deviceName = await resolveDeviceLabel(opts.deviceId);
+  const keepWarm = isLowLatencyModeEnabled();
+  const preRollMs = keepWarm ? getPreRollMs() : 0;
+  const streamFrames = !!opts.onFrame;
 
   // Latest smoothed level, driven by throttled RMS events from Rust.
   let smoothedLevel = 0;
   const smoothing = 0.65;
   let latestRms = 0;
+  let sessionId: number | null = null;
+  let legacyCapture = false;
 
   let unlisten: UnlistenFn | null = null;
   try {
     unlisten = await listen<LevelEvent>("native_audio:level", (event) => {
+      if (!legacyCapture && event.payload?.sessionId !== sessionId) return;
       const rms = event.payload?.rms ?? 0;
       // Boost low signal so visible motion appears at normal speech levels.
       latestRms = Math.min(1, rms * 3);
@@ -96,13 +180,13 @@ export async function startNativeRecording(
 
   // Per-frame streaming (VAD / live-partial parity). Only wired when a sink is
   // provided; Rust is told via `streamFrames` so it never emits otherwise.
-  const streamFrames = !!opts.onFrame;
   let frameUnlisten: UnlistenFn | null = null;
   let frameCount = 0;
   if (opts.onFrame) {
     const sink = opts.onFrame;
     try {
       frameUnlisten = await listen<FrameEvent>("native_audio:frame", (event) => {
+        if (!legacyCapture && event.payload?.sessionId !== sessionId) return;
         const data = event.payload?.data;
         if (!data) return;
         const frame = decodeFrame(data);
@@ -118,7 +202,20 @@ export async function startNativeRecording(
 
   const startedAt = performance.now();
   try {
-    await invoke("start_native_capture", { deviceName: deviceName ?? null, streamFrames });
+    await invoke("arm_native_capture", {
+      deviceName: deviceName ?? null,
+      keepWarm,
+      streamFrames,
+    });
+    const startedSessionId = await invoke<number>("start_native_session", { preRollMs });
+    if (typeof startedSessionId === "number" && Number.isFinite(startedSessionId)) {
+      sessionId = startedSessionId;
+    } else {
+      // Defensive compatibility for stale test/mixed-version IPC mocks only;
+      // the Tauri 2 warm engine returns a numeric u64 session id.
+      await invoke("start_native_capture", { deviceName: deviceName ?? null, streamFrames });
+      legacyCapture = true;
+    }
   } catch (err) {
     if (unlisten) unlisten();
     if (frameUnlisten) frameUnlisten();
@@ -162,7 +259,12 @@ export async function startNativeRecording(
     if (stopped) return null;
     stopped = true;
     try {
-      const pcmArray = await invoke<number[]>("stop_native_capture");
+      const pcmArray = legacyCapture
+        ? await invoke<number[]>("stop_native_capture")
+        : await (async () => {
+            await invoke("stop_native_session", { sessionId });
+            return invoke<number[]>("take_native_recording", { sessionId });
+          })();
       const pcm = Float32Array.from(pcmArray);
       const durationMs = (pcm.length / VAD_SAMPLE_RATE) * 1000;
       if (isPerfDebugEnabled()) {
@@ -185,8 +287,13 @@ export async function startNativeRecording(
       return;
     }
     stopped = true;
-    // Fire-and-forget: stop the native stream and discard the audio.
-    void invoke("stop_native_capture").catch(() => {});
+    // Fire-and-forget: stop this session and discard its buffered audio.
+    if (legacyCapture) {
+      void invoke("stop_native_capture").catch(() => {});
+    } else {
+      void invoke("stop_native_session", { sessionId }).catch(() => {});
+      void invoke("cancel_native_session", { sessionId }).catch(() => {});
+    }
     detach();
   };
 

@@ -29,6 +29,8 @@ const LS_FUZZY_VOCAB = "sw.postproc.fuzzyVocab";
 const LS_LIVE_PARTIAL = "sw.transcribe.livePartial";
 const LS_TRUE_STREAMING = "sw.transcribe.trueStreaming";
 const LS_NATIVE_CAPTURE = "sw.audio.nativeCapture";
+const LS_LOW_LATENCY_MODE = "sw.audio.lowLatencyMode";
+const LS_PRE_ROLL_MS = "sw.audio.preRollMs";
 
 export type OverlayPosition =
   | "bottom-center"
@@ -238,6 +240,42 @@ export function isNativeCaptureEnabled(): boolean {
 
 export function setNativeCaptureEnabled(v: boolean): void {
   localStorage.setItem(LS_NATIVE_CAPTURE, v ? "1" : "0");
+}
+
+/** Hard cap on pre-roll (ms). Pre-roll is a rolling pre-record, so it is
+ *  capped for privacy and only ever applied while low-latency mode is on. */
+export const MAX_PRE_ROLL_MS = 500;
+/** Default pre-roll captured before key-down so word onsets aren't clipped. */
+export const DEFAULT_PRE_ROLL_MS = 250;
+
+/**
+ * Low-latency mode: keep the native cpal capture stream persistently warm and
+ * enable pre-roll, so the very first `fn` press of a session is instant.
+ *
+ * **Default off.** A persistent warm stream keeps the microphone open, so the
+ * macOS orange mic indicator stays on the whole time the app runs; the Settings
+ * toggle must say so explicitly. Only meaningful when `sw.audio.nativeCapture`
+ * is on.
+ */
+export function isLowLatencyModeEnabled(): boolean {
+  return localStorage.getItem(LS_LOW_LATENCY_MODE) === "1";
+}
+
+export function setLowLatencyModeEnabled(v: boolean): void {
+  localStorage.setItem(LS_LOW_LATENCY_MODE, v ? "1" : "0");
+}
+
+/** Pre-roll length in ms, clamped to [0, MAX_PRE_ROLL_MS]. */
+export function getPreRollMs(): number {
+  const raw = localStorage.getItem(LS_PRE_ROLL_MS);
+  const n = raw === null ? DEFAULT_PRE_ROLL_MS : Number(raw);
+  if (!Number.isFinite(n)) return DEFAULT_PRE_ROLL_MS;
+  return Math.min(MAX_PRE_ROLL_MS, Math.max(0, Math.round(n)));
+}
+
+export function setPreRollMs(ms: number): void {
+  const clamped = Math.min(MAX_PRE_ROLL_MS, Math.max(0, Math.round(ms)));
+  localStorage.setItem(LS_PRE_ROLL_MS, String(clamped));
 }
 
 export function isClipboardRestoreEnabled(): boolean {

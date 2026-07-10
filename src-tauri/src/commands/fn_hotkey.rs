@@ -60,13 +60,14 @@ pub struct FnHotkeyState {
 #[cfg(target_os = "macos")]
 mod macos {
     use super::{FnHotkeyState, Trigger};
-    use core_foundation::runloop::CFRunLoop;
+    use core_foundation::runloop::{kCFRunLoopCommonModes, CFRunLoop};
     use core_graphics::event::{
         CGEventFlags, CGEventTap, CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement,
         CGEventType, CallbackResult, EventField,
     };
     use serde::Serialize;
-    use std::cell::Cell;
+    use std::cell::{Cell, RefCell};
+    use std::rc::{Rc, Weak};
     use std::sync::mpsc;
     use tauri::{AppHandle, Emitter, Runtime};
 
@@ -143,15 +144,47 @@ mod macos {
             .name("modifier-hotkey-tap".into())
             .spawn(move || {
                 let is_down = Cell::new(false);
-                // `with_enabled` creates the tap, attaches it to this
-                // thread's run loop, enables it, and destroys it when the
-                // run-loop call below returns (i.e. when `stop` fires).
-                let created = CGEventTap::with_enabled(
+                // Hold the tap so the callback can re-enable it after macOS
+                // disables it (kCGEventTapDisabledBy*). The callback keeps a
+                // Weak reference to avoid an Rc cycle, so the tap is still
+                // dropped when `stop` stops the run loop.
+                let tap_holder: Rc<RefCell<Option<CGEventTap<'static>>>> =
+                    Rc::new(RefCell::new(None));
+                let tap_weak: Weak<RefCell<Option<CGEventTap<'static>>>> =
+                    Rc::downgrade(&tap_holder);
+                // SAFETY: the tap is installed only on THIS thread's run loop
+                // and is dropped when this thread unwinds (after `stop`), so
+                // its non-Send callback state never crosses threads or outlives
+                // the tap. Mirrors `CGEventTap::with_enabled`, but keeps the
+                // tap reachable so the callback can re-enable it on disable.
+                let created = unsafe {
+                    CGEventTap::new_unchecked(
                     CGEventTapLocation::Session,
                     CGEventTapPlacement::HeadInsertEventTap,
                     CGEventTapOptions::ListenOnly,
                     vec![CGEventType::FlagsChanged],
-                    |_proxy, _etype, event| {
+                    move |_proxy, etype, event| {
+                        // macOS disables a slow tap, or during heavy input; if
+                        // we don't re-enable it the fn / Right ⌘ hotkey stops
+                        // working silently mid-session.
+                        if matches!(
+                            etype,
+                            CGEventType::TapDisabledByTimeout
+                                | CGEventType::TapDisabledByUserInput
+                        ) {
+                            if let Some(holder) = tap_weak.upgrade() {
+                                if let Some(tap) = holder.borrow().as_ref() {
+                                    tap.enable();
+                                }
+                            }
+                            // A lost release edge would leave recording stuck
+                            // on — synthesize an up if we were mid-hold.
+                            if is_down.get() {
+                                is_down.set(false);
+                                let _ = app.emit("hotkey:up", HotkeyPayload { spec });
+                            }
+                            return CallbackResult::Keep;
+                        }
                         let now = match trigger {
                             Trigger::Fn => event
                                 .get_flags()
@@ -183,17 +216,39 @@ mod macos {
                         }
                         CallbackResult::Keep
                     },
-                    || {
-                        let _ = tx.send(Ok(SendRunLoop(CFRunLoop::get_current())));
-                        CFRunLoop::run_current();
+                    )
+                };
+
+                match created {
+                    Ok(tap) => match tap.mach_port().create_runloop_source(0) {
+                        Ok(loop_source) => {
+                            // Attach + enable exactly like `with_enabled`, but
+                            // keep the tap in `tap_holder` so the callback can
+                            // re-enable it on a disabled-tap event.
+                            CFRunLoop::get_current()
+                                .add_source(&loop_source, unsafe { kCFRunLoopCommonModes });
+                            tap.enable();
+                            *tap_holder.borrow_mut() = Some(tap);
+                            let _ = tx.send(Ok(SendRunLoop(CFRunLoop::get_current())));
+                            CFRunLoop::run_current();
+                            // Run loop stopped by `stop`: drop the tap, which
+                            // invalidates the mach port.
+                            drop(tap_holder);
+                        }
+                        Err(()) => {
+                            let _ = tx.send(Err(
+                                "Couldn't attach the modifier-key event tap to the run loop."
+                                    .into(),
+                            ));
+                        }
                     },
-                );
-                if created.is_err() {
-                    let _ = tx.send(Err(
-                        "Couldn't create the modifier-key event tap. If you just \
-                         granted Input Monitoring, relaunch the app and try again."
-                            .into(),
-                    ));
+                    Err(()) => {
+                        let _ = tx.send(Err(
+                            "Couldn't create the modifier-key event tap. If you just \
+                             granted Input Monitoring, relaunch the app and try again."
+                                .into(),
+                        ));
+                    }
                 }
             })
             .map_err(|e| e.to_string())?;

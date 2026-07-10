@@ -224,18 +224,22 @@ export function setTrueStreamingEnabled(v: boolean): void {
 }
 
 /**
- * Native audio capture (docs/proposals/handy-adoption.md §Phase 3, route 3B).
- * When on, the overlay captures the recorded audio in Rust (`cpal` + `rubato`
- * → 16 kHz mono f32) instead of the WebView `MediaRecorder`, feeding the same
- * transcription pipeline via a WAV blob.
+ * Native audio capture (docs/proposals/warm-ptt-capture.md). When on, the
+ * overlay captures recorded audio in Rust (`cpal` + `rubato` → 16 kHz mono
+ * f32) via the warm engine instead of the WebView `MediaRecorder`, feeding the
+ * same transcription pipeline via a WAV blob.
  *
- * **Default off** — leaving it off keeps the existing `getUserMedia` +
- * `MediaRecorder` capture path byte-for-byte unchanged. Frame-level streaming
- * (VAD auto-stop / live partials sourced from native frames) is not yet wired
- * on this path, so those opt-in features still require the default capture.
+ * **Default ON** ("Fast" recording engine): native capture keeps the mic warm
+ * between dictations (closing on idle) for lower latency, with no change to the
+ * mic-indicator behavior. Users who pick "Standard" set the flag to "0"
+ * explicitly. If native capture ever fails to start, `startRecording`
+ * (src/lib/audio.ts) falls back to the WebAudio path, so this is safe to
+ * default on. The always-on-mic "Instant" mode stays opt-in
+ * (`sw.audio.lowLatencyMode`).
  */
 export function isNativeCaptureEnabled(): boolean {
-  return localStorage.getItem(LS_NATIVE_CAPTURE) === "1";
+  const v = localStorage.getItem(LS_NATIVE_CAPTURE);
+  return v === null ? true : v === "1";
 }
 
 export function setNativeCaptureEnabled(v: boolean): void {

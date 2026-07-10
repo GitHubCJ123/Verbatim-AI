@@ -145,8 +145,20 @@ export async function startRecording(opts: AudioControllerOptions = {}): Promise
   // WebAudio path below completely untouched. Dynamically imported so the native
   // module (and its Tauri event listeners) is only loaded when enabled.
   if (isNativeCaptureEnabled()) {
-    const { startNativeRecording } = await import("./nativeAudio");
-    return startNativeRecording(opts);
+    try {
+      const { startNativeRecording } = await import("./nativeAudio");
+      // Suppress the native onError here so a fallback isn't surfaced as a
+      // failure; the WebAudio path below reports its own errors.
+      return await startNativeRecording({ ...opts, onError: undefined });
+    } catch (e) {
+      // Native capture is default-on ("Fast") but newer; if it can't arm/start
+      // (device, permission, or driver issue) fall back to the proven WebAudio
+      // path so recording always works.
+      console.warn(
+        "[Verbatim AI] native capture failed to start; falling back to WebAudio.",
+        e,
+      );
+    }
   }
 
   const requestedKey = opts.deviceId ?? "";

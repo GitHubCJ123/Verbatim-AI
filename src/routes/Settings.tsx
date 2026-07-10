@@ -549,6 +549,28 @@ function UpdateSettingRow() {
             </Button>
           ),
         };
+      case "manual-required":
+        return {
+          description: s.instructions,
+          action: (
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={async () => {
+                try {
+                  const { openUrl } = await import("@tauri-apps/plugin-opener");
+                  await openUrl(s.downloadUrl);
+                } catch (e) {
+                  toast.error("Couldn't open the download page", {
+                    description: e instanceof Error ? e.message : String(e),
+                  });
+                }
+              }}
+            >
+              Download update
+            </Button>
+          ),
+        };
       case "error":
         return {
           description: `Update check failed: ${s.message}`,

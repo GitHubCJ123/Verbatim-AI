@@ -11,4 +11,5 @@ pub mod paste;
 pub mod process_list;
 pub mod relay;
 pub mod streaming_sidecar;
+pub mod updater_env;
 pub mod whisper_server;

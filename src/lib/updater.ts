@@ -14,6 +14,50 @@
  */
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
+import { invoke } from "@tauri-apps/api/core";
+
+const RELEASES_URL =
+  "https://github.com/GitHubCJ123/Verbatim-AI/releases/latest";
+
+type InstallEnvironment = {
+  canAutoInstall: boolean;
+  reason: string | null;
+  bundlePath: string | null;
+};
+
+/**
+ * On macOS an unsigned/quarantined app is launched from a read-only App
+ * Translocation copy, so tauri's in-place updater would swap that throwaway
+ * copy instead of /Applications. Ask the Rust side whether an in-place
+ * install can actually land on the real app.
+ */
+async function getInstallEnvironment(): Promise<InstallEnvironment> {
+  try {
+    return await invoke<InstallEnvironment>("update_install_environment");
+  } catch {
+    // If the preflight itself fails, don't block updates.
+    return { canAutoInstall: true, reason: null, bundlePath: null };
+  }
+}
+
+function manualUpdateCopy(
+  reason: string | null,
+  version: string,
+): { headline: string; instructions: string } {
+  if (reason === "read_only_volume") {
+    return {
+      headline: `Verbatim AI ${version} is available. Move the app to your Applications folder to enable updates.`,
+      instructions:
+        "Verbatim AI is running from a disk image or another read-only location, so it can't update itself in place. Drag Verbatim AI into your Applications folder, launch it from there, then check for updates again.",
+    };
+  }
+  // Default: translocated / quarantined install.
+  return {
+    headline: `Verbatim AI ${version} is available, but this copy can't update itself (macOS is running it from a quarantined, read-only location).`,
+    instructions:
+      'macOS is running Verbatim AI from a temporary read-only copy (App Translocation), so the updater cannot replace the app in /Applications. To update: download the latest release below, drag it into Applications (replacing the old app), then run this in Terminal to re-enable automatic updates:\n\nxattr -dr com.apple.quarantine "/Applications/Verbatim AI.app"',
+  };
+}
 
 export type UpdateStatus =
   | { kind: "idle" }
@@ -40,6 +84,16 @@ export type UpdateStatus =
       version: string;
       currentVersion: string;
       notes?: string;
+    }
+  | {
+      kind: "manual-required";
+      version: string;
+      currentVersion: string;
+      notes?: string;
+      reason: string;
+      headline: string;
+      instructions: string;
+      downloadUrl: string;
     }
   | { kind: "error"; message: string };
 
@@ -82,6 +136,24 @@ export async function checkForUpdate(): Promise<void> {
       return;
     }
     activeUpdate = update;
+    // Preflight: on macOS a quarantined/translocated or read-only-volume
+    // launch can't be updated in place — surface a manual path instead of
+    // silently "installing" into a throwaway folder.
+    const env = await getInstallEnvironment();
+    if (!env.canAutoInstall) {
+      const copy = manualUpdateCopy(env.reason, update.version);
+      setStatus({
+        kind: "manual-required",
+        version: update.version,
+        currentVersion: update.currentVersion,
+        notes: update.body,
+        reason: env.reason ?? "unknown",
+        headline: copy.headline,
+        instructions: copy.instructions,
+        downloadUrl: RELEASES_URL,
+      });
+      return;
+    }
     setStatus({
       kind: "available",
       version: update.version,
@@ -149,6 +221,14 @@ async function downloadInBackground(): Promise<void> {
 
 export async function installAndRelaunch(): Promise<void> {
   if (!activeUpdate) throw new Error("No update queued.");
+  // Defensive: never run the in-place install when it would target a
+  // read-only translocated copy instead of /Applications.
+  const env = await getInstallEnvironment();
+  if (!env.canAutoInstall) {
+    throw new Error(
+      manualUpdateCopy(env.reason, activeUpdate.version).instructions,
+    );
+  }
   await activeUpdate.install();
   await relaunch();
 }

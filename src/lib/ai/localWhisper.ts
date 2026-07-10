@@ -2,17 +2,15 @@
  * Local Whisper provider — runs transcription on-device via whisper.cpp
  * (Rust commands `transcribe_local`, `list_local_models`, etc).
  *
- * Cleanup is NOT yet implemented locally — we delegate to the cloud
- * cleanup function for now (Phase 2: local LLM via Ollama/llama.cpp).
+ * This provider owns only the transcription half of the pipeline.
  */
 import { invoke } from "@tauri-apps/api/core";
 import { isPerfDebugEnabled } from "../preferences";
 import { decodeToMonoF32_16k } from "./audioDecode";
 import { CLOUD_FEATURES_ENABLED } from "../features";
 import type {
-  AIProvider,
-  CleanupInput,
   ProviderHealth,
+  Transcriber,
   TranscribeInput,
   TranscribeResult,
 } from "./AIProvider";
@@ -329,11 +327,9 @@ export async function resolveWhisperCommand(): Promise<
 
 export interface LocalWhisperConfig {
   tier: WhisperModelId;
-  /** Provider used for the cleanup/polish step until local LLM ships. */
-  cleanupFallback: AIProvider;
 }
 
-export class LocalWhisperProvider implements AIProvider {
+export class LocalWhisperProvider implements Transcriber {
   readonly name: string;
   constructor(private cfg: LocalWhisperConfig) {
     this.name = `Local Whisper (${cfg.tier})`;
@@ -375,10 +371,6 @@ export class LocalWhisperProvider implements AIProvider {
       languageDetected: out.language_detected || (input.language ?? "auto"),
       durationMs: out.duration_ms || invokeMs,
     };
-  }
-
-  cleanup(input: CleanupInput): AsyncIterable<string> {
-    return this.cfg.cleanupFallback.cleanup(input);
   }
 
   async health(): Promise<ProviderHealth> {

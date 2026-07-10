@@ -7,11 +7,9 @@
  */
 import { invoke } from "@tauri-apps/api/core";
 import type {
-  AIProvider,
+  Cleaner,
   CleanupInput,
   ProviderHealth,
-  TranscribeInput,
-  TranscribeResult,
 } from "./AIProvider";
 import { buildCleanupPrompt } from "./promptBuilder";
 
@@ -67,15 +65,11 @@ export interface LlamaCppConfig {
   model: string;
 }
 
-export class LlamaCppProvider implements AIProvider {
+export class LlamaCppProvider implements Cleaner {
   readonly name: string;
 
   constructor(private cfg: LlamaCppConfig) {
     this.name = `llama.cpp (${cfg.model || "no model"})`;
-  }
-
-  async transcribe(_input: TranscribeInput): Promise<TranscribeResult> {
-    throw new Error("llama.cpp does not support transcription. Use Whisper or Parakeet.");
   }
 
   async *cleanup(input: CleanupInput): AsyncIterable<string> {

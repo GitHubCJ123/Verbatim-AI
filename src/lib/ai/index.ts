@@ -5,13 +5,14 @@
  */
 import {
   type AIProvider,
+  type Cleaner,
   type CleanupInput,
   type ProviderHealth,
+  type Transcriber,
   type TranscribeInput,
   type TranscribeResult,
 } from "./AIProvider";
 import { supabase, supabaseAnonKey, supabaseUrl, isSupabaseConfigured } from "../supabase";
-import { CLOUD_FEATURES_ENABLED } from "../features";
 import { isLocalMode } from "../appMode";
 import {
   LocalWhisperProvider,
@@ -248,18 +249,7 @@ function getCloud(): SupabaseAIProvider {
   return cloudCache;
 }
 
-/**
- * Legacy cleanup fallback wired into the transcribe-only providers
- * (Local Whisper / Parakeet). The active pipeline (getActiveProvider)
- * resolves cleanup independently, so this is never invoked there; while
- * cloud is disabled we still avoid any latent network path by falling
- * back to the resolved local cleanup provider instead of the cloud one.
- */
-function cloudCleanupFallback(): AIProvider {
-  return CLOUD_FEATURES_ENABLED ? getCloud() : cleanupProvider();
-}
-
-function transcribeProvider(mode?: Mode | null): AIProvider {
+function transcribeProvider(mode?: Mode | null): Transcriber {
   const kind = effectiveTranscribeKind(mode?.transcribeProviderOverride ?? getAiProviderKind());
   if (kind === "cloud") return getCloud();
   if (kind === "local-parakeet") {
@@ -271,7 +261,6 @@ function transcribeProvider(mode?: Mode | null): AIProvider {
       p = new ParakeetProvider({
         variant,
         language,
-        cleanupFallback: cloudCleanupFallback(),
       });
       parakeetByKey.set(key, p);
     }
@@ -280,13 +269,13 @@ function transcribeProvider(mode?: Mode | null): AIProvider {
   const tier = (mode?.whisperTierOverride ?? getLocalWhisperTier()) as WhisperModelId;
   let p = localWhisperByTier.get(tier);
   if (!p) {
-    p = new LocalWhisperProvider({ tier, cleanupFallback: cloudCleanupFallback() });
+    p = new LocalWhisperProvider({ tier });
     localWhisperByTier.set(tier, p);
   }
   return p;
 }
 
-function cleanupProvider(mode?: Mode | null): AIProvider {
+function cleanupProvider(mode?: Mode | null): Cleaner {
   const kind = effectiveCleanupKind(mode?.cleanupProviderOverride ?? getCleanupProviderKind());
   if (kind === "cloud") return getCloud();
   if (kind === "local-llama-cpp") {

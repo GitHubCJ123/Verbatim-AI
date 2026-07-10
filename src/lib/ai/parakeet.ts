@@ -1,15 +1,13 @@
 /**
  * Parakeet TDT v3 provider — on-device multilingual transcription via the
- * sherpa-onnx CPU sidecar. Cleanup is delegated to whatever cleanup
- * provider the user has selected (cloud or Ollama), mirroring the Local
- * Whisper provider's pattern.
+ * sherpa-onnx CPU sidecar. This provider owns only the transcription half
+ * of the pipeline.
  */
 import { invoke } from "@tauri-apps/api/core";
 import { decodeToMonoF32_16k } from "./audioDecode";
 import type {
-  AIProvider,
-  CleanupInput,
   ProviderHealth,
+  Transcriber,
   TranscribeInput,
   TranscribeResult,
 } from "./AIProvider";
@@ -144,11 +142,9 @@ export function deleteParakeetModel(variant: ParakeetVariant): Promise<void> {
 export interface ParakeetConfig {
   variant: ParakeetVariant;
   language: string;
-  /** Provider used for the cleanup step (Parakeet itself doesn't clean up). */
-  cleanupFallback: AIProvider;
 }
 
-export class ParakeetProvider implements AIProvider {
+export class ParakeetProvider implements Transcriber {
   readonly name: string;
   constructor(private cfg: ParakeetConfig) {
     this.name = `Parakeet TDT ${cfg.variant}`;
@@ -175,10 +171,6 @@ export class ParakeetProvider implements AIProvider {
       languageDetected: out.language_detected || language,
       durationMs: out.duration_ms || wallMs,
     };
-  }
-
-  cleanup(input: CleanupInput): AsyncIterable<string> {
-    return this.cfg.cleanupFallback.cleanup(input);
   }
 
   async health(): Promise<ProviderHealth> {

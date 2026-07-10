@@ -174,12 +174,4 @@ describe("LlamaCppProvider — invoke contract", () => {
     expect(h.message).toContain(MODEL_ID);
   });
 
-  it("transcribe() always throws — llama.cpp is a cleanup-only provider", async () => {
-    const provider = new LlamaCppProvider({ model: MODEL_ID });
-    await expect(
-      provider.transcribe({ audio: new Blob([new Uint8Array(4)]) }),
-    ).rejects.toThrow("llama.cpp does not support transcription");
-
-    expect(invoke).not.toHaveBeenCalled();
-  });
 });

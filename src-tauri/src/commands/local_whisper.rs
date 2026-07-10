@@ -1162,7 +1162,8 @@ pub async fn transcribe_local_pcm(
     transcribe_local(app, args).await
 }
 
-#[tauri::command]
+// Internal implementation, invoked via the `transcribe_local_pcm` command;
+// intentionally not registered as its own Tauri command.
 pub async fn transcribe_local(
     app: AppHandle,
     args: TranscribeArgs,

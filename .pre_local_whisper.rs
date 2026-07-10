@@ -11,19 +11,18 @@
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
-use super::runtime_assets::{
-    clear_dir_contents, download_with_progress, extract_archive, locate_executable,
-    make_executables, strip_quarantine, verify_minisign, verify_sha256, ArchiveKind,
-    DownloadProgress as RuntimeAssetProgress,
-};
+use futures_util::StreamExt;
+use minisign_verify::{PublicKey, Signature};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use tauri::{
     ipc::{InvokeBody, Request},
     AppHandle, Emitter, Manager,
 };
 use tokio::fs;
+use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 
 fn perf_enabled() -> bool {
@@ -219,7 +218,24 @@ fn whisper_cli_name() -> &'static str {
 }
 
 fn locate_whisper_cli_in_dir(dir: &Path) -> Option<PathBuf> {
-    locate_executable(dir, whisper_cli_name())
+    let target = whisper_cli_name();
+    fn walk(dir: &Path, target: &str) -> Option<PathBuf> {
+        let entries = std::fs::read_dir(dir).ok()?;
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_file() {
+                if p.file_name().and_then(|n| n.to_str()) == Some(target) {
+                    return Some(p);
+                }
+            } else if p.is_dir() {
+                if let Some(found) = walk(&p, target) {
+                    return Some(found);
+                }
+            }
+        }
+        None
+    }
+    walk(dir, target)
 }
 
 fn locate_whisper_cli_for_variant(
@@ -254,7 +270,24 @@ fn whisper_server_name() -> &'static str {
 }
 
 fn locate_whisper_server_in_dir(dir: &Path) -> Option<PathBuf> {
-    locate_executable(dir, whisper_server_name())
+    let target = whisper_server_name();
+    fn walk(dir: &Path, target: &str) -> Option<PathBuf> {
+        let entries = std::fs::read_dir(dir).ok()?;
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_file() {
+                if p.file_name().and_then(|n| n.to_str()) == Some(target) {
+                    return Some(p);
+                }
+            } else if p.is_dir() {
+                if let Some(found) = walk(&p, target) {
+                    return Some(found);
+                }
+            }
+        }
+        None
+    }
+    walk(dir, target)
 }
 
 fn locate_whisper_server_for_variant(
@@ -340,7 +373,24 @@ fn whisper_stream_name() -> &'static str {
 }
 
 fn locate_whisper_stream_in_dir(dir: &Path) -> Option<PathBuf> {
-    locate_executable(dir, whisper_stream_name())
+    let target = whisper_stream_name();
+    fn walk(dir: &Path, target: &str) -> Option<PathBuf> {
+        let entries = std::fs::read_dir(dir).ok()?;
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_file() {
+                if p.file_name().and_then(|n| n.to_str()) == Some(target) {
+                    return Some(p);
+                }
+            } else if p.is_dir() {
+                if let Some(found) = walk(&p, target) {
+                    return Some(found);
+                }
+            }
+        }
+        None
+    }
+    walk(dir, target)
 }
 
 fn locate_whisper_stream_for_variant(
@@ -401,6 +451,26 @@ pub(crate) fn streaming_sidecar_available(app: &AppHandle, preference: Option<&s
         .ok()
         .flatten()
         .is_some()
+}
+
+/// Recursive list of every file under `root`. Used to chmod whisper-cli
+/// + dylibs after extraction (zip drops the executable bit).
+#[cfg(unix)]
+fn walk_dir(root: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    fn inner(dir: &Path, out: &mut Vec<PathBuf>) {
+        let Ok(entries) = std::fs::read_dir(dir) else { return };
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_file() {
+                out.push(p);
+            } else if p.is_dir() {
+                inner(&p, out);
+            }
+        }
+    }
+    inner(root, &mut out);
+    out
 }
 
 #[cfg(windows)]
@@ -505,6 +575,10 @@ fn runtime_archive_url(variant: WhisperRuntimeVariant) -> Result<RuntimeAsset, S
     }
 }
 
+fn hex_lower(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
 async fn verified_runtime_manifest(client: &reqwest::Client) -> Result<RuntimeManifest, String> {
     let base = release_asset_base_url();
     let manifest_url = format!("{base}/{RUNTIME_MANIFEST_NAME}");
@@ -529,7 +603,11 @@ async fn verified_runtime_manifest(client: &reqwest::Client) -> Result<RuntimeMa
         .text()
         .await
         .map_err(|e| e.to_string())?;
-    verify_runtime_manifest_bytes(&manifest_bytes, &signature_text)?;
+    let public_key = PublicKey::decode(MINISIGN_PUBLIC_KEY).map_err(|e| e.to_string())?;
+    let signature = Signature::decode(&signature_text).map_err(|e| e.to_string())?;
+    public_key
+        .verify(&manifest_bytes, &signature, false)
+        .map_err(|e| format!("Whisper runtime manifest signature verification failed: {e}"))?;
     serde_json::from_slice::<RuntimeManifest>(&manifest_bytes).map_err(|e| e.to_string())
 }
 
@@ -558,12 +636,11 @@ async fn bundled_manifest_bytes(app: &AppHandle) -> Result<Option<(Vec<u8>, Stri
 }
 
 fn verify_runtime_manifest_bytes(manifest_bytes: &[u8], signature_text: &str) -> Result<(), String> {
-    verify_minisign(
-        manifest_bytes,
-        signature_text,
-        MINISIGN_PUBLIC_KEY,
-        "Whisper runtime manifest signature verification failed",
-    )
+    let public_key = PublicKey::decode(MINISIGN_PUBLIC_KEY).map_err(|e| e.to_string())?;
+    let signature = Signature::decode(signature_text).map_err(|e| e.to_string())?;
+    public_key
+        .verify(manifest_bytes, &signature, false)
+        .map_err(|e| format!("Whisper runtime manifest signature verification failed: {e}"))
 }
 
 fn bundled_runtime_dir(app: &AppHandle) -> Option<PathBuf> {
@@ -581,13 +658,6 @@ fn bundled_runtime_asset(app: &AppHandle, asset_name: &str) -> Option<PathBuf> {
 
 fn runtime_download_error(kind: &str, url: &str, e: reqwest::Error) -> String {
     if e.status() == Some(reqwest::StatusCode::NOT_FOUND) {
-        return runtime_download_status_error(kind, url, reqwest::StatusCode::NOT_FOUND);
-    }
-    format!("Could not download the Whisper runtime {kind} from {url}: {e}")
-}
-
-fn runtime_download_status_error(kind: &str, url: &str, status: reqwest::StatusCode) -> String {
-    if status == reqwest::StatusCode::NOT_FOUND {
         return format!(
             "Could not download the Whisper runtime {kind} for Verbatim AI v{} from {url}. \
              The GitHub release assets are not publicly available yet. Publish the v{} release \
@@ -596,7 +666,7 @@ fn runtime_download_status_error(kind: &str, url: &str, status: reqwest::StatusC
             env!("CARGO_PKG_VERSION"),
         );
     }
-    format!("download failed: HTTP {status} from {url}")
+    format!("Could not download the Whisper runtime {kind} from {url}: {e}")
 }
 
 #[tauri::command]
@@ -648,7 +718,16 @@ async fn install_whisper_runtime_variant(
 
     // Always reinstall this variant fresh: wipe any previous extraction
     // so URL/version changes are picked up without deleting other variants.
-    clear_dir_contents(&dir)?;
+    if dir.exists() {
+        for entry in std::fs::read_dir(&dir).map_err(|e| e.to_string())?.flatten() {
+            let p = entry.path();
+            if p.is_dir() {
+                let _ = std::fs::remove_dir_all(&p);
+            } else {
+                let _ = std::fs::remove_file(&p);
+            }
+        }
+    }
     let tmp_zip = dir.join(format!("whisper-bin-{}.partial.zip", variant.as_str()));
 
     let client = reqwest::Client::builder()
@@ -666,9 +745,15 @@ async fn install_whisper_runtime_variant(
         .sha256
         .to_ascii_lowercase();
 
+    let mut file = fs::File::create(&tmp_zip)
+        .await
+        .map_err(|e| e.to_string())?;
+    let mut hasher = Sha256::new();
+
     if let Some(bundled_path) = bundled_runtime_asset(app, asset.name) {
         let bytes = fs::read(&bundled_path).await.map_err(|e| e.to_string())?;
-        fs::write(&tmp_zip, &bytes).await.map_err(|e| e.to_string())?;
+        hasher.update(&bytes);
+        file.write_all(&bytes).await.map_err(|e| e.to_string())?;
         let total = bytes.len() as u64;
         let _ = app.emit(
             "local-whisper:runtime:progress",
@@ -678,45 +763,111 @@ async fn install_whisper_runtime_variant(
             },
         );
     } else {
-        download_with_progress(
-            &client,
-            &asset.url,
-            &tmp_zip,
-            Duration::from_millis(150),
-            |progress: RuntimeAssetProgress| {
+        let res = client
+            .get(&asset.url)
+            .send()
+            .await
+            .map_err(|e| runtime_download_error(asset.name, &asset.url, e))?;
+        if !res.status().is_success() {
+            if res.status() == reqwest::StatusCode::NOT_FOUND {
+                return Err(runtime_download_error(
+                    asset.name,
+                    &asset.url,
+                    res.error_for_status().unwrap_err(),
+                ));
+            }
+            return Err(format!(
+                "download failed: HTTP {} from {}",
+                res.status(),
+                asset.url
+            ));
+        }
+        let total = res.content_length().unwrap_or(0);
+        let mut stream = res.bytes_stream();
+        let mut downloaded: u64 = 0;
+        let mut last_emit = Instant::now();
+        while let Some(chunk) = stream.next().await {
+            let bytes = chunk.map_err(|e| e.to_string())?;
+            hasher.update(&bytes);
+            file.write_all(&bytes).await.map_err(|e| e.to_string())?;
+            downloaded += bytes.len() as u64;
+            if last_emit.elapsed().as_millis() > 150 {
+                last_emit = Instant::now();
                 let _ = app.emit(
                     "local-whisper:runtime:progress",
-                    RuntimeProgress {
-                        downloaded: progress.downloaded,
-                        total: progress.total,
-                    },
+                    RuntimeProgress { downloaded, total },
                 );
-            },
-            |e| runtime_download_error(asset.name, &asset.url, e),
-            |status, url| runtime_download_status_error(asset.name, url, status),
-        )
-        .await?;
+            }
+        }
     }
-    if let Err(e) = verify_sha256(&tmp_zip, &expected_sha) {
+    file.flush().await.map_err(|e| e.to_string())?;
+    drop(file);
+    let actual_sha = hex_lower(&hasher.finalize());
+    if actual_sha != expected_sha {
         let _ = fs::remove_file(&tmp_zip).await;
         return Err(format!(
-            "Whisper runtime checksum mismatch for {}: {}",
+            "Whisper runtime checksum mismatch for {}: expected {}, got {}",
             variant.as_str(),
-            e
+            expected_sha,
+            actual_sha
         ));
     }
 
     let extract_dir = dir.clone();
     let tmp_zip_for_extract = tmp_zip.clone();
     tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
-        extract_archive(&tmp_zip_for_extract, &extract_dir, ArchiveKind::Zip)?;
+        let f = std::fs::File::open(&tmp_zip_for_extract).map_err(|e| e.to_string())?;
+        let mut archive = zip::ZipArchive::new(f).map_err(|e| e.to_string())?;
+        for i in 0..archive.len() {
+            let mut entry = archive.by_index(i).map_err(|e| e.to_string())?;
+            let rel = match entry.enclosed_name() {
+                Some(p) => p.to_owned(),
+                None => continue,
+            };
+            let out_path = extract_dir.join(&rel);
+            if entry.is_dir() {
+                std::fs::create_dir_all(&out_path).map_err(|e| e.to_string())?;
+            } else {
+                if let Some(parent) = out_path.parent() {
+                    std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+                }
+                let mut out = std::fs::File::create(&out_path).map_err(|e| e.to_string())?;
+                std::io::copy(&mut entry, &mut out).map_err(|e| e.to_string())?;
+            }
+        }
+
         // macOS/Linux: zip doesn't preserve the executable bit and
         // macOS slaps a com.apple.quarantine xattr on anything that
         // came from a download. Without those two fixes, running
         // whisper-cli yields EACCES (permission denied) or Gatekeeper
         // refuses to launch it.
-        make_executables(&extract_dir, &["whisper-cli"]);
-        strip_quarantine(&extract_dir);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            for entry in walk_dir(&extract_dir) {
+                let name = entry.file_name().and_then(|s| s.to_str()).unwrap_or("");
+                let is_exec = name == "whisper-cli"
+                    || name.ends_with(".dylib")
+                    || name.ends_with(".so");
+                if is_exec {
+                    if let Ok(meta) = std::fs::metadata(&entry) {
+                        let mut perms = meta.permissions();
+                        // 0o755 = rwxr-xr-x
+                        perms.set_mode(perms.mode() | 0o111);
+                        let _ = std::fs::set_permissions(&entry, perms);
+                    }
+                }
+            }
+        }
+        #[cfg(target_os = "macos")]
+        {
+            // Strip the quarantine attribute recursively. Best-effort;
+            // it's fine if xattr isn't there.
+            let _ = std::process::Command::new("xattr")
+                .args(["-d", "-r", "com.apple.quarantine"])
+                .arg(&extract_dir)
+                .status();
+        }
         Ok(())
     })
     .await
@@ -856,25 +1007,36 @@ pub async fn download_local_model(app: AppHandle, tier: String) -> Result<(), St
     let client = reqwest::Client::builder()
         .build()
         .map_err(|e| e.to_string())?;
-    let result = download_with_progress(
-        &client,
-        &url,
-        &tmp_path,
-        Duration::from_millis(200),
-        |progress: RuntimeAssetProgress| {
+    let res = client.get(&url).send().await.map_err(|e| e.to_string())?;
+    if !res.status().is_success() {
+        return Err(format!("download failed: HTTP {}", res.status()));
+    }
+    let total = res.content_length().unwrap_or(0);
+
+    let mut file = fs::File::create(&tmp_path)
+        .await
+        .map_err(|e| e.to_string())?;
+    let mut stream = res.bytes_stream();
+    let mut downloaded: u64 = 0;
+    let mut last_emit = Instant::now();
+    while let Some(chunk) = stream.next().await {
+        let bytes = chunk.map_err(|e| e.to_string())?;
+        file.write_all(&bytes).await.map_err(|e| e.to_string())?;
+        downloaded += bytes.len() as u64;
+        if last_emit.elapsed().as_millis() > 200 {
+            last_emit = Instant::now();
             let _ = app.emit(
                 "local-whisper:download:progress",
                 DownloadProgress {
                     tier: t.as_str().to_string(),
-                    downloaded: progress.downloaded,
-                    total: progress.total,
+                    downloaded,
+                    total,
                 },
             );
-        },
-        |e| e.to_string(),
-        |status, _| format!("download failed: HTTP {status}"),
-    )
-    .await?;
+        }
+    }
+    file.flush().await.map_err(|e| e.to_string())?;
+    drop(file);
 
     fs::rename(&tmp_path, &final_path)
         .await
@@ -883,8 +1045,8 @@ pub async fn download_local_model(app: AppHandle, tier: String) -> Result<(), St
         "local-whisper:download:progress",
         DownloadProgress {
             tier: t.as_str().to_string(),
-            downloaded: result.total.max(result.downloaded),
-            total: result.total.max(result.downloaded),
+            downloaded: total.max(downloaded),
+            total: total.max(downloaded),
         },
     );
     let _ = app.emit("local-whisper:download:complete", t.as_str().to_string());

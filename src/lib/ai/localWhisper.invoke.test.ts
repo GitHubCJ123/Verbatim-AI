@@ -13,21 +13,9 @@ vi.mock("./audioDecode", () => ({ decodeToMonoF32_16k }));
 vi.mock("../preferences", () => ({ isPerfDebugEnabled: () => false }));
 
 import { LocalWhisperProvider, resetWhisperEngineProbe } from "./localWhisper";
-import type { AIProvider } from "./AIProvider";
 
 // 5 f32 samples = 20 bytes of PCM payload the mock decoder always returns.
 const SAMPLE_COUNT = 5;
-
-const noopProvider: AIProvider = {
-  name: "noop",
-  transcribe: (_input) => {
-    throw new Error("not used");
-  },
-  cleanup: (_input) => {
-    throw new Error("not used");
-  },
-  health: async () => ({ ok: true, message: "noop" }),
-};
 
 // Isolated per-test localStorage backed by a plain Map.
 let lsStore: Map<string, string>;
@@ -67,7 +55,7 @@ describe("LocalWhisperProvider — invoke contract", () => {
       duration_ms: 1234,
     });
 
-    const provider = new LocalWhisperProvider({ tier: "turbo", cleanupFallback: noopProvider });
+    const provider = new LocalWhisperProvider({ tier: "turbo" });
     const result = await provider.transcribe({
       audio: new Blob([new Uint8Array(4)]),
       language: "en",
@@ -106,7 +94,6 @@ describe("LocalWhisperProvider — invoke contract", () => {
 
     const provider = new LocalWhisperProvider({
       tier: "custom:my-model.gguf",
-      cleanupFallback: noopProvider,
     });
     await provider.transcribe({ audio: new Blob([new Uint8Array(4)]) });
 
@@ -122,7 +109,7 @@ describe("LocalWhisperProvider — invoke contract", () => {
     lsStore.set("sw.ai.whisperEngine", "server");
     invoke.mockResolvedValueOnce({ text: "warm result", language_detected: "en", duration_ms: 300 });
 
-    const provider = new LocalWhisperProvider({ tier: "turbo", cleanupFallback: noopProvider });
+    const provider = new LocalWhisperProvider({ tier: "turbo" });
     await provider.transcribe({ audio: new Blob([new Uint8Array(4)]) });
 
     const [cmd] = invoke.mock.calls[0] as [string, ...unknown[]];
@@ -132,7 +119,7 @@ describe("LocalWhisperProvider — invoke contract", () => {
   it("falls back to input.language when language_detected is empty", async () => {
     invoke.mockResolvedValueOnce({ text: "bonjour", language_detected: "", duration_ms: 600 });
 
-    const provider = new LocalWhisperProvider({ tier: "base", cleanupFallback: noopProvider });
+    const provider = new LocalWhisperProvider({ tier: "base" });
     const result = await provider.transcribe({
       audio: new Blob([new Uint8Array(4)]),
       language: "fr",
@@ -144,7 +131,7 @@ describe("LocalWhisperProvider — invoke contract", () => {
   it("falls back to 'auto' when language_detected is empty and no language was supplied", async () => {
     invoke.mockResolvedValueOnce({ text: "hello", language_detected: "", duration_ms: 400 });
 
-    const provider = new LocalWhisperProvider({ tier: "small", cleanupFallback: noopProvider });
+    const provider = new LocalWhisperProvider({ tier: "small" });
     const result = await provider.transcribe({ audio: new Blob([new Uint8Array(4)]) });
 
     expect(result.languageDetected).toBe("auto");
@@ -155,7 +142,7 @@ describe("LocalWhisperProvider — invoke contract", () => {
   it("propagates an invoke rejection from transcribe()", async () => {
     invoke.mockRejectedValueOnce(new Error("runtime not ready"));
 
-    const provider = new LocalWhisperProvider({ tier: "turbo", cleanupFallback: noopProvider });
+    const provider = new LocalWhisperProvider({ tier: "turbo" });
     await expect(
       provider.transcribe({ audio: new Blob([new Uint8Array(4)]) }),
     ).rejects.toThrow("runtime not ready");
@@ -164,7 +151,7 @@ describe("LocalWhisperProvider — invoke contract", () => {
   it("health() returns ok:false with the error message when invoke rejects", async () => {
     invoke.mockRejectedValueOnce(new Error("sidecar missing"));
 
-    const provider = new LocalWhisperProvider({ tier: "turbo", cleanupFallback: noopProvider });
+    const provider = new LocalWhisperProvider({ tier: "turbo" });
     const h = await provider.health();
 
     expect(h.ok).toBe(false);

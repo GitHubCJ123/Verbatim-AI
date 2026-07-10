@@ -1,9 +1,9 @@
 /**
- * Provider-agnostic AI interface. See plan §11.
+ * Provider-agnostic AI interfaces.
  *
- * All providers must implement this contract so we can plug different
- * vendors (Azure today, OpenAI / Anthropic / local Whisper later)
- * without touching the recording pipeline.
+ * Leaf providers can implement only the pipeline half they own
+ * (transcription or cleanup). getActiveProvider composes one of each into
+ * the legacy AIProvider shape used by the recording pipeline.
  */
 
 export interface TranscribeInput {
@@ -50,10 +50,17 @@ export interface ProviderHealth {
   latencyMs?: number;
 }
 
-export interface AIProvider {
+export interface Transcriber {
   name: string;
   transcribe(input: TranscribeInput): Promise<TranscribeResult>;
+  health(): Promise<ProviderHealth>;
+}
+
+export interface Cleaner {
+  name: string;
   /** Streams cleaned text tokens as they arrive from the provider. */
   cleanup(input: CleanupInput): AsyncIterable<string>;
   health(): Promise<ProviderHealth>;
 }
+
+export interface AIProvider extends Transcriber, Cleaner {}

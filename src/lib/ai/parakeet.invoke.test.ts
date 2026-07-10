@@ -12,20 +12,8 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 vi.mock("./audioDecode", () => ({ decodeToMonoF32_16k }));
 
 import { ParakeetProvider } from "./parakeet";
-import type { AIProvider } from "./AIProvider";
 
 const DECODED_SAMPLES = new Float32Array([0.3, 0.1, -0.2, 0.0, 0.5]);
-
-const noopProvider: AIProvider = {
-  name: "noop",
-  transcribe: (_input) => {
-    throw new Error("not used");
-  },
-  cleanup: (_input) => {
-    throw new Error("not used");
-  },
-  health: async () => ({ ok: true, message: "noop" }),
-};
 
 describe("ParakeetProvider — invoke contract", () => {
   beforeEach(() => {
@@ -44,7 +32,6 @@ describe("ParakeetProvider — invoke contract", () => {
     const provider = new ParakeetProvider({
       variant: "v3",
       language: "auto",
-      cleanupFallback: noopProvider,
     });
     const result = await provider.transcribe({ audio: new Blob([new Uint8Array(4)]) });
 
@@ -76,7 +63,6 @@ describe("ParakeetProvider — invoke contract", () => {
     const provider = new ParakeetProvider({
       variant: "v3",
       language: "fr",
-      cleanupFallback: noopProvider,
     });
     // input.language overrides cfg.language when provided
     await provider.transcribe({ audio: new Blob([new Uint8Array(4)]), language: "fr" });
@@ -94,7 +80,6 @@ describe("ParakeetProvider — invoke contract", () => {
     const provider = new ParakeetProvider({
       variant: "v2",
       language: "en",
-      cleanupFallback: noopProvider,
     });
     await provider.transcribe({ audio: new Blob([new Uint8Array(4)]) });
 
@@ -114,7 +99,6 @@ describe("ParakeetProvider — invoke contract", () => {
     const provider = new ParakeetProvider({
       variant: "v3",
       language: "auto",
-      cleanupFallback: noopProvider,
     });
     await provider.transcribe({ audio: new Blob([new Uint8Array(4)]) });
 
@@ -135,7 +119,6 @@ describe("ParakeetProvider — invoke contract", () => {
     const provider = new ParakeetProvider({
       variant: "v3",
       language: "es",
-      cleanupFallback: noopProvider,
     });
     const result = await provider.transcribe({ audio: new Blob([new Uint8Array(4)]) });
 
@@ -150,7 +133,6 @@ describe("ParakeetProvider — invoke contract", () => {
     const provider = new ParakeetProvider({
       variant: "v3",
       language: "auto",
-      cleanupFallback: noopProvider,
     });
     await expect(
       provider.transcribe({ audio: new Blob([new Uint8Array(4)]) }),
@@ -166,7 +148,6 @@ describe("ParakeetProvider — invoke contract", () => {
     const provider = new ParakeetProvider({
       variant: "v3",
       language: "auto",
-      cleanupFallback: noopProvider,
     });
     const h = await provider.health();
 
@@ -182,7 +163,6 @@ describe("ParakeetProvider — invoke contract", () => {
     const provider = new ParakeetProvider({
       variant: "v3",
       language: "auto",
-      cleanupFallback: noopProvider,
     });
     const h = await provider.health();
 

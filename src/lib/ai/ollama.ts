@@ -49,11 +49,9 @@ const fetch = (input: string | URL | Request, init?: RequestInit) => {
   return tauriFetch(input, withOllamaHeaders(init));
 };
 import type {
-  AIProvider,
+  Cleaner,
   CleanupInput,
   ProviderHealth,
-  TranscribeInput,
-  TranscribeResult,
 } from "./AIProvider";
 import { buildCleanupPrompt } from "./promptBuilder";
 
@@ -332,15 +330,11 @@ export interface OllamaConfig {
   model: string;
 }
 
-export class OllamaProvider implements AIProvider {
+export class OllamaProvider implements Cleaner {
   readonly name: string;
 
   constructor(private cfg: OllamaConfig) {
     this.name = `Ollama (${cfg.model || "no model"})`;
-  }
-
-  async transcribe(_input: TranscribeInput): Promise<TranscribeResult> {
-    throw new Error("Ollama does not support transcription.");
   }
 
   async *cleanup(input: CleanupInput): AsyncIterable<string> {
@@ -421,17 +415,23 @@ export class OllamaProvider implements AIProvider {
     const start = performance.now();
     const reachable = await pingOllama(this.cfg.host);
     const latencyMs = Math.round(performance.now() - start);
-    if (!reachable) {
-      return { ok: false, message: `Can't reach Ollama at ${this.cfg.host}` };
+    if (reachable.kind !== "ok") {
+      const detail =
+        reachable.kind === "forbidden"
+          ? `blocked (HTTP ${reachable.status})`
+          : reachable.kind === "http-error"
+            ? `HTTP ${reachable.status}`
+            : reachable.kind === "unreachable"
+              ? reachable.message
+              : "unreachable";
+      return {
+        ok: false,
+        message: `Can't reach Ollama at ${this.cfg.host}: ${detail}`,
+        latencyMs,
+      };
     }
-    if (!this.cfg.model) {
-      return { ok: false, message: "No model selected" };
-    }
-    return {
-      ok: true,
-      message: `Ollama ready (${this.cfg.model})`,
-      latencyMs,
-    };
+    if (!this.cfg.model) return { ok: false, message: "No model selected", latencyMs };
+    return { ok: true, message: `Ollama ready (${this.cfg.model})`, latencyMs };
   }
 }
 

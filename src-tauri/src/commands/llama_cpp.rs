@@ -6,8 +6,10 @@
 //! shorthand (for example `ggml-org/gemma-3-1b-it-GGUF`) so llama.cpp owns
 //! model download/cache behavior.
 
+use std::collections::HashMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use flate2::read::GzDecoder;
@@ -18,6 +20,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
+use tokio::sync::Mutex as AsyncMutex;
 use tokio::time::timeout;
 
 fn app_data(app: &AppHandle) -> Result<PathBuf, String> {
@@ -309,6 +312,22 @@ pub struct LlamaCleanupArgs {
     pub max_tokens: Option<u32>,
 }
 
+/// Per-model async lock so concurrent `cleanup_llama_cpp` calls for the same
+/// Hugging Face model don't spawn racing `llama-cli -hf` downloads. On first
+/// use llama.cpp downloads the GGUF into the shared HF cache; two processes
+/// fetching the same model collide on the final `blobs/<sha>` rename ("unable
+/// to rename ... .downloadInProgress"). Serializing per model means the first
+/// caller downloads and the rest wait, then reuse the cached model.
+fn model_download_lock(model: &str) -> Arc<AsyncMutex<()>> {
+    static LOCKS: OnceLock<Mutex<HashMap<String, Arc<AsyncMutex<()>>>>> = OnceLock::new();
+    let map = LOCKS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut guard = map.lock().unwrap();
+    guard
+        .entry(model.to_string())
+        .or_insert_with(|| Arc::new(AsyncMutex::new(())))
+        .clone()
+}
+
 #[tauri::command]
 pub async fn cleanup_llama_cpp(app: AppHandle, args: LlamaCleanupArgs) -> Result<String, String> {
     let cli_path = locate_llama_cli(&app)?.ok_or_else(|| {
@@ -336,6 +355,13 @@ pub async fn cleanup_llama_cpp(app: AppHandle, args: LlamaCleanupArgs) -> Result
             .map_err(|e| e.to_string())?;
     }
 
+    // Serialize per model: a first-run `-hf` fetch downloads the GGUF into the
+    // shared Hugging Face cache. Two concurrent llama-cli processes downloading
+    // the same model collide on the final blob rename, so make the download
+    // single-flight (later callers wait here, then reuse the cached model).
+    let download_guard = model_download_lock(args.model.trim());
+    let _download_lock = download_guard.lock().await;
+
     let mut cmd = Command::new(&cli_path);
     cmd.arg("-hf").arg(args.model.trim());
     cmd.arg("-f").arg(&prompt_path);
@@ -351,6 +377,12 @@ pub async fn cleanup_llama_cpp(app: AppHandle, args: LlamaCleanupArgs) -> Result
         use std::os::windows::process::CommandExt;
         cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
     }
+
+    // Ensure a timed-out llama-cli is actually killed — Tokio does not kill the
+    // child when the `output()` future is dropped, so without this a slow
+    // first-run download could keep writing to the shared HF cache after we
+    // release the per-model lock and let another invocation race it.
+    cmd.kill_on_drop(true);
 
     let output = timeout(Duration::from_secs(10 * 60), cmd.output())
         .await

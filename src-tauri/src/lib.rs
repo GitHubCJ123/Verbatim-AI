@@ -14,7 +14,7 @@ use commands::{
         delete_local_model, detect_whisper_compute_backend, download_local_model,
         get_active_whisper_runtime_variant, install_whisper_runtime,
         is_whisper_runtime_installed, list_custom_whisper_models, list_local_models,
-        rescan_local_models, transcribe_local, transcribe_local_pcm,
+        rescan_local_models, transcribe_local_pcm,
     },
     native_audio::{
         arm_native_capture, cancel_native_session, disarm_native_capture, is_native_capture_armed,
@@ -38,8 +38,8 @@ use commands::{
     },
     updater_env::update_install_environment,
     whisper_server::{
-        ensure_engine_ready, is_whisper_server_available, transcribe_local_server,
-        transcribe_local_server_pcm, unload_engine, WhisperServerState,
+        ensure_engine_ready, is_whisper_server_available, transcribe_local_server_pcm,
+        unload_engine, WhisperServerState,
     },
 };
 use tauri::Manager;
@@ -118,7 +118,6 @@ pub fn run() {
             rescan_local_models,
             download_local_model,
             delete_local_model,
-            transcribe_local,
             transcribe_local_pcm,
             is_whisper_runtime_installed,
             detect_whisper_compute_backend,
@@ -140,7 +139,6 @@ pub fn run() {
             update_install_environment,
             ensure_engine_ready,
             unload_engine,
-            transcribe_local_server,
             transcribe_local_server_pcm,
             is_whisper_server_available,
             is_streaming_sidecar_available,

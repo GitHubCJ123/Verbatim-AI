@@ -336,7 +336,8 @@ pub async fn transcribe_local_server_pcm(
 }
 
 /// Transcribe via the persistent server. Output matches `transcribe_local`.
-#[tauri::command]
+// Internal implementation, invoked via the `transcribe_local_server_pcm`
+// command; intentionally not registered as its own Tauri command.
 pub async fn transcribe_local_server(
     app: AppHandle,
     state: State<'_, WhisperServerState>,

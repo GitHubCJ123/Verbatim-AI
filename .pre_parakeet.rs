@@ -13,15 +13,13 @@
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
-use super::runtime_assets::{
-    clear_dir_contents, download_with_progress, extract_archive, locate_executable,
-    make_executables, strip_quarantine, ArchiveKind, DownloadProgress as RuntimeAssetProgress,
-};
+use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::fs;
+use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 
 const SHERPA_ONNX_VERSION: &str = "v1.13.2";
@@ -94,9 +92,43 @@ fn cli_name() -> &'static str {
 
 fn locate_cli(app: &AppHandle) -> Result<Option<PathBuf>, String> {
     let dir = bin_dir(app)?;
-    Ok(locate_executable(&dir, cli_name()))
+    let target = cli_name();
+    fn walk(dir: &Path, target: &str) -> Option<PathBuf> {
+        let entries = std::fs::read_dir(dir).ok()?;
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_file() {
+                if p.file_name().and_then(|n| n.to_str()) == Some(target) {
+                    return Some(p);
+                }
+            } else if p.is_dir() {
+                if let Some(found) = walk(&p, target) {
+                    return Some(found);
+                }
+            }
+        }
+        None
+    }
+    Ok(walk(&dir, target))
 }
 
+#[cfg(unix)]
+fn walk_dir(root: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    fn inner(dir: &Path, out: &mut Vec<PathBuf>) {
+        let Ok(entries) = std::fs::read_dir(dir) else { return };
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_file() {
+                out.push(p);
+            } else if p.is_dir() {
+                inner(&p, out);
+            }
+        }
+    }
+    inner(root, &mut out);
+    out
+}
 
 fn runtime_archive_url() -> Result<&'static str, String> {
     // Pinned to a tested sherpa-onnx version. Bump deliberately after
@@ -136,35 +168,104 @@ async fn stream_download(
         .user_agent("Verbatim-AI/0.4 (+https://github.com/GitHubCJ123/Verbatim-AI)")
         .build()
         .map_err(|e| e.to_string())?;
-    let result = download_with_progress(
-        &client,
-        url,
-        dest,
-        Duration::from_millis(200),
-        |progress: RuntimeAssetProgress| {
-            let _ = app.emit(
-                progress_event,
-                Progress {
-                    downloaded: progress.downloaded,
-                    total: progress.total,
-                },
-            );
-        },
-        |e| e.to_string(),
-        |status, url| format!("download failed: HTTP {status} from {url}"),
-    )
-    .await?;
+    let res = client.get(url).send().await.map_err(|e| e.to_string())?;
+    if !res.status().is_success() {
+        return Err(format!(
+            "download failed: HTTP {} from {}",
+            res.status(),
+            url
+        ));
+    }
+    let total = res.content_length().unwrap_or(0);
+
+    let mut file = fs::File::create(dest).await.map_err(|e| e.to_string())?;
+    let mut stream = res.bytes_stream();
+    let mut downloaded: u64 = 0;
+    let mut last_emit = Instant::now();
+    while let Some(chunk) = stream.next().await {
+        let bytes = chunk.map_err(|e| e.to_string())?;
+        file.write_all(&bytes).await.map_err(|e| e.to_string())?;
+        downloaded += bytes.len() as u64;
+        if last_emit.elapsed().as_millis() > 200 {
+            last_emit = Instant::now();
+            let _ = app.emit(progress_event, Progress { downloaded, total });
+        }
+    }
+    file.flush().await.map_err(|e| e.to_string())?;
+    drop(file);
     let _ = app.emit(
         progress_event,
         Progress {
-            downloaded: result.total.max(result.downloaded),
-            total: result.total.max(result.downloaded),
+            downloaded: total.max(downloaded),
+            total: total.max(downloaded),
         },
     );
     Ok(())
 }
 
+/// Extract a .tar.bz2 archive into `dest`, blocking. Run inside spawn_blocking.
+fn extract_tar_bz2(archive: &Path, dest: &Path) -> Result<(), String> {
+    let f = std::fs::File::open(archive).map_err(|e| e.to_string())?;
+    let bz = bzip2::read::BzDecoder::new(f);
+    let mut ar = tar::Archive::new(bz);
+    // On Windows the tar crate fails to set Unix ownership/perms on extracted
+    // files; on macOS we re-apply exec bits after extraction anyway.
+    ar.set_preserve_permissions(false);
+    ar.set_preserve_mtime(false);
+    ar.set_unpack_xattrs(false);
+    ar.set_overwrite(true);
+    std::fs::create_dir_all(dest).map_err(|e| e.to_string())?;
+    for entry in ar.entries().map_err(|e| e.to_string())? {
+        let mut entry = entry.map_err(|e| e.to_string())?;
+        let rel = match entry.path() {
+            Ok(p) => p.into_owned(),
+            Err(_) => continue,
+        };
+        // Skip anything that tries to escape via `..`.
+        if rel.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+            continue;
+        }
+        let out = dest.join(&rel);
+        if entry.header().entry_type().is_dir() {
+            std::fs::create_dir_all(&out).map_err(|e| e.to_string())?;
+            continue;
+        }
+        if let Some(parent) = out.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        // Unpack data only; ignore metadata that may fail on Windows.
+        let mut writer = std::fs::File::create(&out).map_err(|e| e.to_string())?;
+        std::io::copy(&mut entry, &mut writer).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
 
+fn fix_unix_perms_and_quarantine(_extract_dir: &Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        for entry in walk_dir(_extract_dir) {
+            let name = entry.file_name().and_then(|s| s.to_str()).unwrap_or("");
+            let is_exec = name == "sherpa-onnx-offline"
+                || name.ends_with(".dylib")
+                || name.ends_with(".so");
+            if is_exec {
+                if let Ok(meta) = std::fs::metadata(&entry) {
+                    let mut perms = meta.permissions();
+                    perms.set_mode(perms.mode() | 0o111);
+                    let _ = std::fs::set_permissions(&entry, perms);
+                }
+            }
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let _ = std::process::Command::new("xattr")
+            .args(["-d", "-r", "com.apple.quarantine"])
+            .arg(_extract_dir)
+            .status();
+    }
+}
 
 #[tauri::command]
 pub async fn is_parakeet_runtime_installed(app: AppHandle) -> Result<bool, String> {
@@ -177,16 +278,24 @@ pub async fn install_parakeet_runtime(app: AppHandle) -> Result<(), String> {
     let dir = bin_dir(&app)?;
 
     // Wipe any previous extraction so we pick up version changes.
-    clear_dir_contents(&dir)?;
+    if dir.exists() {
+        for entry in std::fs::read_dir(&dir).map_err(|e| e.to_string())?.flatten() {
+            let p = entry.path();
+            if p.is_dir() {
+                let _ = std::fs::remove_dir_all(&p);
+            } else {
+                let _ = std::fs::remove_file(&p);
+            }
+        }
+    }
     let tmp_archive = dir.join("parakeet-runtime.partial.tar.bz2");
     stream_download(&app, url, &tmp_archive, "parakeet:runtime:progress").await?;
 
     let extract_dir = dir.clone();
     let tmp_for_extract = tmp_archive.clone();
     tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
-        extract_archive(&tmp_for_extract, &extract_dir, ArchiveKind::TarBz2)?;
-        make_executables(&extract_dir, &["sherpa-onnx-offline"]);
-        strip_quarantine(&extract_dir);
+        extract_tar_bz2(&tmp_for_extract, &extract_dir)?;
+        fix_unix_perms_and_quarantine(&extract_dir);
         Ok(())
     })
     .await
@@ -295,15 +404,36 @@ pub async fn download_parakeet_model(app: AppHandle, variant: String) -> Result<
     let staging_for_extract = staging.clone();
     let tmp_for_extract = tmp_archive.clone();
     tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
-        extract_archive(&tmp_for_extract, &staging_for_extract, ArchiveKind::TarBz2)
+        extract_tar_bz2(&tmp_for_extract, &staging_for_extract)
     })
     .await
     .map_err(|e| e.to_string())??;
 
     // Find each required file under staging and move it up into models_dir.
     for fname in model_files() {
-        let src =
-            locate_executable(&staging, fname).ok_or_else(|| format!("'{}' missing from archive", fname))?;
+        let mut found: Option<PathBuf> = None;
+        fn search(dir: &Path, target: &str, out: &mut Option<PathBuf>) {
+            if out.is_some() {
+                return;
+            }
+            let Ok(entries) = std::fs::read_dir(dir) else { return };
+            for entry in entries.flatten() {
+                let p = entry.path();
+                if p.is_file() {
+                    if p.file_name().and_then(|n| n.to_str()) == Some(target) {
+                        *out = Some(p);
+                        return;
+                    }
+                } else if p.is_dir() {
+                    search(&p, target, out);
+                    if out.is_some() {
+                        return;
+                    }
+                }
+            }
+        }
+        search(&staging, fname, &mut found);
+        let src = found.ok_or_else(|| format!("'{}' missing from archive", fname))?;
         let dst = dir.join(fname);
         if dst.exists() {
             let _ = std::fs::remove_file(&dst);

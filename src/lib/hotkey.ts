@@ -15,6 +15,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { startRecording, stopRecording, cancelRecording } from "./recording-bridge";
 import { resolveModeAtPress } from "./modeResolver";
 import { isHotkeyPaused } from "./preferences";
+import { syncNativeCaptureArm } from "./nativeAudio";
 import { isOnboardingComplete } from "./store/useOnboarding";
 import {
   ensureWhisperEngineReady,
@@ -141,6 +142,7 @@ export async function installHotkeyListeners(): Promise<UnlistenFn> {
   // left the slot empty after a clear+capture.
   const cfg0 = loadHotkeyConfig();
   void applyHotkey(cfg0.spec).catch(() => {});
+  void syncNativeCaptureArm().catch(() => {});
 
   // Toggle mode tracks "are we currently recording?" across taps.
   let toggleRecording = false;

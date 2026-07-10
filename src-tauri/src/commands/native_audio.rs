@@ -226,9 +226,10 @@ impl SharedAudioState {
     }
 
     fn start_session(&mut self, session_id: u64, pre_roll_ms: u32) {
-        if let Some(old_id) = self.active_session_id.take() {
-            self.sessions.remove(&old_id);
-        }
+        // Only one session is ever live at a time; drop any prior buffers
+        // (including a stopped-but-never-taken one) so they can't accumulate.
+        self.active_session_id = None;
+        self.sessions.clear();
         let samples = self.pre_roll_snapshot(pre_roll_ms);
         self.sessions.insert(
             session_id,
@@ -267,6 +268,8 @@ impl SharedAudioState {
         self.frame_resampler = None;
         self.level.reset();
         self.ring.clear();
+        // Reclaim any orphaned session buffers on disarm / idle-close.
+        self.sessions.clear();
     }
 
     fn has_active_session(&self) -> bool {
@@ -287,8 +290,8 @@ impl EngineClient {
             .send(build(reply_tx))
             .map_err(|_| "native audio worker is not running".to_string())?;
         reply_rx
-            .recv()
-            .map_err(|_| "native audio worker exited before replying".to_string())?
+            .recv_timeout(std::time::Duration::from_secs(30))
+            .map_err(|_| "native audio worker timed out or exited before replying".to_string())?
     }
 }
 
@@ -550,10 +553,12 @@ fn handle_arm(
     let requested_key = normalize_device_key(config.device_name.as_deref());
     {
         let mut state = shared.lock().map_err(|_| "audio state poisoned")?;
-        state.set_stream_frames(config.stream_frames);
         if state.has_active_session() && stream.is_some() && open_key.as_deref() != Some(&requested_key) {
             return Err("cannot switch native input device while a session is active".into());
         }
+        // Only apply the (side-effecting) stream_frames change once we know the
+        // arm request will be honored.
+        state.set_stream_frames(config.stream_frames);
     }
 
     if stream.is_some() && open_key.as_deref() == Some(&requested_key) {
@@ -931,10 +936,17 @@ pub fn start_native_capture(
         },
         reply,
     })?;
-    let session_id = client.request(|reply| EngineCommand::StartSession {
+    let session_id = match client.request(|reply| EngineCommand::StartSession {
         pre_roll_ms: 0,
         reply,
-    })?;
+    }) {
+        Ok(id) => id,
+        Err(e) => {
+            // Don't leave the mic warm (indicator lit) after a failed start.
+            let _ = client.request(|reply| EngineCommand::Disarm { reply });
+            return Err(e);
+        }
+    };
     *state
         .compat_session
         .lock()

@@ -1,0 +1,48 @@
+name: PR checks
+
+# The fast, per-PR gate the repo was missing. Frontend checks run on Linux;
+# the Rust check runs on macOS (the primary dev/target platform, and where
+# the cpal/core-graphics/objc2 deps compile without extra system packages).
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: pr-checks-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    name: Frontend (types + lint + unit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Typecheck
+        run: pnpm exec tsc --noEmit
+      - name: Lint
+        run: pnpm lint
+      - name: Unit + integration tests
+        # Fast suite: real-engine golden tests (*.engine.test.ts) are excluded
+        # by vitest.config.ts and run separately (pnpm test:engines / nightly).
+        run: pnpm test
+
+  rust:
+    name: Rust (cargo test)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: cargo test
+        run: cargo test --manifest-path src-tauri/Cargo.toml

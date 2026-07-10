@@ -30,6 +30,7 @@ const LS_LIVE_PARTIAL = "sw.transcribe.livePartial";
 const LS_TRUE_STREAMING = "sw.transcribe.trueStreaming";
 const LS_NATIVE_CAPTURE = "sw.audio.nativeCapture";
 const LS_LOW_LATENCY_MODE = "sw.audio.lowLatencyMode";
+const LS_RECORDING_ENGINE = "sw.audio.recordingEngine";
 const LS_PRE_ROLL_MS = "sw.audio.preRollMs";
 
 export type OverlayPosition =
@@ -224,26 +225,49 @@ export function setTrueStreamingEnabled(v: boolean): void {
 }
 
 /**
- * Native audio capture (docs/proposals/warm-ptt-capture.md). When on, the
- * overlay captures recorded audio in Rust (`cpal` + `rubato` → 16 kHz mono
- * f32) via the warm engine instead of the WebView `MediaRecorder`, feeding the
- * same transcription pipeline via a WAV blob.
+ * Recording engine: collapses the legacy two-boolean flags
+ * (sw.audio.nativeCapture / sw.audio.lowLatencyMode) into a single enum.
  *
- * **Default ON** ("Fast" recording engine): native capture keeps the mic warm
- * between dictations (closing on idle) for lower latency, with no change to the
- * mic-indicator behavior. Users who pick "Standard" set the flag to "0"
- * explicitly. If native capture ever fails to start, `startRecording`
- * (src/lib/audio.ts) falls back to the WebAudio path, so this is safe to
- * default on. The always-on-mic "Instant" mode stays opt-in
- * (`sw.audio.lowLatencyMode`).
+ * - "standard": WebAudio getUserMedia — opens mic on each press.
+ * - "fast":     native cpal capture, mic kept warm briefly then idle-closed (default).
+ * - "instant":  native capture with a persistent warm stream + pre-roll.
+ *
+ * Migration from old flags (run once, then old keys are cleared):
+ *   nativeCapture === "0"                      → "standard"
+ *   nativeCapture on + lowLatencyMode === "1"  → "instant"
+ *   nativeCapture on only                      → "fast"
+ *   nothing set at all                         → "fast" (matches prior native-default-on)
  */
-export function isNativeCaptureEnabled(): boolean {
-  const v = localStorage.getItem(LS_NATIVE_CAPTURE);
-  return v === null ? true : v === "1";
+export type RecordingEngine = "standard" | "fast" | "instant";
+
+export function getRecordingEngine(): RecordingEngine {
+  const current = localStorage.getItem(LS_RECORDING_ENGINE);
+  if (current === "standard" || current === "fast" || current === "instant") {
+    return current;
+  }
+  const nativeCapture = localStorage.getItem(LS_NATIVE_CAPTURE);
+  const lowLatencyMode = localStorage.getItem(LS_LOW_LATENCY_MODE);
+  let migrated: RecordingEngine;
+  if (nativeCapture !== null || lowLatencyMode !== null) {
+    if (nativeCapture === "0") migrated = "standard";
+    else if (lowLatencyMode === "1") migrated = "instant";
+    else migrated = "fast";
+  } else {
+    migrated = "fast";
+  }
+  localStorage.setItem(LS_RECORDING_ENGINE, migrated);
+  localStorage.removeItem(LS_NATIVE_CAPTURE);
+  localStorage.removeItem(LS_LOW_LATENCY_MODE);
+  return migrated;
 }
 
-export function setNativeCaptureEnabled(v: boolean): void {
-  localStorage.setItem(LS_NATIVE_CAPTURE, v ? "1" : "0");
+export function setRecordingEngine(e: RecordingEngine): void {
+  localStorage.setItem(LS_RECORDING_ENGINE, e);
+}
+
+/** Derived: true for "fast" and "instant" engines (native cpal capture). */
+export function isNativeCaptureEnabled(): boolean {
+  return getRecordingEngine() !== "standard";
 }
 
 /** Hard cap on pre-roll (ms). Pre-roll is a rolling pre-record, so it is
@@ -252,21 +276,9 @@ export const MAX_PRE_ROLL_MS = 500;
 /** Default pre-roll captured before key-down so word onsets aren't clipped. */
 export const DEFAULT_PRE_ROLL_MS = 250;
 
-/**
- * Low-latency mode: keep the native cpal capture stream persistently warm and
- * enable pre-roll, so the very first `fn` press of a session is instant.
- *
- * **Default off.** A persistent warm stream keeps the microphone open, so the
- * macOS orange mic indicator stays on the whole time the app runs; the Settings
- * toggle must say so explicitly. Only meaningful when `sw.audio.nativeCapture`
- * is on.
- */
+/** Derived: true only for the "instant" engine (persistent warm stream + pre-roll). */
 export function isLowLatencyModeEnabled(): boolean {
-  return localStorage.getItem(LS_LOW_LATENCY_MODE) === "1";
-}
-
-export function setLowLatencyModeEnabled(v: boolean): void {
-  localStorage.setItem(LS_LOW_LATENCY_MODE, v ? "1" : "0");
+  return getRecordingEngine() === "instant";
 }
 
 /** Pre-roll length in ms, clamped to [0, MAX_PRE_ROLL_MS]. */

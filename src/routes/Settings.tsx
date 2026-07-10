@@ -22,10 +22,9 @@ import { applyHotkey, isMacSingleKeySpec, loadHotkeyConfig, saveHotkeyConfig } f
 import {
   isAutostartEnabled,
   setAutostart,
-  isNativeCaptureEnabled,
-  setNativeCaptureEnabled,
-  isLowLatencyModeEnabled,
-  setLowLatencyModeEnabled,
+  type RecordingEngine,
+  getRecordingEngine,
+  setRecordingEngine,
 } from "../lib/preferences";
 import { syncNativeCaptureArm } from "../lib/nativeAudio";
 import { CLOUD_FEATURES_ENABLED } from "../lib/features";
@@ -447,11 +446,8 @@ function HistoryDisabledSwitch() {
   );
 }
 
-type RecordingEngine = "standard" | "fast" | "instant";
-
 function currentRecordingEngine(): RecordingEngine {
-  if (!isNativeCaptureEnabled()) return "standard";
-  return isLowLatencyModeEnabled() ? "instant" : "fast";
+  return getRecordingEngine();
 }
 
 /**
@@ -468,8 +464,7 @@ function RecordingEngineRow() {
   const onChange = async (value: string) => {
     const next = value as RecordingEngine;
     setEngine(next);
-    setNativeCaptureEnabled(next !== "standard");
-    setLowLatencyModeEnabled(next === "instant");
+    setRecordingEngine(next);
     try {
       await syncNativeCaptureArm();
     } catch {

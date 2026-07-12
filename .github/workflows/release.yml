@@ -471,6 +471,11 @@ jobs:
 
             ## Auto-update
             Existing installs on a previous version will detect this release in the background and offer one-click install.
+          # Stays a draft during the build so assets upload incrementally; the
+          # `Publish release (mark latest)` step at the end of publish-latest-json
+          # flips it to published + latest once the full matrix + latest.json are
+          # done. (Previously the draft had to be published by hand, which is why
+          # "check for updates" saw the old version until someone published it.)
           releaseDraft: true
           prerelease: false
           # We *do* want the updater bundles (.nsis.zip / .app.tar.gz /
@@ -685,3 +690,38 @@ jobs:
           PY
           pnpm tauri signer sign whisper-runtimes.json > whisper-runtimes.json.sig
           gh release upload "$VERSION" whisper-runtimes.json whisper-runtimes.json.sig --clobber --repo "$REPOSITORY"
+
+      # Auto-publish. This is the LAST step of the LAST job, and the whole job
+      # only runs when `needs: build` (the full windows+macos matrix) succeeded,
+      # so we only ever publish a complete, clean tagged build. Before flipping
+      # the draft, sanity-check that the critical assets are actually present —
+      # a corrupted/partial asset set (e.g. from a `--failed` matrix re-run)
+      # then fails here and leaves the release as a draft instead of publishing
+      # something the updater would choke on.
+      - name: Publish release (mark latest)
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ github.ref_name }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          names=$(gh release view "$VERSION" --repo "$REPOSITORY" --json assets --jq '.assets[].name')
+          echo "Assets on $VERSION:"; echo "$names"
+          require() {
+            if ! printf '%s\n' "$names" | grep -qx "$1"; then
+              echo "::error::Required asset '$1' missing — leaving release as draft."
+              exit 1
+            fi
+          }
+          # Updater manifest + macOS updater bundle (+sig).
+          require "latest.json"
+          require "Verbatim.AI.app.tar.gz"
+          require "Verbatim.AI.app.tar.gz.sig"
+          # Installers must exist (name embeds the version, so derive it).
+          v="${VERSION#v}"
+          require "Verbatim.AI_${v}_aarch64.dmg"
+          require "Verbatim.AI_${v}_x64-setup.exe"
+          require "Verbatim.AI_${v}_x64_en-US.msi"
+          gh release edit "$VERSION" --repo "$REPOSITORY" --draft=false --latest
+          echo "Published $VERSION as latest."

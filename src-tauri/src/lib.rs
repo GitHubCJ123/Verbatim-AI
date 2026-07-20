@@ -200,6 +200,10 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app_handle, event| {
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen { .. } = event {
+                crate::tray::show_main_window(app_handle);
+            }
             if let tauri::RunEvent::Exit = event {
                 commands::whisper_server::shutdown(app_handle);
                 commands::streaming_sidecar::shutdown(app_handle);

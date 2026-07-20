@@ -4,77 +4,69 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="dashboard-token" content="__DASHBOARD_TOKEN__" />
-    <title>Verbatim Automation Control</title>
+    <title>Verbatim Automation</title>
     <link rel="stylesheet" href="/ui/styles.css" />
   </head>
-  <body>
-    <main class="shell">
-      <section class="hero">
-        <div>
-          <p class="eyebrow">Verbatim AI</p>
-          <h1>Automation Control Room</h1>
-          <p class="subtitle">Inspect issue-loop phases, approve safe transitions, send revision feedback, and run loop self-reflection from one local cockpit.</p>
+  <body data-density="compact" data-theme="dark">
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span class="brand-name">Verbatim</span>
+        <span class="brand-sub">Automation</span>
+      </div>
+      <div class="topbar-prs" id="topPrCounts" aria-label="Pull request summary"></div>
+      <div class="topbar-spacer"></div>
+      <div class="topbar-actions">
+        <span class="mode-badge" id="modeBadge">Local read-only</span>
+        <div class="seg" role="group" aria-label="Density">
+          <button id="densityCompact" class="seg-btn is-on" type="button">Compact</button>
+          <button id="densityCozy" class="seg-btn" type="button">Cozy</button>
         </div>
-        <div class="mode-panel">
-          <span id="modeBadge">Local read-only</span>
-          <button id="refreshBtn" type="button">Refresh</button>
+        <button id="refreshBtn" class="btn" type="button" title="Refresh (R)">Refresh</button>
+        <button id="helpBtn" class="btn btn-icon" type="button" aria-label="Keyboard shortcuts" title="Shortcuts (?)">?</button>
+      </div>
+    </header>
+
+    <div id="errorBanner" class="error-banner hidden" role="alert"></div>
+
+    <main class="workspace">
+      <aside class="rail rail-left" aria-label="Issues">
+        <div class="rail-head">
+          <span class="rail-title">Issues <span id="issueCount" class="rail-count"></span></span>
         </div>
+        <div class="filters" id="issueFilters" role="tablist" aria-label="Issue filters"></div>
+        <div class="rail-scroll" id="issueList" role="listbox" aria-label="Issues" tabindex="0"></div>
+      </aside>
+
+      <section class="center" aria-label="Issue detail">
+        <div id="issueDetail" class="center-scroll"></div>
       </section>
-      <section class="pr-strip">
-        <div class="section-title split-title">
-          <span id="prSectionTitle">Active pull requests</span>
-          <button id="toggleCompletedPrsBtn" type="button">Show merged/closed</button>
+
+      <aside class="rail rail-right" id="rightRail" aria-label="Context">
+        <div class="rail-head">
+          <span class="rail-title">Context</span>
+          <button id="collapseRight" class="btn btn-mini" type="button" aria-expanded="true">Hide</button>
         </div>
-        <div id="prList" class="pr-list"></div>
-      </section>
-      <section class="grid">
-        <aside class="issues">
-          <div class="section-title">Issues</div>
-          <div id="issueList" class="issue-list"></div>
-        </aside>
-        <section class="detail">
-          <div id="issueDetail"></div>
-        </section>
-      </section>
+        <div class="rail-scroll" id="contextPanel"></div>
+      </aside>
     </main>
-    <template id="phaseTemplate">
-      <article class="phase-card">
-        <button class="phase-header" type="button">
-          <span class="phase-index"></span>
-          <span class="phase-title"></span>
-          <span class="phase-status"></span>
-        </button>
-        <div class="phase-body">
-          <pre class="phase-output"></pre>
-          <div class="phase-actions">
-            <button class="approve-btn" type="button">Approve phase</button>
-            <button class="feedback-btn" type="button">Request revision</button>
-          </div>
-          <form class="approval-form hidden">
-            <label>
-              Optional note for the next agent
-              <textarea name="note" maxlength="4000" placeholder="Add maintainer guidance before approving, or leave blank."></textarea>
-            </label>
-            <div class="form-actions">
-              <button type="submit">Approve with note</button>
-              <button type="button" class="approval-cancel-btn">Cancel</button>
-            </div>
-          </form>
-          <form class="feedback-form hidden">
-            <label>
-              Human feedback
-              <textarea name="feedback" placeholder="Decision, reason, requested change, acceptance criteria"></textarea>
-            </label>
-            <label class="checkline">
-              <input type="checkbox" name="runAgent" />
-              Run local Copilot text session
-            </label>
-            <button type="submit">Send feedback</button>
-          </form>
-          <div class="phase-log"></div>
-        </div>
-      </article>
-    </template>
+
+    <button id="showRight" class="show-right hidden" type="button" aria-label="Show context">Context</button>
+
+    <div id="helpPopover" class="help-popover hidden" role="dialog" aria-label="Keyboard shortcuts">
+      <div class="help-title">Keyboard shortcuts</div>
+      <ul class="help-list">
+        <li><kbd>↑</kbd><kbd>↓</kbd> switch issue</li>
+        <li><kbd>←</kbd><kbd>→</kbd> switch phase</li>
+        <li><kbd>R</kbd> refresh</li>
+        <li><kbd>/</kbd> focus filter</li>
+        <li><kbd>S</kbd> scan all phases</li>
+        <li><kbd>Esc</kbd> close</li>
+      </ul>
+    </div>
+
     <script src="/ui/app.js" type="module"></script>
   </body>
 </html>

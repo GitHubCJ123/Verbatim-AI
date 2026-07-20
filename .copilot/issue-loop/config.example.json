@@ -83,6 +83,48 @@
     "readOnlyRoles": ["architect", "adversarialReviewer", "agentPrReviewer"],
     "readOnlyTools": ["view", "rg", "glob"]
   },
+  "recovery": {
+    "enabled": false,
+    "defaultPolicy": "conservative",
+    "budgets": {
+      "maxModelCallsPerIssue": 20,
+      "maxModelCallsPerPhase": 6,
+      "maxCouncilRounds": 1,
+      "maxImplementationAttempts": 2,
+      "maxVerifierRepairAttempts": 2,
+      "maxWallClockMinutesPerIssue": 60
+    },
+    "locking": { "enabled": true, "ttlMinutes": 30 },
+    "phases": {
+      "requirements": {
+        "enabled": true,
+        "allowedTiers": ["primary", "requirementsCritic"],
+        "allowAiDowngrade": false,
+        "allowAiDowngradeForSecuritySensitive": false
+      },
+      "spec-review": {
+        "enabled": true,
+        "allowedTiers": ["primary", "diverseRetry", "council"],
+        "securityVeto": true
+      },
+      "implementation": {
+        "enabled": true,
+        "allowedTiers": ["primary", "sequentialRetry"],
+        "maxAttempts": 2,
+        "branchStrategy": "incremental-after-pr"
+      },
+      "verification": {
+        "enabled": true,
+        "allowedTiers": ["repairOnly"],
+        "verifierAuthoritative": true
+      }
+    },
+    "rosters": {
+      "requirements": ["gpt-5.5", "claude-opus-4.8"],
+      "spec-review": ["claude-opus-4.8", "gpt-5.5"],
+      "implementation": ["claude-sonnet-5", "gpt-5.5"]
+    }
+  },
   "triggers": {
     "mode": "local-watch",
     "metadataOnlyGitHubActions": true

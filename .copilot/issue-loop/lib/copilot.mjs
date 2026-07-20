@@ -10,12 +10,28 @@ export function assertArchitectReviewerDiversity(config) {
   }
 }
 
-export async function runCopilot(config, { role, prompt, worktree }) {
+// A model string is passed verbatim to spawnFile("copilot", [..., "--model", model]).
+// spawnFile uses shell:false so this is never shell injection, but a token that
+// begins with "-" or contains whitespace could be misparsed by the CLI as an
+// extra flag. Only allow a conservative model-id charset; fail closed otherwise.
+export function isSafeModelToken(model) {
+  return typeof model === "string" && /^[A-Za-z0-9][A-Za-z0-9._:/-]*$/.test(model);
+}
+
+export async function runCopilot(config, { role, prompt, worktree, modelOverride }) {
   const args = (config.copilot.baseArgs ?? []).map((arg) =>
     arg === "{worktree}" ? worktree : arg,
   );
-  const model = config.agents?.[role]?.model ?? config.copilot.model;
-  if (model && model !== "auto") args.push("--model", model);
+  const model =
+    modelOverride && modelOverride !== "auto"
+      ? modelOverride
+      : (config.agents?.[role]?.model ?? config.copilot.model);
+  if (model && model !== "auto") {
+    if (!isSafeModelToken(model)) {
+      throw new Error(`Unsafe model token rejected for --model: ${JSON.stringify(String(model).slice(0, 60))}`);
+    }
+    args.push("--model", model);
+  }
   for (const tool of toolsForRole(config, role)) {
     args.push("--allow-tool", tool);
   }

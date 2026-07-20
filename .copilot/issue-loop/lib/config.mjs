@@ -72,7 +72,78 @@ export const DEFAULT_CONFIG = {
     readOnlyRoles: ["architect", "adversarialReviewer", "agentPrReviewer"],
     readOnlyTools: ["view", "rg", "glob"],
   },
+  recovery: {
+    // Off by default: with recovery.enabled=false the loop behaves exactly as
+    // before (single model per phase, blocked gates stop for a human).
+    enabled: false,
+    defaultPolicy: "conservative",
+    budgets: {
+      maxModelCallsPerIssue: 20,
+      maxModelCallsPerPhase: 6,
+      maxCouncilRounds: 1,
+      maxImplementationAttempts: 2,
+      maxVerifierRepairAttempts: 2,
+      maxWallClockMinutesPerIssue: 60,
+    },
+    locking: { enabled: true, ttlMinutes: 30 },
+    phases: {
+      requirements: {
+        enabled: true,
+        allowedTiers: ["primary", "requirementsCritic"],
+        // Hard safety invariant: AI may never clear a security-sensitive issue.
+        allowAiDowngrade: false,
+        allowAiDowngradeForSecuritySensitive: false,
+      },
+      "spec-review": {
+        enabled: true,
+        allowedTiers: ["primary", "diverseRetry", "council"],
+        securityVeto: true,
+      },
+      implementation: {
+        enabled: true,
+        allowedTiers: ["primary", "sequentialRetry"],
+        maxAttempts: 2,
+        branchStrategy: "incremental-after-pr",
+      },
+      verification: {
+        enabled: true,
+        allowedTiers: ["repairOnly"],
+        verifierAuthoritative: true,
+      },
+    },
+    rosters: {
+      requirements: ["gpt-5.5", "claude-opus-4.8"],
+      "spec-review": ["claude-opus-4.8", "gpt-5.5"],
+      implementation: ["claude-sonnet-5", "gpt-5.5"],
+    },
+  },
 };
+
+const RECOVERY_TIERS = new Set([
+  "primary",
+  "requirementsCritic",
+  "diverseRetry",
+  "council",
+  "sequentialRetry",
+  "repairOnly",
+]);
+const RECOVERY_BRANCH_STRATEGIES = new Set(["incremental-after-pr", "replace-before-pr"]);
+const RECOVERY_DIVERSITY_TIERS = new Set(["diverseRetry", "council"]);
+// A model token flows verbatim to `spawnFile(command, [..., "--model", model])`.
+// spawnFile runs WITHOUT a shell, so this can never be shell injection, but a
+// token beginning with "-" or containing whitespace could be misparsed by the
+// CLI as a separate flag. Constrain roster/agent model tokens to a safe charset
+// (letters, digits, and . _ : / -) that cannot smuggle an extra argument.
+const SAFE_MODEL_TOKEN = /^[A-Za-z0-9][A-Za-z0-9._:/-]*$/;
+
+function isValidQuorum(quorum) {
+  return (
+    quorum === "all" ||
+    quorum === "unanimous" ||
+    quorum === "majority" ||
+    (Number.isInteger(quorum) && quorum >= 1)
+  );
+}
 
 export async function loadConfig(filePath) {
   let user = {};
@@ -100,7 +171,106 @@ export function validateConfig(config) {
   if (config.gates?.requireHumanMerge !== true) {
     errors.push("requireHumanMerge must be true; automation must not merge PRs");
   }
+  errors.push(...recoveryConfigErrors(config.recovery));
   if (errors.length) throw new Error(`Invalid issue-loop config:\n- ${errors.join("\n- ")}`);
+}
+
+export function recoveryConfigErrors(recovery) {
+  const errors = [];
+  if (recovery === undefined || recovery === null) return errors;
+  if (!isObject(recovery)) return ["recovery must be an object"];
+  if (typeof recovery.enabled !== "boolean") errors.push("recovery.enabled must be a boolean");
+
+  const budgets = recovery.budgets ?? {};
+  if (!isObject(budgets)) {
+    errors.push("recovery.budgets must be an object");
+  } else {
+    for (const key of [
+      "maxModelCallsPerIssue",
+      "maxModelCallsPerPhase",
+      "maxCouncilRounds",
+      "maxImplementationAttempts",
+      "maxVerifierRepairAttempts",
+      "maxWallClockMinutesPerIssue",
+    ]) {
+      const value = budgets[key];
+      if (value !== undefined && (!Number.isInteger(value) || value < 1)) {
+        errors.push(`recovery.budgets.${key} must be a positive integer`);
+      }
+    }
+  }
+
+  const locking = recovery.locking ?? {};
+  if (locking.ttlMinutes !== undefined && (!Number.isInteger(locking.ttlMinutes) || locking.ttlMinutes < 1)) {
+    errors.push("recovery.locking.ttlMinutes must be a positive integer");
+  }
+
+  const phases = recovery.phases ?? {};
+  if (!isObject(phases)) {
+    errors.push("recovery.phases must be an object");
+  } else {
+    for (const [phaseId, phase] of Object.entries(phases)) {
+      if (!isObject(phase)) {
+        errors.push(`recovery.phases.${phaseId} must be an object`);
+        continue;
+      }
+      for (const tier of phase.allowedTiers ?? []) {
+        if (!RECOVERY_TIERS.has(tier)) {
+          errors.push(`recovery.phases.${phaseId}.allowedTiers has unknown tier: ${tier}`);
+        }
+      }
+      if (
+        phase.branchStrategy !== undefined &&
+        !RECOVERY_BRANCH_STRATEGIES.has(phase.branchStrategy)
+      ) {
+        errors.push(
+          `recovery.phases.${phaseId}.branchStrategy must be one of ${[...RECOVERY_BRANCH_STRATEGIES].join(", ")}`,
+        );
+      }
+      if (phase.quorum !== undefined && !isValidQuorum(phase.quorum)) {
+        errors.push(
+          `recovery.phases.${phaseId}.quorum must be "all", "unanimous", "majority", or a positive integer`,
+        );
+      }
+    }
+    // Hard safety invariant baked into config: AI may never clear a
+    // security-sensitive requirements issue, regardless of user config.
+    if (phases.requirements?.allowAiDowngradeForSecuritySensitive === true) {
+      errors.push(
+        "recovery.phases.requirements.allowAiDowngradeForSecuritySensitive must be false; AI may not clear security-sensitive issues",
+      );
+    }
+  }
+
+  const rosters = recovery.rosters ?? {};
+  if (!isObject(rosters)) {
+    errors.push("recovery.rosters must be an object");
+  } else {
+    for (const [phaseId, roster] of Object.entries(rosters)) {
+      if (!Array.isArray(roster) || roster.some((model) => typeof model !== "string")) {
+        errors.push(`recovery.rosters.${phaseId} must be an array of model strings`);
+        continue;
+      }
+      for (const model of roster) {
+        if (model !== "auto" && !SAFE_MODEL_TOKEN.test(model)) {
+          errors.push(
+            `recovery.rosters.${phaseId} has an unsafe model token: ${JSON.stringify(String(model).slice(0, 60))}`,
+          );
+        }
+      }
+      const allowedTiers = phases[phaseId]?.allowedTiers ?? [];
+      const needsDiversity = allowedTiers.some((tier) => RECOVERY_DIVERSITY_TIERS.has(tier));
+      if (needsDiversity) {
+        const families = new Set(roster.map(modelFamily));
+        if (families.size < 2) {
+          errors.push(
+            `recovery.rosters.${phaseId} must span at least two model families for diverseRetry/council tiers`,
+          );
+        }
+      }
+    }
+  }
+  return errors;
 }
 
 export function modelFamily(model) {

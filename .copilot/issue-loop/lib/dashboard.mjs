@@ -3,10 +3,13 @@ import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { spawnFile } from "./process.mjs";
 import { redactSecrets } from "./redaction.mjs";
-import { issueFolderName } from "./markers.mjs";
+import { DEFAULT_CONFIG } from "./config.mjs";
+import { evaluateEligibility } from "./eligibility.mjs";
+import { activeClaimsFromComments, issueFolderName } from "./markers.mjs";
 import { critiqueRequirements, requirementsReview } from "./requirements.mjs";
 import { readIssueAutomationSummary } from "./artifacts.mjs";
 import { evaluateSpecReview } from "./spec-review.mjs";
+import { buildRoster, createBudget, resumePending } from "./recovery.mjs";
 
 export const PHASES = [
   { id: "requirements", title: "Requirements critique", sideEffect: "local state only" },
@@ -21,6 +24,39 @@ export const PHASES = [
 ];
 
 export const APPROVAL_NOTE_MAX_CHARS = 4000;
+export const RECOVERABLE_PHASE_STATUSES = new Set(["blocked", "needs-human"]);
+
+export function canRecoverPhase(phaseStatus) {
+  return RECOVERABLE_PHASE_STATUSES.has(String(phaseStatus ?? ""));
+}
+
+export function computeRecoveryPlan({ config = DEFAULT_CONFIG, phaseId } = {}) {
+  const recoveryPhaseId = recoveryConfigPhaseId(phaseId);
+  const phaseConfig = config?.recovery?.phases?.[recoveryPhaseId] ?? {};
+  const tiers = Array.isArray(phaseConfig.allowedTiers) && phaseConfig.allowedTiers.length
+    ? phaseConfig.allowedTiers.map((tier) => redactSafeText(tier, 80))
+    : ["primary"];
+  const roster = buildRoster(config, recoveryPhaseId, {}).map((model) => redactSafeText(model, 160));
+  const budget = createBudget(config?.recovery?.budgets ?? {});
+  return {
+    phaseId: redactSafeText(phaseId, 120),
+    tiers,
+    roster,
+    budgetPreview: {
+      counters: { ...budget.counters },
+      maxWallClockMs: budget.maxWallClockMs,
+      exhausted: budget.exhausted === true,
+      exhaustionReason: budget.exhaustionReason
+        ? redactSafeText(budget.exhaustionReason, 240)
+        : null,
+    },
+    note: "Planning-only recovery intent recorded by the dashboard; the CLI driver remains the executor.",
+  };
+}
+
+function recoveryConfigPhaseId(phaseId) {
+  return phaseId === "adversarial-review" ? "spec-review" : phaseId;
+}
 
 export async function ensureDashboardState(runtimeDir) {
   await fs.mkdir(runtimeDir, { recursive: true });
@@ -191,6 +227,8 @@ export function buildPhaseView(issue, stateIssue, derived) {
       path: base.path ?? null,
       artifacts: base.artifacts ?? [],
       sideEffect: phase.sideEffect,
+      recovery: base.recovery ?? null,
+      recoverable: canRecoverPhase(status),
       feedback,
       approvals,
       transitions,
@@ -203,13 +241,24 @@ export function buildPhaseView(issue, stateIssue, derived) {
   });
 }
 
-export async function deriveIssueState({ root, issue, prs, localIssue }) {
+export async function deriveIssueState({ root, issue, prs, localIssue, config = DEFAULT_CONFIG }) {
   const spec = await specInfo(root, issue);
   const automationSummary = await readIssueAutomationSummary(root, issue);
   const requirements = critiqueRequirements(issue);
-  const linkedPr = prs.find((pr) =>
-    pr.closingIssuesReferences?.some((ref) => String(ref.number) === String(issue.number)),
-  );
+  const linkedPr = prs.find((pr) => prReferencesIssue(pr, issue.number));
+  const labels = normalizedLabels(issue.labels);
+  const stopReason = labels.find((label) => config.stop?.labels?.includes(label));
+  const activeClaims = activeClaimsFromComments(Array.isArray(issue.comments) ? issue.comments : []).length;
+  const eligibility = evaluateEligibility({
+    config,
+    issue: { ...issue, labels },
+    openPrs: prs.filter(isOpenPr),
+    // Remote branch existence requires async git network state; the dashboard
+    // derivation stays pure/read-only and treats it as unknown/not present.
+    remoteBranchExists: false,
+    activeClaims,
+    stopReason: stopReason ? `label ${stopReason}` : null,
+  });
   const hasSpec = Boolean(spec.content);
   const hasReview = Boolean(spec.adversarialReview && !/Pending\./i.test(spec.adversarialReview));
   const reviewDecision = evaluateSpecReview(spec.adversarialReview);
@@ -252,6 +301,7 @@ export async function deriveIssueState({ root, issue, prs, localIssue }) {
       ),
       path: spec.adversarialPath,
       artifacts: phaseArtifacts("adversarial-review"),
+      recovery: recoveryView(automationSummary, "adversarial-review"),
     },
     implementation: {
       status: phaseStatus("implementation", hasReview && !reviewNeedsHuman ? "ready" : "blocked"),
@@ -264,6 +314,7 @@ export async function deriveIssueState({ root, issue, prs, localIssue }) {
             : "No implementation artifact yet.",
       ),
       artifacts: phaseArtifacts("implementation"),
+      recovery: recoveryView(automationSummary, "implementation"),
     },
     "agent-pr-review": {
       status: phaseStatus("agent-pr-review", latestArtifact("implementation") && linkedPr ? "ready" : "blocked"),
@@ -274,6 +325,7 @@ export async function deriveIssueState({ root, issue, prs, localIssue }) {
           : "No PR to review yet.",
       ),
       artifacts: phaseArtifacts("agent-pr-review"),
+      recovery: recoveryView(automationSummary, "agent-pr-review"),
     },
     verification: {
       status: phaseStatus("verification", latestArtifact("agent-pr-review") && linkedPr ? "ready" : "blocked"),
@@ -284,6 +336,7 @@ export async function deriveIssueState({ root, issue, prs, localIssue }) {
           : "No PR to verify.",
       ),
       artifacts: phaseArtifacts("verification"),
+      recovery: recoveryView(automationSummary, "verification"),
     },
     finalization: {
       status: phaseStatus("finalization", latestArtifact("verification") && linkedPr ? "ready" : "blocked"),
@@ -294,6 +347,7 @@ export async function deriveIssueState({ root, issue, prs, localIssue }) {
           : "No PR.",
       ),
       artifacts: phaseArtifacts("finalization"),
+      recovery: recoveryView(automationSummary, "finalization"),
     },
     "human-pr-review": {
       status: phaseStatus("human-pr-review", latestArtifact("finalization") ? "ready" : "blocked"),
@@ -304,14 +358,104 @@ export async function deriveIssueState({ root, issue, prs, localIssue }) {
           : "No ready PR for human review yet.",
       ),
       artifacts: phaseArtifacts("human-pr-review"),
+      recovery: recoveryView(automationSummary, "human-pr-review"),
     },
     "self-reflection": {
       status: phaseStatus("self-reflection", localIssue?.reflections?.length ? "complete" : linkedPr ? "ready" : "blocked"),
       output: artifactOutput("self-reflection", localIssue?.reflections?.at(-1)?.result ?? "No reflection recorded."),
       artifacts: phaseArtifacts("self-reflection"),
+      recovery: recoveryView(automationSummary, "self-reflection"),
     },
   };
-  return { derived, spec, linkedPr, automationSummary };
+  for (const phaseId of ["requirements", "spec"]) {
+    if (derived[phaseId]) derived[phaseId].recovery = recoveryView(automationSummary, phaseId);
+  }
+  return { derived, spec, linkedPr, automationSummary, eligibility };
+}
+
+function recoveryView(summary, phaseId) {
+  const recovery = summary?.phaseStatuses?.[phaseId]?.recovery;
+  if (!recovery || typeof recovery !== "object" || Array.isArray(recovery)) return null;
+  const attempts = Array.isArray(recovery.attempts) ? recovery.attempts : [];
+  const currentAttempt =
+    attempts.find((attempt) => attempt?.attemptId === recovery.currentAttemptId) ?? attempts.at(-1) ?? null;
+  const calls = attempts.flatMap((attempt) => Array.isArray(attempt?.modelCalls) ? attempt.modelCalls : []);
+  const modelsTried = [...new Set(calls.map((call) => call?.model).filter(Boolean))]
+    .map((model) => redactSafeText(model, 160))
+    .slice(0, 20);
+  const aggregate = currentAttempt?.aggregateDecision ?? attempts.at(-1)?.aggregateDecision ?? {};
+  const budgetUsed = recovery.budgetUsed && typeof recovery.budgetUsed === "object"
+    ? sanitizeSmallObject(recovery.budgetUsed)
+    : { modelCalls: calls.length };
+  return {
+    state: redactSafeText(recovery.state ?? "idle", 80),
+    currentTier: currentAttempt?.tier == null ? null : redactSafeText(currentAttempt.tier, 80),
+    modelsTried,
+    budgetUsed,
+    lastReason: firstRedacted([
+      recovery.lastReason,
+      aggregate?.reason,
+      aggregate?.vetoReason,
+      aggregate?.downgradeReason,
+      currentAttempt?.priorReasonCode,
+    ]),
+    nextAction: firstRedacted([recovery.nextAction, resumeHint(recovery, aggregate)]),
+    whyHuman: firstRedacted([recovery.whyHuman, aggregate?.requiresHuman ? aggregate?.vetoReason ?? aggregate?.reason : null]),
+  };
+}
+
+function firstRedacted(values) {
+  for (const value of values) {
+    if (value === null || value === undefined || value === "") continue;
+    return redactSafeText(value, 500);
+  }
+  return null;
+}
+
+function resumeHint(recovery, aggregate) {
+  if (resumePending(recovery).pendingCalls.length) return "CLI driver can resume pending recovery calls.";
+  if (aggregate?.requiresHuman) return "Human input required before automatic recovery continues.";
+  if (recovery?.state === "idle") return "No automatic action is currently pending.";
+  return null;
+}
+
+function sanitizeSmallObject(value) {
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([key]) => !/(token|secret|password|prompt|raw|stdout|stderr|env|arg)/i.test(key))
+      .slice(0, 20)
+      .map(([key, nested]) => [
+        redactSafeText(key, 80),
+        typeof nested === "number" || typeof nested === "boolean"
+          ? nested
+          : redactSafeText(nested, 200),
+      ]),
+  );
+}
+
+function redactSafeText(value, max = 1000) {
+  return neutralizePromptDelimiters(redactSecrets(String(value ?? ""))).slice(0, max);
+}
+
+function normalizedLabels(labels = []) {
+  if (!Array.isArray(labels)) return [];
+  return labels.map((label) => (typeof label === "string" ? label : label?.name)).filter(Boolean);
+}
+
+function isOpenPr(pr) {
+  const status = String(pr?.status ?? pr?.state ?? "").toLowerCase();
+  if (status === "open" || status === "draft") return true;
+  if (pr?.closedAt || pr?.mergedAt) return false;
+  return status === "";
+}
+
+function prReferencesIssue(pr, issueNumber) {
+  const issue = String(issueNumber);
+  return (
+    pr?.closingIssuesReferences?.some((ref) => String(ref.number) === issue) ||
+    pr?.closingIssues?.some((number) => String(number) === issue) ||
+    pr?.relatedIssues?.some((number) => String(number) === issue)
+  );
 }
 
 function artifactsByPhase(summary) {

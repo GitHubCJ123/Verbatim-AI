@@ -115,6 +115,7 @@ function renderIssues() {
     item.append(
       el("span", { className: "issue-number", text: `#${issue.number}` }),
       el("span", { className: "issue-title", text: issue.title }),
+      renderEligibilityBadge(issue),
       renderIssuePrPills(issue),
       el("div", {
         className: "issue-meta",
@@ -149,6 +150,7 @@ function renderDetail() {
   const labels = el("div", { className: "labels" });
   for (const label of issue.labels ?? []) labels.append(el("span", { className: "label", text: label }));
   title.append(labels);
+  title.append(renderEligibilityBadge(issue, { includeReason: true }));
   const related = el("div", { className: "related-prs" });
   const relatedPrs = relatedPrsForDisplay(issue);
   if (relatedPrs.length) {
@@ -178,10 +180,48 @@ function renderDetail() {
   head.append(title, reflect);
   wrap.append(head);
 
+  if (issue.eligibility?.eligible === false) {
+    wrap.append(renderEligibilityCallout(issue));
+  }
+
   for (const [index, phase] of issue.phases.entries()) {
     wrap.append(renderPhase(issue, phase, index));
   }
   detail.append(wrap);
+}
+
+function renderEligibilityBadge(issue, { includeReason = false } = {}) {
+  const eligibility = issue.eligibility;
+  const wrap = el("div", { className: "eligibility-row" });
+  if (eligibility?.eligible !== false) return wrap;
+  wrap.append(el("span", { className: "badge-ineligible", text: "Ineligible" }));
+  if (includeReason) {
+    wrap.append(el("span", {
+      className: "eligibility-reason",
+      text: eligibility.reasons?.[0]?.message ?? "Not eligible for automation.",
+    }));
+  }
+  return wrap;
+}
+
+function renderEligibilityCallout(issue) {
+  const firstReason = issue.eligibility?.reasons?.[0];
+  const isNotEnrolled = firstReason?.code === "MISSING_REQUIRED_LABEL";
+  const callout = el("div", { className: "eligibility-callout copy-surface" });
+  callout.append(
+    el("span", { className: "badge-ineligible", text: isNotEnrolled ? "Not enrolled" : "Ineligible" }),
+    el("span", {
+      className: "eligibility-reason",
+      text: firstReason?.message ?? "This issue is not eligible for automation.",
+    }),
+  );
+  if (isNotEnrolled) {
+    callout.append(el("span", {
+      className: "eligibility-helper",
+      text: "The driver will skip it until enrollment is fixed; this is not a phase 1 failure.",
+    }));
+  }
+  return callout;
 }
 
 function renderPhase(issue, phase, index) {
@@ -221,6 +261,8 @@ function renderPhase(issue, phase, index) {
     }
     template.querySelector(".phase-output").after(artifactList);
   }
+  const recoveryPanel = renderRecoveryPanel(phase);
+  if (recoveryPanel) template.querySelector(".phase-output").after(recoveryPanel);
 
   const approve = template.querySelector(".approve-btn");
   const approvalForm = template.querySelector(".approval-form");
@@ -232,6 +274,18 @@ function renderPhase(issue, phase, index) {
   approvalNote.addEventListener("input", () => {
     approvalDrafts.set(approvalDraftKey, approvalNote.value);
   });
+
+  if (phase.recoverable) {
+    const recover = el("button", { className: "recover-btn", text: "Recover" });
+    recover.type = "button";
+    recover.title = "Planning-only: records recovery intent and plan; the CLI driver executes recovery.";
+    recover.addEventListener("click", async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      await runRecover(issue.id, phase.id);
+    });
+    template.querySelector(".phase-actions").append(recover);
+  }
   approve.addEventListener("click", (event) => {
     event.stopPropagation();
     approvalForm.classList.toggle("hidden");
@@ -283,6 +337,47 @@ function renderPhase(issue, phase, index) {
   log.after(copyButton("Copy log", () => log.textContent));
 
   return template;
+}
+
+function renderRecoveryPanel(phase) {
+  if (!phase.recoverable && !phase.recovery) return null;
+  const recovery = phase.recovery ?? {};
+  const panel = el("div", { className: "recovery-panel copy-surface" });
+  panel.append(
+    el("div", { className: "recovery-title", text: "Recovery state machine" }),
+    el("div", {
+      className: "recovery-note",
+      text: "Dashboard Recover is planning-only: it records intent and a plan; the CLI driver performs execution.",
+    }),
+  );
+  const grid = el("div", { className: "recovery-grid" });
+  grid.append(
+    recoveryCell("State", recovery.state ?? (phase.recoverable ? "recoverable" : "idle")),
+    recoveryCell("Current tier", recovery.currentTier ?? "none"),
+    recoveryCell("Models tried", recovery.modelsTried?.length ? recovery.modelsTried.join(", ") : "none"),
+    recoveryCell("Budget used", formatBudget(recovery.budgetUsed)),
+    recoveryCell("Budget remaining", formatBudget(recovery.budgetRemaining) || "tracked by CLI driver"),
+    recoveryCell("Last reason", recovery.lastReason ?? "none"),
+    recoveryCell("Next automatic action", recovery.nextAction ?? "awaiting Recover request or CLI driver"),
+    recoveryCell("Why human", recovery.whyHuman ?? "not currently human-gated"),
+  );
+  panel.append(grid);
+  return panel;
+}
+
+function recoveryCell(label, value) {
+  const cell = el("div", { className: "recovery-cell" });
+  cell.append(
+    el("span", { className: "recovery-label", text: label }),
+    el("span", { className: "recovery-value", text: String(value ?? "unknown") }),
+  );
+  return cell;
+}
+
+function formatBudget(value) {
+  if (!value) return "";
+  if (typeof value !== "object") return String(value);
+  return Object.entries(value).map(([key, nested]) => `${key}: ${nested}`).join(", ");
 }
 
 function renderIssuePrPills(issue) {
@@ -463,10 +558,14 @@ async function runReflection(issueId) {
   await post(`/api/issues/${issueId}/reflect`, { runAgent: false });
 }
 
+async function runRecover(issueId, phaseId) {
+  await post(`/api/issues/${issueId}/phases/${phaseId}/recover`, {});
+}
+
 async function post(url, body) {
   const res = await fetch(url, {
     method: "POST",
-    headers: actionHeaders,
+    headers: actionHeadersForMutation(),
     body: JSON.stringify(body),
   });
   const data = await res.json();
@@ -476,6 +575,12 @@ async function post(url, body) {
   }
   state = data.state;
   render();
+}
+
+function actionHeadersForMutation() {
+  const out = { ...actionHeaders };
+  if (state?.security?.nonce) out["x-dashboard-nonce"] = state.security.nonce;
+  return out;
 }
 
 function el(tag, { className, text } = {}) {

@@ -88,6 +88,36 @@ The first real run creates or refreshes durable artifacts under `docs/automation
 
 Each phase has a reviewable definition in `.copilot/issue-loop/agents/`. The definitions declare each agent's persona, allowed inputs, side effects, durable output, required summary format, and gate decision. The implementer and agent PR reviewer run a bounded retry loop controlled by `maxPrReviewIterations`; if review still requests changes after the limit, the workflow blocks for human input instead of silently stranding the PR.
 
+## Phase recovery (multi-model)
+
+When a phase would otherwise stop for a human (`needs-human`/`blocked`), the loop
+can re-enter that phase and try to recover it with a small roster of
+**different-family AI models** before escalating. Recovery is **opt-in**: with
+`recovery.enabled = false` (the default) the loop behaves exactly as before.
+
+- **Categorized, not one uniform ladder.** Each phase declares a policy under
+  `recovery.phases.<id>` (`allowedTiers`, `securityVeto`, `branchStrategy`, ...).
+- **Escalation tiers** (only where the policy allows): primary → diverse-family
+  retry (seeded with a sanitized failure summary) → bounded multi-model council →
+  human as the genuine last resort.
+- **Gate decisions are deterministic code, never an LLM.** The council aggregator
+  proceeds only on a real quorum with no security concern; any
+  security/secret/auth/exec/network/filesystem concern is a **hard veto** that can
+  never be voted away.
+- **Recovery repairs the work, never the safety decision.** Verification recovery
+  re-runs the implementer to fix failures and then re-runs the authoritative
+  verifier; a real failure or secret finding can never become a pass. The
+  human-merge gate, draft-only PRs, and secret scanning are unchanged.
+- **AI may never clear a security-sensitive requirements issue** (enforced in
+  config validation and at runtime).
+- **Hard-bounded**: per-issue/per-phase model-call caps, council-round and
+  wall-clock budgets (`recovery.budgets`), a per-issue lock (`recovery.locking`),
+  and attempt-scoped, restart-safe state persisted (redacted) in the issue's
+  `summary.json`. The STOP file is honored before any recovery model call.
+
+Configure it under the `recovery` block in `config.example.json` (see
+`config.schema.json` for the full shape).
+
 ## Durable artifacts and IDs
 
 The loop writes durable summaries to `docs/automation/specs/issue-<number>-<slug>/artifacts/`:
@@ -126,6 +156,8 @@ It shows:
 
 - Real open GitHub issues from this repo, read-only by default. There is no built-in demo issue.
 - Each automation phase, actively running jobs, durable artifact IDs, and artifact summaries.
+- An **eligibility badge**: an issue that the loop will not act on (for example one missing the `automate` label) is shown as *ineligible / not enrolled* with the exact reason, so it no longer looks like it is "stuck" at phase one.
+- A per-phase **Recover** action for `blocked`/`needs-human` phases. It is **planning-only**: it validates the request (localhost token, action header, single-use nonce, rate limit, per-issue lock) and records a recovery plan (tiers, model roster, budget). The CLI driver, not the dashboard, executes recovery.
 - Local approvals that record review decisions. For real GitHub issues, implementation still requires the trusted hash-bound spec approval marker.
 - Feedback prompts that can run a reviewed text-only agent wrapper only when the server is started with `--allow-agent-runs --agent-command`.
 - A self-reflection phase that summarizes loop history and human feedback.

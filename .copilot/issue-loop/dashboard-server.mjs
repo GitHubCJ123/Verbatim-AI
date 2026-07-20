@@ -8,6 +8,8 @@ import { ghJson } from "./lib/github.mjs";
 import {
   applyApproval,
   buildPhaseView,
+  canRecoverPhase,
+  computeRecoveryPlan,
   deriveIssueState,
   ensureDashboardState,
   feedbackPrompt,
@@ -21,7 +23,12 @@ import {
   statePathFor,
   startAction,
   finishAction,
+  setPhaseStatus,
+  issueState,
 } from "./lib/dashboard.mjs";
+import { appendRunlog } from "./lib/artifacts.mjs";
+import { DEFAULT_CONFIG } from "./lib/config.mjs";
+import { acquireLock, releaseLock } from "./lib/recovery.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const UI_DIR = path.join(ROOT, ".copilot/issue-loop/ui");
@@ -37,12 +44,13 @@ async function main() {
   const statePath = statePathFor(ROOT);
   const runtimeDir = runtimeDirFor(ROOT);
   let state = await ensureDashboardState(runtimeDir);
+  const rateLimits = new Map();
 
   const server = http.createServer(async (req, res) => {
     try {
-      await handle(req, res, { args, token, port, host, statePath, get state() { return state; }, setState: (next) => { state = next; } });
+      await handle(req, res, { args, token, port, host, statePath, rateLimits, get state() { return state; }, setState: (next) => { state = next; } });
     } catch (error) {
-      sendJson(res, 500, { error: error instanceof Error ? error.message : String(error) });
+      sendJson(res, error?.statusCode ?? 500, { error: error instanceof Error ? error.message : String(error) });
     }
   });
 
@@ -93,11 +101,20 @@ async function handle(req, res, ctx) {
 
 async function handlePost(req, res, url, ctx) {
   requireMutation(req);
-  const body = await readJson(req);
+  const recover = url.pathname.match(/^\/api\/issues\/([^/]+)\/phases\/([^/]+)\/recover$/);
+  if (recover) {
+    const [, issueId, phaseId] = recover;
+    return handleRecover(req, res, ctx, issueId, phaseId);
+  }
+
+  const body = await readJson(req).catch(() => {
+    throw httpError(400, "Invalid JSON");
+  });
   const approve = url.pathname.match(/^\/api\/issues\/([^/]+)\/phases\/([^/]+)\/approve$/);
   if (approve) {
     const [, issueId, phaseId] = approve;
     const stateIssue = applyApproval(ctx.state, issueId, phaseId, body);
+    rotateNonce(ctx.state);
     await saveDashboardState(ctx.statePath, ctx.state);
     sendJson(res, 200, { ok: true, issue: stateIssue, state: await buildState(ctx) });
     return;
@@ -111,6 +128,7 @@ async function handlePost(req, res, url, ctx) {
     if (!issue) return sendJson(res, 404, { error: "Issue not found" });
     const phase = issue.phases.find((item) => item.id === phaseId);
     const action = startAction(ctx.state, issueId, phaseId, "feedback-agent", "Processing human feedback");
+    rotateNonce(ctx.state);
     await saveDashboardState(ctx.statePath, ctx.state);
     sendJson(res, 202, { ok: true, action, state: await buildState(ctx) });
     void runFeedbackJob(ctx, {
@@ -132,6 +150,7 @@ async function handlePost(req, res, url, ctx) {
     const issue = dashboard.issues.find((item) => item.id === issueId);
     if (!issue) return sendJson(res, 404, { error: "Issue not found" });
     const action = startAction(ctx.state, issueId, "self-reflection", "Running loop self-reflection");
+    rotateNonce(ctx.state);
     await saveDashboardState(ctx.statePath, ctx.state);
     sendJson(res, 202, { ok: true, action, state: await buildState(ctx) });
     void runReflectionJob(ctx, { issue, issueId, actionId: action.id, runAgent: Boolean(body.runAgent) });
@@ -139,6 +158,86 @@ async function handlePost(req, res, url, ctx) {
   }
 
   sendJson(res, 404, { error: "Unknown endpoint" });
+}
+
+async function handleRecover(req, res, ctx, issueId, phaseId) {
+  if (req.headers["x-dashboard-nonce"] !== currentNonce(ctx.state)) {
+    return sendJson(res, 403, { error: "Bad dashboard nonce" });
+  }
+  const rateKey = `${issueId}:${phaseId}`;
+  if (shouldRateLimit(ctx.rateLimits ?? new Map(), rateKey, Date.now())) {
+    return sendJson(res, 429, { error: "Recover is rate limited for this phase" });
+  }
+  await readJson(req).catch(() => {
+    throw httpError(400, "Invalid JSON");
+  });
+
+  const dashboard = await buildState(ctx);
+  const issue = dashboard.issues.find((item) => item.id === issueId);
+  if (!issue) return sendJson(res, 404, { error: "Issue not found" });
+  const phase = issue.phases.find((item) => item.id === phaseId);
+  if (!phase) return sendJson(res, 404, { error: "Phase not found" });
+  if (!canRecoverPhase(phase.status)) {
+    return sendJson(res, 409, { error: "Phase is not recoverable" });
+  }
+  const blockingEligibility = blockingEligibilityReasonsForRecovery(issue);
+  if (blockingEligibility.length) {
+    return sendJson(res, 409, {
+      error: blockingEligibility[0].message ?? "Issue is not eligible for recovery",
+      reasons: blockingEligibility,
+    });
+  }
+
+  const stateIssue = issueState(ctx.state, issueId);
+  const lockResult = acquireLock(stateIssue.recoveryLock, {
+    ttlMinutes: DEFAULT_CONFIG.recovery.locking.ttlMinutes,
+    operation: `dashboard-recover:${phaseId}`,
+  });
+  if (!lockResult.ok) {
+    return sendJson(res, 423, { error: "Recovery is already locked for this issue" });
+  }
+  stateIssue.recoveryLock = lockResult.lock;
+
+  let action;
+  try {
+    await appendRunlog(ROOT, { number: issue.number }, {
+      type: "dashboard.recover",
+      phaseId,
+      at: new Date().toISOString(),
+    });
+    action = startAction(ctx.state, issueId, phaseId, "recover-plan", "Planning recovery");
+    const plan = computeRecoveryPlan({ config: DEFAULT_CONFIG, phaseId });
+    stateIssue.recoveryPlans ??= {};
+    stateIssue.recoveryPlans[phaseId] = {
+      plan,
+      createdAt: new Date().toISOString(),
+      planningOnly: true,
+    };
+    stateIssue.events ??= [];
+    stateIssue.events.push({
+      id: randomBytes(16).toString("hex"),
+      type: "recovery-plan",
+      phaseId,
+      message: "Planning-only recovery plan recorded; CLI driver must execute recovery.",
+      plan,
+      createdAt: new Date().toISOString(),
+    });
+    setPhaseStatus(stateIssue, phaseId, phase.status, {
+      from: phase.status,
+      source: "dashboard-recover",
+      message: "Recovery plan recorded; waiting for CLI driver execution.",
+    });
+    finishAction(ctx.state, issueId, action.id, "complete", "Recovery plan recorded");
+    stateIssue.recoveryLock = releaseLock();
+    rotateNonce(ctx.state);
+    await saveDashboardState(ctx.statePath, ctx.state);
+    return sendJson(res, 202, { ok: true, plan, action, state: await buildState(ctx) });
+  } catch (error) {
+    if (action) finishAction(ctx.state, issueId, action.id, "failed", error instanceof Error ? error.message : String(error));
+    stateIssue.recoveryLock = releaseLock();
+    await saveDashboardState(ctx.statePath, ctx.state);
+    return sendJson(res, 500, { error: error instanceof Error ? error.message : String(error) });
+  }
 }
 
 async function runFeedbackJob(ctx, { issue, issueId, phaseId, phase, actionId, feedback, runAgent }) {
@@ -209,10 +308,10 @@ async function buildState(ctx) {
   const hydrated = [];
   for (const issue of issues) {
     const local = ctx.state.issues[issue.id] ?? {};
-    const { derived, spec, linkedPr, automationSummary } = await deriveIssueState({
+    const { derived, spec, linkedPr, automationSummary, eligibility } = await deriveIssueState({
       root: ROOT,
       issue,
-      prs,
+      prs: dashboardPrs,
       localIssue: local,
     });
     const relatedPrs = dashboardPrs.filter((pr) =>
@@ -224,6 +323,7 @@ async function buildState(ctx) {
       linkedPr,
       relatedPrs,
       automationSummary,
+      eligibility,
       requirementsIssueInputSha: derived.requirements?.issueInputSha ?? null,
       phases: buildPhaseView(issue, local, derived),
       local: {
@@ -241,6 +341,9 @@ async function buildState(ctx) {
       agentRunsEnabled: Boolean(ctx.args.allowAgentRuns),
       demoEnabled: false,
       host: "127.0.0.1",
+    },
+    security: {
+      nonce: currentNonce(ctx.state),
     },
     phases: PHASES,
     prs: dashboardPrs,
@@ -345,18 +448,91 @@ async function serveStatic(_req, res, rel) {
 
 function requireApiRequest(req, token) {
   const host = req.headers.host ?? "";
-  if (!/^(127\.0\.0\.1|localhost|\[::1\]):\d+$/.test(host)) throw new Error("Bad host");
-  if (req.headers["x-dashboard-token"] !== token) throw new Error("Bad dashboard token");
+  if (!/^(127\.0\.0\.1|localhost|\[::1\]):\d+$/.test(host)) throw httpError(403, "Bad host");
+  if (req.headers["x-dashboard-token"] !== token) throw httpError(403, "Bad dashboard token");
 }
 
 function requireMutation(req) {
-  if (req.headers["x-dashboard-action"] !== "1") throw new Error("Missing action header");
+  if (req.headers["x-dashboard-action"] !== "1") throw httpError(400, "Missing action header");
   const type = req.headers["content-type"] ?? "";
-  if (!type.includes("application/json")) throw new Error("Expected JSON");
+  if (!type.includes("application/json")) throw httpError(415, "Expected JSON");
   const origin = req.headers.origin;
   if (origin && !/^http:\/\/(127\.0\.0\.1|localhost|\[::1\]):\d+$/.test(origin)) {
-    throw new Error("Bad origin");
+    throw httpError(403, "Bad origin");
   }
+}
+
+export function rotateNonce(state) {
+  state.security ??= {};
+  state.security.nonce = randomBytes(16).toString("hex");
+  return state.security.nonce;
+}
+
+function currentNonce(state) {
+  if (!state.security?.nonce) return rotateNonce(state);
+  return state.security.nonce;
+}
+
+export function shouldRateLimit(map, key, now = Date.now()) {
+  // Bound memory: evict keys with no activity inside the window, and hard-cap the
+  // number of tracked keys so a client with the token cannot grow the map without
+  // limit by spamming distinct issue/phase keys (memory DoS).
+  if (map.size >= RATE_LIMIT_MAX_KEYS) sweepRateLimits(map, now);
+  const prior = Array.isArray(map.get(key)) ? map.get(key) : [];
+  const recent = prior.filter((timestamp) => now - timestamp < 60_000);
+  const last = recent.at(-1);
+  if (last !== undefined && now - last < 3_000) {
+    map.set(key, recent);
+    return true;
+  }
+  if (recent.length >= 10) {
+    map.set(key, recent);
+    return true;
+  }
+  recent.push(now);
+  map.set(key, recent);
+  return false;
+}
+
+const RATE_LIMIT_MAX_KEYS = 1_000;
+
+// Drop keys whose timestamps are all outside the 60s window; if still over the
+// cap afterwards, evict the least-recently-used keys until under it.
+function sweepRateLimits(map, now) {
+  for (const [key, timestamps] of map) {
+    const list = Array.isArray(timestamps) ? timestamps : [];
+    if (list.length === 0 || list.every((timestamp) => now - timestamp >= 60_000)) {
+      map.delete(key);
+    }
+  }
+  if (map.size < RATE_LIMIT_MAX_KEYS) return;
+  const byRecency = [...map.entries()].sort(
+    (a, b) => (a[1].at(-1) ?? 0) - (b[1].at(-1) ?? 0),
+  );
+  for (const [key] of byRecency) {
+    if (map.size < RATE_LIMIT_MAX_KEYS) break;
+    map.delete(key);
+  }
+}
+
+function blockingEligibilityReasonsForRecovery(issue) {
+  const reasons = issue.eligibility?.reasons ?? [];
+  if (!reasons.length) return [];
+  const labels = new Set((issue.labels ?? []).map((label) => String(label).toLowerCase()));
+  const onlyBlockedOrNeedsHumanLabel =
+    labels.has("blocked") || labels.has("needs-human")
+      ? reasons.every((reason) =>
+          ["STOPPED", "EXCLUDED_LABEL"].includes(reason?.code) &&
+          /`?(blocked|needs-human)`?/i.test(String(reason?.message ?? "")),
+        )
+      : false;
+  return onlyBlockedOrNeedsHumanLabel ? [] : reasons;
+}
+
+function httpError(statusCode, message) {
+  const error = new Error(message);
+  error.statusCode = statusCode;
+  return error;
 }
 
 function setSecurityHeaders(res) {
@@ -391,7 +567,9 @@ function parseArgs(argv) {
   return out;
 }
 
-main().catch((error) => {
-  console.error(error instanceof Error ? error.message : String(error));
-  process.exitCode = 1;
-});
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  main().catch((error) => {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  });
+}

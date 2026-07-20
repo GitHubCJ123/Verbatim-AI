@@ -159,6 +159,36 @@ button:hover { transform: translateY(-1px); border-color: rgba(244,255,104,.55);
 .issue-number { color: var(--hot); font: 12px ui-monospace, monospace; }
 .issue-title { display: block; margin-top: 6px; font-size: 20px; line-height: 1.05; }
 .issue-meta { margin-top: 10px; color: var(--muted); font: 11px ui-monospace, monospace; }
+.eligibility-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 10px; }
+.badge-ineligible {
+  width: fit-content;
+  border: 1px solid rgba(255,190,91,.58);
+  border-radius: 999px;
+  padding: 5px 8px;
+  color: #1a0f04;
+  background: var(--amber);
+  font: 10px ui-monospace, monospace;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+}
+.eligibility-reason, .eligibility-helper {
+  color: var(--muted);
+  font: 11px/1.4 ui-monospace, monospace;
+}
+.eligibility-callout {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 14px;
+  border: 1px solid rgba(255,190,91,.36);
+  border-left: 4px solid var(--amber);
+  border-radius: 16px;
+  padding: 12px;
+  background: rgba(255,190,91,.08);
+}
+.eligibility-callout .eligibility-helper { flex-basis: 100%; }
 .issue-pr-pills { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 .issue-pr-pill {
   border: 1px solid var(--line);
@@ -232,6 +262,7 @@ button:hover { transform: translateY(-1px); border-color: rgba(244,255,104,.55);
 .phase-status.ready { background: var(--blue); }
 .phase-status.needs-revision { background: var(--amber); }
 .phase-status.needs-redo { background: #ff8a3d; }
+.phase-status.needs-human { background: var(--red); color: #1b0308; }
 .phase-status.running { background: var(--hot); animation: pulse 1s infinite alternate; }
 .phase-status.blocked { background: rgba(127,166,157,.5); color: var(--ink); }
 .phase-body { display: none; padding: 0 16px 16px; }
@@ -248,6 +279,65 @@ pre {
   font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 .phase-actions { display: flex; gap: 8px; margin: 12px 0; }
+.recover-btn {
+  border-color: rgba(98,255,182,.5);
+  background: rgba(98,255,182,.12);
+  color: var(--green);
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+}
+.recover-btn:hover {
+  border-color: rgba(98,255,182,.85);
+  background: rgba(98,255,182,.2);
+}
+.recovery-panel {
+  margin: 12px 0;
+  border: 1px solid rgba(98,255,182,.3);
+  border-left: 4px solid var(--green);
+  border-radius: 16px;
+  padding: 12px;
+  background: rgba(98,255,182,.07);
+}
+.recovery-title {
+  color: var(--green);
+  font: 12px ui-monospace, monospace;
+  font-weight: 800;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+}
+.recovery-note {
+  margin-top: 5px;
+  color: var(--muted);
+  font: 11px/1.45 ui-monospace, monospace;
+}
+.recovery-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+.recovery-cell {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 8px;
+  background: rgba(0,0,0,.18);
+  min-width: 0;
+}
+.recovery-label {
+  display: block;
+  color: var(--hot);
+  font: 10px ui-monospace, monospace;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+}
+.recovery-value {
+  display: block;
+  margin-top: 4px;
+  color: var(--ink);
+  font: 12px/1.35 ui-monospace, monospace;
+  overflow-wrap: anywhere;
+}
 .approval-form, .feedback-form { border-top: 1px solid var(--line); padding-top: 12px; margin-top: 10px; }
 .form-actions { display: flex; gap: 8px; margin: 10px 0; }
 .hidden { display: none; }

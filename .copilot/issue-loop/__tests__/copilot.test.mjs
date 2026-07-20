@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_CONFIG } from "../lib/config.mjs";
-import { architectPrompt, toolsForRole } from "../lib/copilot.mjs";
+import { architectPrompt, toolsForRole, isSafeModelToken, runCopilot } from "../lib/copilot.mjs";
 
 describe("copilot role safety", () => {
   it("keeps architect and adversarial reviewer read-only by default", () => {
@@ -42,5 +42,27 @@ describe("copilot role safety", () => {
     expect(prompt).toContain("BEGIN_UNTRUSTED_ISSUE_BODY");
     expect(prompt).toContain("BEGIN_UNTRUSTED_SPEC");
     expect(prompt).toContain("SPEC_REVIEW_DECISION: needs-human");
+  });
+});
+
+describe("model token sink safety", () => {
+  it("accepts real model ids and the auto sentinel, rejects flag-like tokens", () => {
+    for (const model of ["gpt-5.5", "claude-opus-4.8", "claude-sonnet-5", "gemini-3.1-pro-preview", "openai/gpt-4o"]) {
+      expect(isSafeModelToken(model)).toBe(true);
+    }
+    for (const model of ["--allow-tool=shell", "-rf", "gpt 5.5", "", "a\nb", null, undefined]) {
+      expect(isSafeModelToken(model)).toBe(false);
+    }
+  });
+
+  it("runCopilot refuses to pass an unsafe modelOverride to the spawn sink", async () => {
+    await expect(
+      runCopilot(DEFAULT_CONFIG, {
+        role: "implementer",
+        prompt: "P",
+        worktree: ".",
+        modelOverride: "--allow-tool=shell",
+      }),
+    ).rejects.toThrow(/unsafe model token/i);
   });
 });

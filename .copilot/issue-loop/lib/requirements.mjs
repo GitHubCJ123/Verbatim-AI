@@ -13,6 +13,40 @@ export function issueInputSha(issue) {
   return createHash("sha256").update(issueInputText(issue)).digest("hex");
 }
 
+// Deterministic keyword scan used as a HARD safety gate: AI may never downgrade
+// a security-sensitive requirements issue to "clear" (see fleet-contract.md
+// invariant #4). Erring toward "sensitive" is the safe direction — a false
+// positive only keeps the issue on the human path; a false negative could let
+// automation proceed on a security-relevant issue. Patterns therefore lean
+// liberal and cover the categories in SECURITY_CONCERN_CATEGORIES plus common
+// concrete terms (secrets, credentials, auth, permissions, sandbox/exec, RCE,
+// filesystem/network, CI, GitHub tokens, code execution).
+const SECURITY_SENSITIVE_PATTERNS = [
+  /secret/i,
+  /credential/i,
+  /\btokens?\b/i,
+  /\b(?:github|access|api|bearer)\s+tokens?\b/i,
+  /password|passphrase/i,
+  /\bauth\b|authentication|authorization|authori[sz]e|unauthori[sz]ed/i,
+  /permission/i,
+  /oauth/i,
+  /\bjwt\b/i,
+  /sandbox/i,
+  /\bexec\b|execute|execution|executable/i,
+  /\brce\b|remote code execution|code execution/i,
+  /file\s?system/i,
+  /\bnetwork\b/i,
+  /\bssrf\b|\bxss\b|\bcsrf\b|injection/i,
+  /\bapi keys?\b/i,
+  /private key/i,
+  /\bci\b|\bci\/cd\b|continuous integration/i,
+];
+
+export function isSecuritySensitiveIssue(issue) {
+  const text = issueInputText(issue ?? {});
+  return SECURITY_SENSITIVE_PATTERNS.some((pattern) => pattern.test(text));
+}
+
 export function critiqueRequirements(issue) {
   const body = issue.body ?? "";
   const text = issueInputText(issue);

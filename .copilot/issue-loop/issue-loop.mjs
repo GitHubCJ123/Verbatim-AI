@@ -42,6 +42,7 @@ import {
 } from "./lib/copilot.mjs";
 import {
   critiqueRequirements,
+  isSecuritySensitiveIssue,
   latestRequirementsMarker,
   requirementsMarker,
   requirementsReview,
@@ -53,6 +54,19 @@ import {
 } from "./lib/artifacts.mjs";
 import { readDashboardApproval } from "./lib/dashboard.mjs";
 import { evaluateSpecReview } from "./lib/spec-review.mjs";
+import { evaluateEligibility } from "./lib/eligibility.mjs";
+import { createBudget, emptyRecoveryState } from "./lib/recovery.mjs";
+import {
+  completeRecoveryAttempt,
+  makeRunModel,
+  recoverImplementation,
+  recoverRequirements,
+  recoverSpecReview,
+  recoverVerification,
+  recoveryEnabled,
+  sharperQuestions,
+  summarizeRecovery,
+} from "./lib/recovery-driver.mjs";
 import { runVerification, verificationComment } from "./lib/verifier.mjs";
 import { findSecretLikeText, redactSecrets, truncateForComment } from "./lib/redaction.mjs";
 
@@ -218,17 +232,34 @@ async function preflight(config) {
 
 async function isEligible(config, issue, prs) {
   const labels = issue.labels.map((label) => label.name);
-  const stopped = await stopRequested(config, ROOT, labels);
-  if (stopped) return false;
-  if (!config.requiredLabels.every((label) => labels.includes(label))) return false;
-  if (labels.some((label) => config.excludedLabels.includes(label))) return false;
-  if (prs.some((pr) => pr.closingIssuesReferences?.some((ref) => ref.number === issue.number))) {
-    return false;
-  }
+  const stopReason = await stopRequested(config, ROOT, labels);
+  const openPrs = prs ?? [];
+  // Single source of truth for the accept/reject decision (shared with the
+  // dashboard) lives in evaluateEligibility. To stay byte-identical to the
+  // original driver we preserve its exact short-circuit ORDER and network
+  // profile: (1) cheap in-memory gates (stop/labels/linked-PR) first, (2) the
+  // network `git ls-remote` branch check only if those pass, (3) active-claim
+  // computation (which may fetch comments) last.
+  const cheap = evaluateEligibility({
+    config,
+    issue,
+    openPrs,
+    stopReason,
+    remoteBranchExists: false,
+    activeClaims: 0,
+  });
+  if (!cheap.eligible) return false;
   if (await remoteBranchExists(ROOT, issueBranchName(config, issue))) return false;
   const comments = issue.comments ?? (await issueComments(config, issue.number));
-  if (activeClaimsFromComments(comments).length > 0) return false;
-  return true;
+  const activeClaims = activeClaimsFromComments(comments).length;
+  return evaluateEligibility({
+    config,
+    issue,
+    openPrs,
+    stopReason,
+    remoteBranchExists: false,
+    activeClaims,
+  }).eligible;
 }
 
 function canRequirementsTriage(config, issue) {
@@ -252,12 +283,8 @@ async function processIssue(config, issue, args) {
   });
   await writeRequirementsArtifact(config, issue, specDir, critique, runId);
   if (critique.status === "needs-human" && !requirementsApproval) {
-    await maybeCommentRequirements(config, issue, critique);
-    await setDurablePhaseStatus(ROOT, issue, "requirements", "needs-human", {
-      issueInputSha: critique.issueInputSha,
-      reason: critique.summary,
-    });
-    return;
+    const proceed = await maybeRecoverRequirements(config, issue, critique, specDir, runId, args);
+    if (!proceed) return;
   }
   if (critique.status === "needs-human" && requirementsApproval) {
     await setDurablePhaseStatus(ROOT, issue, "requirements", "approved", {
@@ -281,20 +308,8 @@ async function processIssue(config, issue, args) {
   await maybeClaim(config, issue, branch);
 
   if (review && config.gates.requireHumanOnSpecReviewQuestions !== false && specReviewNeedsHuman(review)) {
-      await maybeComment(
-        config,
-        issue.number,
-        `${specMarker({
-          issue: issue.number,
-          status: "needs-human",
-          path: path.relative(ROOT, specPath),
-          sha: await fileSha256(specPath),
-        })}\n\nSpec review raised open questions that require maintainer input before implementation.\n\n${review.slice(0, 6000)}`,
-      );
-      await setDurablePhaseStatus(ROOT, issue, "implementation", "blocked", {
-        reason: "Spec review raised questions requiring human input.",
-      });
-      return;
+    const proceed = await maybeRecoverSpecReview(config, issue, specPath, review, runId);
+    if (!proceed) return;
   }
 
   await setDurablePhaseStatus(ROOT, issue, "implementation", "ready", {
@@ -387,6 +402,156 @@ async function writeRequirementsArtifact(config, issue, specDir, critique, runId
       findings: critique.findings,
     },
   });
+}
+
+// Requirements gate recovery. Returns true when the issue may proceed to spec
+// drafting (recovery downgraded needs-human to clear), false when it must stay
+// needs-human. When recovery is disabled or in dry-run, this reproduces the
+// EXACT original needs-human behavior (comment + durable status + caller return).
+async function maybeRecoverRequirements(config, issue, critique, specDir, runId, args) {
+  const dryRun = config.dryRun || args?.dryRun;
+  if (!recoveryEnabled(config, "requirements") || dryRun) {
+    await maybeCommentRequirements(config, issue, critique);
+    await setDurablePhaseStatus(ROOT, issue, "requirements", "needs-human", {
+      issueInputSha: critique.issueInputSha,
+      reason: critique.summary,
+    });
+    return false;
+  }
+  const isSecuritySensitive = isSecuritySensitiveIssue(issue);
+  const heuristic = [critique.summary, ...(critique.questions ?? [])].filter(Boolean).join("\n");
+  // Honor STOP before spending any recovery model calls: fall back to the exact
+  // original needs-human behavior without invoking a model.
+  const stop = await stopRequested(config, ROOT, issue.labels.map((label) => label.name));
+  if (stop) {
+    await maybeCommentRequirements(config, issue, critique);
+    await setDurablePhaseStatus(ROOT, issue, "requirements", "needs-human", {
+      issueInputSha: critique.issueInputSha,
+      reason: critique.summary,
+    });
+    return false;
+  }
+  let decision;
+  try {
+    ({ decision } = await recoverRequirements({
+      config,
+      issue,
+      heuristic,
+      isSecuritySensitive,
+      budget: createBudget(config.recovery.budgets),
+      state: emptyRecoveryState(),
+      runModel: makeRunModel(config, ROOT),
+    }));
+  } catch (err) {
+    console.error(`Requirements recovery failed for #${issue.number}: ${err.message}`);
+    decision = null;
+  }
+  if (decision?.proceed) {
+    await recordArtifact({
+      root: ROOT,
+      issue,
+      phase: "requirements",
+      agent: "recovery-council",
+      title: "Requirements recovery cleared for spec drafting",
+      summary: decision.reason,
+      body: `Requirements recovery (tier: ${decision.tier}) cleared this issue for spec drafting. Spec review and human PR merge gates still apply.`,
+      runId,
+      status: "complete",
+      decision: "recovered",
+      metadata: { issueInputSha: critique.issueInputSha, recovery: decision.recovery },
+    });
+    await setDurablePhaseStatus(ROOT, issue, "requirements", "recovered", {
+      issueInputSha: critique.issueInputSha,
+      reason: decision.reason,
+      recovery: decision.recovery,
+    });
+    return true;
+  }
+  const sharper = decision ? sharperQuestions(decision) : [];
+  const augmented = sharper.length
+    ? { ...critique, questions: [...(critique.questions ?? []), ...sharper] }
+    : critique;
+  await maybeCommentRequirements(config, issue, augmented);
+  await setDurablePhaseStatus(ROOT, issue, "requirements", "needs-human", {
+    issueInputSha: critique.issueInputSha,
+    reason: decision?.reason ?? critique.summary,
+    recovery: decision?.recovery,
+  });
+  return false;
+}
+
+// Spec-review gate recovery. Returns true when the spec may proceed to
+// implementation (recovery reached a deterministic proceed with no security
+// veto), false when it must stay blocked. When recovery is disabled this
+// reproduces the EXACT original block behavior (comment + durable status).
+async function maybeRecoverSpecReview(config, issue, specPath, review, runId) {
+  const blockAsBefore = async () => {
+    await maybeComment(
+      config,
+      issue.number,
+      `${specMarker({
+        issue: issue.number,
+        status: "needs-human",
+        path: path.relative(ROOT, specPath),
+        sha: await fileSha256(specPath),
+      })}\n\nSpec review raised open questions that require maintainer input before implementation.\n\n${review.slice(0, 6000)}`,
+    );
+    await setDurablePhaseStatus(ROOT, issue, "implementation", "blocked", {
+      reason: "Spec review raised questions requiring human input.",
+    });
+    return false;
+  };
+  if (!recoveryEnabled(config, "spec-review")) {
+    return blockAsBefore();
+  }
+  // Honor STOP before spending any recovery model calls.
+  const stop = await stopRequested(config, ROOT, issue.labels.map((label) => label.name));
+  if (stop) {
+    return blockAsBefore();
+  }
+  let decision;
+  try {
+    const specText = await fs.readFile(specPath, "utf8");
+    ({ decision } = await recoverSpecReview({
+      config,
+      issue,
+      specText,
+      priorFailure: `Spec review raised open questions requiring human input:\n${review}`,
+      budget: createBudget(config.recovery.budgets),
+      state: emptyRecoveryState(),
+      runModel: makeRunModel(config, ROOT),
+    }));
+  } catch (err) {
+    console.error(`Spec-review recovery failed for #${issue.number}: ${err.message}`);
+    decision = null;
+  }
+  if (!decision?.proceed) {
+    if (decision) {
+      await setDurablePhaseStatus(ROOT, issue, "spec-review", "needs-human", {
+        reason: decision.reason,
+        recovery: decision.recovery,
+      });
+    }
+    return blockAsBefore();
+  }
+  await recordArtifact({
+    root: ROOT,
+    issue,
+    phase: "spec-review",
+    agent: "recovery-council",
+    title: "Spec review recovery cleared for implementation",
+    summary: decision.reason,
+    body: `Spec-review recovery (tier: ${decision.tier}) cleared this spec for implementation. Verification and human PR merge gates still apply.`,
+    runId,
+    status: "complete",
+    decision: "recovered",
+    metadata: { recovery: decision.recovery },
+  });
+  await setDurablePhaseStatus(ROOT, issue, "spec-review", "recovered", {
+    reason: decision.reason,
+    recovery: decision.recovery,
+  });
+  return true;
 }
 
 async function writeArchitectSpec(config, issue, specPath, runId, approvalNote = "") {
@@ -495,6 +660,8 @@ async function runPostSpecPhases(config, issue, { branch, specDir, specPath, rev
   const verification = await runVerificationPhase(config, issue, {
     pr: implementation.pr,
     worktreePath: implementation.worktreePath,
+    specPath,
+    branch,
     runId,
   });
   if (!verification?.ok) return;
@@ -521,59 +688,139 @@ async function runImplementationPhase(config, issue, { branch, specDir, specPath
   });
   const specContent = await fs.readFile(specPath, "utf8");
   const reviewContent = await fs.readFile(reviewPath, "utf8").catch(() => "");
-  const result = await runCopilot(config, {
-    role: "implementer",
-    worktree: worktree.path,
-    prompt: implementerPrompt(issue, path.relative(worktree.path, specPath), specContent, reviewContent),
-  });
-  if (result.code !== 0) {
-    await setDurablePhaseStatus(ROOT, issue, "implementation", "blocked", {
-      reason: truncateForComment(result.stderr, 1000),
+
+  const attemptCtx = { worktree, branch, specPath, specContent, reviewContent, runId };
+  let outcome = await attemptImplementation(config, issue, attemptCtx);
+  if (outcome.ok) return outcome.value;
+
+  // DEFAULT (recovery disabled): reproduce the original per-failure persistence
+  // exactly and give up. Byte-identical to the pre-recovery driver.
+  if (!recoveryEnabled(config, "implementation")) {
+    await finalizeBlocked(config, issue, outcome.kind, {
       branch,
       worktreePath: worktree.path,
+      runId,
+      stderr: outcome.stderr,
+      stdout: outcome.stdout,
+      decision: outcome.decision,
+      findings: outcome.findings,
     });
     return null;
   }
 
+  // Recovery enabled: rotate roster models on RETRYABLE failures only. Secrets
+  // are non-retryable (fail closed). Budget is reserved inside
+  // recoverImplementation; the disposable pre-PR worktree is reset between tries.
+  const budget = createBudget(config.recovery.budgets);
+  let state = emptyRecoveryState();
+  const alreadyTried = [config.agents?.implementer?.model].filter(Boolean);
+
+  while (outcome.kind !== "secrets") {
+    const rec = recoverImplementation({ config, alreadyTriedModels: alreadyTried, budget, state });
+    state = rec.state ?? state;
+    if (!rec.nextModel) break;
+    const stop = await stopRequested(config, ROOT);
+    if (stop) {
+      await finalizeBlocked(config, issue, outcome.kind, {
+        branch,
+        worktreePath: worktree.path,
+        runId,
+        stderr: outcome.stderr,
+        stdout: outcome.stdout,
+        decision: outcome.decision,
+        findings: outcome.findings,
+        recovery: summarizeRecovery(state, {
+          outcome: "stopped",
+          reason: `Stop requested (${stop}) before recovery re-run.`,
+        }),
+      });
+      return null;
+    }
+    // branchStrategy "incremental-after-pr": no PR exists yet, so the worktree
+    // is disposable and safe to reset clean before the next model runs. We never
+    // hard-reset or force-push once a PR or human/non-bot commits exist.
+    await git(["reset", "--hard"], worktree.path);
+    await git(["clean", "-fd"], worktree.path);
+    alreadyTried.push(rec.nextModel);
+    await setDurablePhaseStatus(ROOT, issue, "implementation", "running", {
+      branch,
+      worktreePath: worktree.path,
+      reason: `Recovery: re-running implementer with ${rec.nextModel} (attempt ${alreadyTried.length}).`,
+    });
+    outcome = await attemptImplementation(config, issue, { ...attemptCtx, modelOverride: rec.nextModel });
+    state = completeRecoveryAttempt(state, rec.attemptId, {
+      proceed: outcome.ok,
+      reason: outcome.ok ? "implementer produced changes" : `implementer ${outcome.kind}`,
+    });
+    if (outcome.ok) {
+      await setDurablePhaseStatus(ROOT, issue, "implementation", "complete", {
+        prNumber: outcome.value.pr.number,
+        headSha: outcome.value.headSha,
+        recovery: summarizeRecovery(state, {
+          outcome: "proceed",
+          proceed: true,
+          changed: true,
+          tier: "sequentialRetry",
+        }),
+      });
+      return outcome.value;
+    }
+  }
+
+  await finalizeBlocked(config, issue, outcome.kind, {
+    branch,
+    worktreePath: worktree.path,
+    runId,
+    stderr: outcome.stderr,
+    stdout: outcome.stdout,
+    decision: outcome.decision,
+    findings: outcome.findings,
+    recovery: summarizeRecovery(state, {
+      outcome: outcome.kind === "secrets" ? "veto" : "exhausted",
+      reason:
+        outcome.kind === "secrets"
+          ? "Secret-like text in diff; recovery not permitted."
+          : "Implementation recovery exhausted.",
+    }),
+  });
+  return null;
+}
+
+// Single implementer attempt. Returns a discriminated result and performs the
+// success-path side effects (commit/push/PR/artifact) but NEVER persists a
+// terminal "blocked" status — the caller does that via finalizeBlocked so the
+// recovery-disabled path stays byte-identical to the original driver.
+async function attemptImplementation(
+  config,
+  issue,
+  { worktree, branch, specPath, specContent, reviewContent, runId, modelOverride },
+) {
+  const runOpts = {
+    role: "implementer",
+    worktree: worktree.path,
+    prompt: implementerPrompt(issue, path.relative(worktree.path, specPath), specContent, reviewContent),
+  };
+  if (modelOverride) runOpts.modelOverride = modelOverride;
+  const result = await runCopilot(config, runOpts);
+  if (result.code !== 0) {
+    return { ok: false, kind: "error", stderr: result.stderr };
+  }
+
   const decision = parseDecisionLine(result.stdout, "IMPLEMENTATION_DECISION", ["ready", "blocked"]);
   if (decision !== "ready") {
-    await recordArtifact({
-      root: ROOT,
-      issue,
-      phase: "implementation",
-      agent: "implementer",
-      title: "Implementation blocked",
-      summary: "Implementer reported that the spec could not be implemented safely.",
-      body: result.stdout,
-      runId,
-      status: "blocked",
-      decision: decision ?? "blocked",
-      metadata: { branch, worktreePath: worktree.path },
-    });
-    return null;
+    return { ok: false, kind: "blocked", stdout: result.stdout, decision };
   }
 
   await git(["add", "-A"], worktree.path);
   const stagedFiles = await git(["diff", "--cached", "--name-only"], worktree.path);
   if (!stagedFiles.trim()) {
-    await setDurablePhaseStatus(ROOT, issue, "implementation", "blocked", {
-      reason: "Implementer completed without file changes.",
-      branch,
-      worktreePath: worktree.path,
-    });
-    return null;
+    return { ok: false, kind: "no-changes" };
   }
 
   const diff = await git(["diff", "--cached"], worktree.path);
   const secretFindings = findSecretLikeText(diff);
   if (secretFindings.length) {
-    await setDurablePhaseStatus(ROOT, issue, "implementation", "blocked", {
-      reason: "Secret-like text found in implementation diff.",
-      branch,
-      worktreePath: worktree.path,
-      findings: secretFindings,
-    });
-    return null;
+    return { ok: false, kind: "secrets", findings: secretFindings };
   }
 
   await git(["diff", "--cached", "--check"], worktree.path);
@@ -634,7 +881,73 @@ async function runImplementationPhase(config, issue, { branch, specDir, specPath
     prNumber: pr.number,
     headSha,
   });
-  return { pr, worktreePath: worktree.path, headSha };
+  return { ok: true, value: { pr, worktreePath: worktree.path, headSha } };
+}
+
+// Persist a terminal "implementation blocked" outcome, replicating the exact
+// per-failure-kind side effects of the original driver. A redacted `recovery`
+// summary is attached ONLY when recovery ran (undefined on the default path).
+async function finalizeBlocked(config, issue, kind, ctx) {
+  const { branch, worktreePath, runId, stderr, stdout, decision, findings, recovery } = ctx;
+  const withRecovery = (details) => (recovery ? { ...details, recovery } : details);
+  if (kind === "error") {
+    await setDurablePhaseStatus(
+      ROOT,
+      issue,
+      "implementation",
+      "blocked",
+      withRecovery({
+        reason: truncateForComment(stderr, 1000),
+        branch,
+        worktreePath,
+      }),
+    );
+    return;
+  }
+  if (kind === "blocked") {
+    await recordArtifact({
+      root: ROOT,
+      issue,
+      phase: "implementation",
+      agent: "implementer",
+      title: "Implementation blocked",
+      summary: "Implementer reported that the spec could not be implemented safely.",
+      body: stdout,
+      runId,
+      status: "blocked",
+      decision: decision ?? "blocked",
+      metadata: withRecovery({ branch, worktreePath }),
+    });
+    return;
+  }
+  if (kind === "no-changes") {
+    await setDurablePhaseStatus(
+      ROOT,
+      issue,
+      "implementation",
+      "blocked",
+      withRecovery({
+        reason: "Implementer completed without file changes.",
+        branch,
+        worktreePath,
+      }),
+    );
+    return;
+  }
+  if (kind === "secrets") {
+    await setDurablePhaseStatus(
+      ROOT,
+      issue,
+      "implementation",
+      "blocked",
+      withRecovery({
+        reason: "Secret-like text found in implementation diff.",
+        branch,
+        worktreePath,
+        findings,
+      }),
+    );
+  }
 }
 
 async function runImplementationRevisionPhase(
@@ -852,7 +1165,145 @@ async function runAgentPrReviewPhase(config, issue, { pr, worktreePath, specPath
   return { decision: decision ?? "needs-changes", body: result.stdout };
 }
 
-async function runVerificationPhase(config, issue, { pr, worktreePath, runId }) {
+async function runVerificationPhase(config, issue, { pr, worktreePath, specPath, branch, runId }) {
+  let result = await verifyOnce(config, issue, { pr, worktreePath, runId });
+  if (result.ok) return result;
+
+  // DEFAULT (recovery disabled): identical to the original single-pass verifier.
+  if (!recoveryEnabled(config, "verification") || config.dryRun) return result;
+  // The implementer can never fix a host sandbox refusal — don't waste repairs.
+  if (isSandboxRefusal(result)) return result;
+
+  const budget = createBudget(config.recovery.budgets);
+  let state = emptyRecoveryState();
+  let attemptsSoFar = 0;
+
+  for (;;) {
+    const stop = await stopRequested(config, ROOT);
+    if (stop) {
+      await setDurablePhaseStatus(ROOT, issue, "verification", "blocked", {
+        prNumber: pr.number,
+        headSha: result.headSha,
+        reason: `Stop requested (${stop}) before verifier repair.`,
+        recovery: summarizeRecovery(state, { outcome: "stopped", reason: `Stop requested (${stop}).` }),
+      });
+      return result;
+    }
+    const rec = recoverVerification({ config, budget, attemptsSoFar, state });
+    state = rec.state ?? state;
+    if (!rec.shouldRepair || !rec.model) break;
+    attemptsSoFar += 1;
+
+    const repaired = await repairForVerification(config, issue, {
+      worktreePath,
+      specPath,
+      branch,
+      model: rec.model,
+      failureText: verificationReport(result),
+    });
+    // The verifier stays authoritative: a repair is NEVER treated as "proceed".
+    state = completeRecoveryAttempt(state, rec.attemptId, {
+      proceed: false,
+      reason: repaired.committed ? "repair committed" : `repair no-op (${repaired.reason})`,
+    });
+    if (repaired.blockedBySecret) {
+      await setDurablePhaseStatus(ROOT, issue, "verification", "blocked", {
+        prNumber: pr.number,
+        headSha: result.headSha,
+        reason: "Secret-like text found in verifier repair diff; repair rejected.",
+        recovery: summarizeRecovery(state, { outcome: "veto", reason: "Secret-like text in repair diff." }),
+      });
+      return result;
+    }
+    if (!repaired.committed) break;
+
+    // Re-run the REAL verifier (authoritative) on the repaired head.
+    result = await verifyOnce(config, issue, { pr, worktreePath, runId });
+    if (result.ok) {
+      await setDurablePhaseStatus(ROOT, issue, "verification", "pass", {
+        prNumber: pr.number,
+        headSha: result.headSha,
+        recovery: summarizeRecovery(state, {
+          outcome: "proceed",
+          proceed: true,
+          changed: true,
+          tier: "repairOnly",
+        }),
+      });
+      return result;
+    }
+  }
+
+  // Exhausted. The last verifyOnce already persisted the failing state; attach a
+  // redacted recovery summary. Never mark a failing verification as passing.
+  await setDurablePhaseStatus(ROOT, issue, "verification", "blocked", {
+    prNumber: pr.number,
+    headSha: result.headSha,
+    reason: "Verifier repair loop exhausted; verification still failing.",
+    recovery: summarizeRecovery(state, { outcome: "exhausted", reason: "Verifier repair exhausted." }),
+  });
+  return result;
+}
+
+// True when a verification report is a host-sandbox refusal (fail-closed
+// preflight), which reflects host configuration, not fixable spec/code failures.
+function isSandboxRefusal(report) {
+  const results = Array.isArray(report?.results) ? report.results : [];
+  return results.length === 1 && results[0]?.command === "sandbox preflight";
+}
+
+// Re-run the implementer to FIX verification failures, then commit + push
+// incrementally (never force-push). Rejects and unstages any secret-like diff.
+async function repairForVerification(config, issue, { worktreePath, specPath, branch, model, failureText }) {
+  const specContent = await fs.readFile(specPath, "utf8").catch(() => "");
+  const prompt = implementerPrompt(
+    issue,
+    path.relative(worktreePath, specPath),
+    specContent,
+    [
+      "The automated verifier FAILED. Fix the failing lint/tests/build below WITHOUT weakening,",
+      "skipping, or disabling any check, and WITHOUT introducing secrets. Make the smallest change",
+      "that makes verification pass.",
+      "",
+      "Verifier output:",
+      redactSecrets(truncateForComment(failureText, 4000)),
+    ].join("\n"),
+  );
+  const result = await runCopilot(config, {
+    role: "implementer",
+    worktree: worktreePath,
+    prompt,
+    modelOverride: model,
+  });
+  if (result.code !== 0) {
+    return { committed: false, reason: "implementer error", blockedBySecret: false };
+  }
+  await git(["add", "-A"], worktreePath);
+  const staged = await git(["diff", "--cached", "--name-only"], worktreePath);
+  if (!staged.trim()) {
+    return { committed: false, reason: "no changes", blockedBySecret: false };
+  }
+  const diff = await git(["diff", "--cached"], worktreePath);
+  if (findSecretLikeText(diff).length) {
+    await git(["reset"], worktreePath);
+    return { committed: false, reason: "secret findings", blockedBySecret: true };
+  }
+  await git(["diff", "--cached", "--check"], worktreePath);
+  await git(
+    [
+      "commit",
+      "-m",
+      `Repair verification for issue #${issue.number}`,
+      "-m",
+      "Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>",
+    ],
+    worktreePath,
+  );
+  await git(["push", "origin", branch], worktreePath);
+  return { committed: true, reason: "committed", blockedBySecret: false };
+}
+
+async function verifyOnce(config, issue, { pr, worktreePath, runId }) {
   await setDurablePhaseStatus(ROOT, issue, "verification", "running", {
     prNumber: pr.number,
     worktreePath,

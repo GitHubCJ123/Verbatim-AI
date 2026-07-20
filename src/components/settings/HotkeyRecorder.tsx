@@ -17,6 +17,7 @@ import {
 } from "../../lib/hotkey";
 import { setHotkeyPaused } from "../../lib/preferences";
 import { toast } from "../ui/Toast";
+import { handleInputMonitoringError } from "./inputMonitoring";
 
 interface HotkeyRecorderProps {
   value: string;
@@ -353,7 +354,9 @@ export function HotkeyRecorder({ value, onChange }: HotkeyRecorderProps) {
         if (!isFnHintDismissed()) setShowFnHint(true);
       }),
       onError: ifMounted((message) => {
-        toast.error("Couldn't change the shortcut", { description: message });
+        if (!handleInputMonitoringError(message)) {
+          toast.error("Couldn't change the shortcut", { description: message });
+        }
       }),
     });
   }
@@ -451,12 +454,14 @@ export function HotkeyRecorder({ value, onChange }: HotkeyRecorderProps) {
             onClick={() =>
               void sessionRef.current
                 ?.cleanup()
-                .catch((error) =>
-                  toast.error("Couldn't restore the shortcut", {
-                    description:
-                      error instanceof Error ? error.message : String(error),
-                  }),
-                )
+                .catch((error) => {
+                  if (!handleInputMonitoringError(error)) {
+                    toast.error("Couldn't restore the shortcut", {
+                      description:
+                        error instanceof Error ? error.message : String(error),
+                    });
+                  }
+                })
             }
           >
             Cancel

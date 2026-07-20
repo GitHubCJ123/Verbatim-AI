@@ -88,6 +88,10 @@ async function handle(req, res, ctx) {
       sendJson(res, 200, await buildState(ctx));
       return;
     }
+    if (req.method === "GET" && url.pathname === "/api/history") {
+      sendJson(res, 200, await buildHistory());
+      return;
+    }
     if (req.method === "POST") {
       await handlePost(req, res, url, ctx);
       return;
@@ -407,7 +411,7 @@ async function safeGhIssues() {
       "--state",
       "open",
       "--limit",
-      "50",
+      "100",
       "--json",
       "number,title,body,labels,comments,url",
     ]);
@@ -426,9 +430,47 @@ async function safeGhPRs() {
       "--state",
       "all",
       "--limit",
-      "50",
+      "100",
       "--json",
       "number,title,body,url,state,isDraft,mergedAt,closedAt,mergeStateStatus,closingIssuesReferences",
+    ]);
+  } catch {
+    return [];
+  }
+}
+
+let historyCache = { at: 0, data: null };
+
+async function buildHistory() {
+  const now = Date.now();
+  if (historyCache.data && now - historyCache.at < 20_000) return historyCache.data;
+  const closed = await safeGhClosedIssues();
+  const data = {
+    closedIssues: closed.map((issue) => ({
+      number: issue.number,
+      title: issue.title,
+      url: issue.url,
+      closedAt: issue.closedAt ?? null,
+      labels: (issue.labels ?? []).map((label) => label.name),
+    })),
+  };
+  historyCache = { at: now, data };
+  return data;
+}
+
+async function safeGhClosedIssues() {
+  try {
+    return await ghJson([
+      "issue",
+      "list",
+      "--repo",
+      "GitHubCJ123/Verbatim-AI",
+      "--state",
+      "closed",
+      "--limit",
+      "50",
+      "--json",
+      "number,title,url,closedAt,labels",
     ]);
   } catch {
     return [];

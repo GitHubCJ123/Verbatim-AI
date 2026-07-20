@@ -17,6 +17,10 @@ const feedbackDrafts = new Map();
 const expandedOutputs = new Set();
 let lastInteractionAt = 0;
 let loadedOnce = false;
+let historyOpen = false;
+let historyTab = "issues";
+let historyPrFilter = "all";
+let historyData = null; // { closedIssues: [] } fetched on demand
 
 const density = localStorage.getItem("vb.density") === "cozy" ? "cozy" : "compact";
 document.body.dataset.density = density;
@@ -43,6 +47,12 @@ byId("densityCozy").addEventListener("click", () => setDensity("cozy"));
 byId("helpBtn").addEventListener("click", () => byId("helpPopover").classList.toggle("hidden"));
 byId("collapseRight").addEventListener("click", toggleRightRail);
 byId("showRight").addEventListener("click", toggleRightRail);
+byId("historyBtn").addEventListener("click", toggleHistory);
+byId("historyClose").addEventListener("click", closeHistory);
+byId("historyBackdrop").addEventListener("click", closeHistory);
+for (const tab of document.querySelectorAll("#historyOverlay .otab")) {
+  tab.addEventListener("click", () => { historyTab = tab.dataset.tab; renderHistory(); });
+}
 setDensityButtons();
 
 document.addEventListener("scroll", markInteraction, { capture: true, passive: true });
@@ -684,11 +694,13 @@ function mutationHeaders() {
 function onKeydown(e) {
   const typing = ["TEXTAREA", "INPUT"].includes(document.activeElement?.tagName);
   if (e.key === "Escape") {
+    if (historyOpen) { closeHistory(); return; }
     byId("helpPopover").classList.add("hidden");
     return;
   }
   if (typing) return;
   if (e.key === "?" || (e.shiftKey && e.key === "/")) { e.preventDefault(); byId("helpPopover").classList.toggle("hidden"); return; }
+  if (e.key.toLowerCase() === "h") { e.preventDefault(); toggleHistory(); return; }
   if (e.key === "/") { e.preventDefault(); byId("issueFilters").querySelector(".filter-chip")?.focus(); return; }
   if (e.key.toLowerCase() === "r") { e.preventDefault(); void load(); return; }
   if (e.key.toLowerCase() === "s") { e.preventDefault(); markInteraction(); scanAll = !scanAll; render(); return; }
@@ -732,6 +744,91 @@ function toggleRightRail() {
     rail.classList.toggle("hidden");
     showBtn.classList.toggle("hidden", !rail.classList.contains("hidden"));
   }
+}
+
+// ---------------------------------------------------------------------------
+// history overlay (closed issues + all PRs) — hidden by default
+// ---------------------------------------------------------------------------
+function toggleHistory() { if (historyOpen) closeHistory(); else void openHistory(); }
+async function openHistory() {
+  historyOpen = true;
+  byId("historyOverlay").classList.remove("hidden");
+  if (!historyData) {
+    try {
+      const res = await fetch("/api/history", { headers });
+      historyData = res.ok ? await res.json() : { closedIssues: [] };
+    } catch { historyData = { closedIssues: [] }; }
+  }
+  renderHistory();
+}
+function closeHistory() { historyOpen = false; byId("historyOverlay").classList.add("hidden"); }
+
+function renderHistory() {
+  for (const tab of document.querySelectorAll("#historyOverlay .otab")) {
+    tab.classList.toggle("is-on", tab.dataset.tab === historyTab);
+    tab.setAttribute("aria-selected", String(tab.dataset.tab === historyTab));
+  }
+  const closedIssues = historyData?.closedIssues ?? [];
+  const prs = state?.prs ?? [];
+  byId("histIssueN").textContent = String(closedIssues.length);
+  byId("histPrN").textContent = String(prs.length);
+
+  const filters = byId("historyFilters");
+  const body = byId("historyBody");
+  filters.textContent = "";
+  body.textContent = "";
+
+  if (historyTab === "issues") {
+    if (!closedIssues.length) { body.append(node("div", { class: "empty-note", text: "No closed issues." })); return; }
+    for (const issue of closedIssues) body.append(histIssueRow(issue));
+    return;
+  }
+
+  const counts = prCounts(prs);
+  const defs = [["all", "All", prs.length], ["open", "Open", counts.open || 0], ["draft", "Draft", counts.draft || 0], ["merged", "Merged", counts.merged || 0], ["closed", "Closed", counts.closed || 0]];
+  for (const [key, label, n] of defs) {
+    const chip = node("button", { class: `filter-chip ${historyPrFilter === key ? "is-on" : ""}` });
+    chip.type = "button";
+    chip.append(document.createTextNode(label), node("span", { class: "chip-n", text: String(n) }));
+    chip.addEventListener("click", () => { historyPrFilter = key; renderHistory(); });
+    filters.append(chip);
+  }
+  const visible = (historyPrFilter === "all" ? prs : prs.filter((p) => (p.status ?? "unknown") === historyPrFilter)).slice().sort((a, b) => b.number - a.number);
+  if (!visible.length) { body.append(node("div", { class: "empty-note", text: "No pull requests match." })); return; }
+  for (const pr of visible) body.append(histPrRow(pr));
+}
+
+function histIssueRow(issue) {
+  const row = node("a", { class: "hist-row" });
+  row.href = issue.url; row.target = "_blank"; row.rel = "noreferrer";
+  row.append(
+    node("span", { class: "hist-num", text: `#${issue.number}` }),
+    node("span", { class: "hist-title", text: issue.title }),
+    node("span", { class: "hist-date", text: fmtDate(issue.closedAt) }),
+    node("span", { class: "hist-link", text: "Open ↗" }),
+  );
+  if ((issue.labels ?? []).length) {
+    const labels = node("div", { class: "hist-labels" });
+    for (const l of issue.labels) labels.append(node("span", { class: "hist-label", text: l }));
+    row.append(labels);
+  }
+  return row;
+}
+
+function histPrRow(pr) {
+  const row = node("a", { class: "hist-row" });
+  row.href = pr.url; row.target = "_blank"; row.rel = "noreferrer";
+  row.append(
+    node("span", { class: `pr-badge ${pr.status ?? "unknown"}`, text: pr.statusLabel ?? prStatusLabel(pr) }),
+    node("span", { class: "hist-title", text: pr.title }),
+    node("span", { class: "hist-date", text: `#${pr.number}${prDate(pr) ? ` · ${prDate(pr)}` : ""}` }),
+    node("span", { class: "hist-link", text: "Open ↗" }),
+  );
+  return row;
+}
+
+function fmtDate(v) {
+  return v ? new Date(v).toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" }) : "";
 }
 
 function toast(text, kind = "") {

@@ -25,6 +25,7 @@
           <button id="densityCozy" class="seg-btn" type="button">Cozy</button>
         </div>
         <button id="refreshBtn" class="btn" type="button" title="Refresh (R)">Refresh</button>
+        <button id="historyBtn" class="btn" type="button" title="Browse closed issues & all PRs (H)">History</button>
         <button id="helpBtn" class="btn btn-icon" type="button" aria-label="Keyboard shortcuts" title="Shortcuts (?)">?</button>
       </div>
     </header>
@@ -63,8 +64,24 @@
         <li><kbd>R</kbd> refresh</li>
         <li><kbd>/</kbd> focus filter</li>
         <li><kbd>S</kbd> scan all phases</li>
+        <li><kbd>H</kbd> history (closed issues / PRs)</li>
         <li><kbd>Esc</kbd> close</li>
       </ul>
+    </div>
+
+    <div id="historyOverlay" class="overlay hidden" role="dialog" aria-modal="true" aria-label="History">
+      <div class="overlay-backdrop" id="historyBackdrop"></div>
+      <div class="overlay-panel">
+        <div class="overlay-head">
+          <div class="overlay-tabs" role="tablist" aria-label="History">
+            <button class="otab is-on" data-tab="issues" type="button" role="tab">Closed issues <span class="otab-n" id="histIssueN"></span></button>
+            <button class="otab" data-tab="prs" type="button" role="tab">Pull requests <span class="otab-n" id="histPrN"></span></button>
+          </div>
+          <button id="historyClose" class="btn btn-mini" type="button">Close</button>
+        </div>
+        <div class="overlay-filters" id="historyFilters"></div>
+        <div class="overlay-body" id="historyBody"></div>
+      </div>
     </div>
 
     <script src="/ui/app.js" type="module"></script>

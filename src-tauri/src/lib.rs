@@ -5,7 +5,10 @@ use commands::{
     active_window::get_active_window,
     cancel_hotkey::{disable_cancel_shortcut, enable_cancel_shortcut, CancelHotkeyState},
     devtools::{open_devtools, open_main_devtools},
-    fn_hotkey::{open_input_monitoring_settings, FnHotkeyState},
+    fn_hotkey::{
+        open_input_monitoring_settings, request_input_monitoring, start_hotkey_capture,
+        stop_hotkey_capture, FnHotkeyState, HotkeyCaptureState,
+    },
     hotkey::{clear_hotkey, handle_event as handle_hotkey_event, install_default, set_hotkey, HotkeyState},
     llama_cpp::{
         cleanup_llama_cpp, install_llama_cpp_runtime, is_llama_cpp_runtime_installed,
@@ -80,6 +83,7 @@ pub fn run() {
     builder
         .manage(HotkeyState::default())
         .manage(FnHotkeyState::default())
+        .manage(HotkeyCaptureState::default())
         .manage(CancelHotkeyState::default())
         .manage(TargetWindowState::default())
         .manage(WhisperServerState::default())
@@ -136,6 +140,9 @@ pub fn run() {
             open_devtools,
             open_main_devtools,
             open_input_monitoring_settings,
+            start_hotkey_capture,
+            stop_hotkey_capture,
+            request_input_monitoring,
             update_install_environment,
             ensure_engine_ready,
             unload_engine,

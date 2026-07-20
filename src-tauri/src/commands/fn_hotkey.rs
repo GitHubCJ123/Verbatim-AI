@@ -57,9 +57,23 @@ pub struct FnHotkeyState {
     _unused: Mutex<()>,
 }
 
+/// State for the settings **hotkey-capture** tap. This is a listen-only
+/// CGEventTap that watches only the `fn` (SecondaryFn) flag and emits
+/// dedicated `hotkey-capture:fn-down` / `hotkey-capture:fn-up` events so
+/// the settings recorder can bind `fn` WITHOUT triggering real dictation.
+/// Deliberately separate from [`FnHotkeyState`] so the two taps stay
+/// independent and each idempotent.
+#[derive(Default)]
+pub struct HotkeyCaptureState {
+    #[cfg(target_os = "macos")]
+    active: Mutex<Option<macos::SendRunLoop>>,
+    #[cfg(not(target_os = "macos"))]
+    _unused: Mutex<()>,
+}
+
 #[cfg(target_os = "macos")]
 mod macos {
-    use super::{FnHotkeyState, Trigger};
+    use super::{FnHotkeyState, HotkeyCaptureState, Trigger};
     use core_foundation::runloop::{kCFRunLoopCommonModes, CFRunLoop};
     use core_graphics::event::{
         CGEventFlags, CGEventTap, CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement,
@@ -268,6 +282,156 @@ mod macos {
             }
         }
     }
+
+    /// Silently preflight Input Monitoring and, if granted, start a
+    /// listen-only capture tap that watches ONLY the `fn` (SecondaryFn)
+    /// flag and emits `hotkey-capture:fn-down` / `hotkey-capture:fn-up`.
+    /// Idempotent: a no-op returning `Ok(())` if a capture tap is live.
+    ///
+    /// Unlike [`start`], this NEVER calls `CGRequestListenEventAccess` —
+    /// the recorder shows its own guidance and the explicit
+    /// `request_input_monitoring` command owns the TCC prompt.
+    pub fn start_capture<R: Runtime>(
+        app: AppHandle<R>,
+        state: &HotkeyCaptureState,
+    ) -> Result<(), String> {
+        {
+            // Already capturing — idempotent no-op, don't start a second tap.
+            let guard = state.active.lock().map_err(|e| e.to_string())?;
+            if guard.is_some() {
+                return Ok(());
+            }
+        }
+
+        // Silent preflight ONLY — never auto-prompt here (deliberate).
+        if unsafe { !CGPreflightListenEventAccess() } {
+            return Err("needs-input-monitoring".to_string());
+        }
+
+        let (tx, rx) = mpsc::channel::<Result<SendRunLoop, String>>();
+
+        std::thread::Builder::new()
+            .name("hotkey-capture-tap".into())
+            .spawn(move || {
+                let is_down = Cell::new(false);
+                // Hold the tap so the callback can re-enable it after macOS
+                // disables it (kCGEventTapDisabledBy*). The callback keeps a
+                // Weak reference to avoid an Rc cycle, so the tap is still
+                // dropped when `stop_capture` stops the run loop.
+                let tap_holder: Rc<RefCell<Option<CGEventTap<'static>>>> =
+                    Rc::new(RefCell::new(None));
+                let tap_weak: Weak<RefCell<Option<CGEventTap<'static>>>> =
+                    Rc::downgrade(&tap_holder);
+                // SAFETY: the tap is installed only on THIS thread's run loop
+                // and is dropped when this thread unwinds (after
+                // `stop_capture`), so its non-Send callback state never crosses
+                // threads or outlives the tap. Mirrors `CGEventTap::with_enabled`,
+                // but keeps the tap reachable so the callback can re-enable it.
+                let created = unsafe {
+                    CGEventTap::new_unchecked(
+                        CGEventTapLocation::Session,
+                        CGEventTapPlacement::HeadInsertEventTap,
+                        CGEventTapOptions::ListenOnly,
+                        vec![CGEventType::FlagsChanged],
+                        move |_proxy, etype, event| {
+                            if matches!(
+                                etype,
+                                CGEventType::TapDisabledByTimeout
+                                    | CGEventType::TapDisabledByUserInput
+                            ) {
+                                if let Some(holder) = tap_weak.upgrade() {
+                                    if let Some(tap) = holder.borrow().as_ref() {
+                                        tap.enable();
+                                    }
+                                }
+                                // A lost release edge would strand the
+                                // recorder's pending capture — synthesize an
+                                // up if `fn` was mid-hold.
+                                if is_down.get() {
+                                    is_down.set(false);
+                                    let _ = app.emit("hotkey-capture:fn-up", ());
+                                }
+                                return CallbackResult::Keep;
+                            }
+                            // Watch ONLY the `fn` (SecondaryFn) flag.
+                            let now = event
+                                .get_flags()
+                                .contains(CGEventFlags::CGEventFlagSecondaryFn);
+                            if now != is_down.get() {
+                                is_down.set(now);
+                                let name = if now {
+                                    "hotkey-capture:fn-down"
+                                } else {
+                                    "hotkey-capture:fn-up"
+                                };
+                                let _ = app.emit(name, ());
+                            }
+                            CallbackResult::Keep
+                        },
+                    )
+                };
+
+                match created {
+                    Ok(tap) => match tap.mach_port().create_runloop_source(0) {
+                        Ok(loop_source) => {
+                            CFRunLoop::get_current()
+                                .add_source(&loop_source, unsafe { kCFRunLoopCommonModes });
+                            tap.enable();
+                            *tap_holder.borrow_mut() = Some(tap);
+                            let _ = tx.send(Ok(SendRunLoop(CFRunLoop::get_current())));
+                            CFRunLoop::run_current();
+                            // Run loop stopped by `stop_capture`: drop the tap,
+                            // which invalidates the mach port.
+                            drop(tap_holder);
+                        }
+                        Err(()) => {
+                            let _ = tx.send(Err(
+                                "Couldn't attach the hotkey-capture event tap to the run loop."
+                                    .into(),
+                            ));
+                        }
+                    },
+                    Err(()) => {
+                        let _ = tx.send(Err(
+                            "Couldn't create the hotkey-capture event tap. If you just \
+                             granted Input Monitoring, relaunch the app and try again."
+                                .into(),
+                        ));
+                    }
+                }
+            })
+            .map_err(|e| e.to_string())?;
+
+        let runloop = rx
+            .recv()
+            .map_err(|_| "hotkey-capture listener thread died during startup".to_string())??;
+        let mut guard = state.active.lock().map_err(|e| e.to_string())?;
+        // Defensive: if a concurrent start_capture raced past the initial
+        // idempotency check and already installed a tap, stop the previous
+        // run loop instead of leaking its thread + tap.
+        if let Some(old) = guard.replace(runloop) {
+            old.0.stop();
+        }
+        Ok(())
+    }
+
+    /// Tear down the capture tap if running. Tolerant/idempotent — a
+    /// harmless no-op when nothing is live.
+    pub fn stop_capture(state: &HotkeyCaptureState) {
+        if let Ok(mut guard) = state.active.lock() {
+            if let Some(runloop) = guard.take() {
+                runloop.0.stop();
+            }
+        }
+    }
+
+    /// Explicit TCC path: show the Input Monitoring prompt (first time)
+    /// and add the app to the System Settings list.
+    pub fn request_input_monitoring() {
+        unsafe {
+            CGRequestListenEventAccess();
+        }
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -309,4 +473,47 @@ pub fn open_input_monitoring_settings() -> Result<(), String> {
     }
     #[cfg(not(target_os = "macos"))]
     Err("macOS only.".into())
+}
+
+/// Start the settings hotkey-capture tap (macOS). Silently preflights
+/// Input Monitoring and returns `Err("needs-input-monitoring")` when not
+/// granted (no auto-prompt). Idempotent; no-op on non-macOS.
+#[tauri::command]
+pub fn start_hotkey_capture<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: tauri::State<'_, HotkeyCaptureState>,
+) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        macos::start_capture(app, state.inner())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (app, state);
+        Ok(())
+    }
+}
+
+/// Stop/tear down the settings hotkey-capture tap. Tolerant/idempotent —
+/// safe to call after a failed start, after commit, after cancel, or
+/// during unmount. No-op on non-macOS.
+#[tauri::command]
+pub fn stop_hotkey_capture(state: tauri::State<'_, HotkeyCaptureState>) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        macos::stop_capture(state.inner());
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = state;
+    Ok(())
+}
+
+/// Explicitly request the Input Monitoring permission — shows the TCC
+/// prompt the first time and adds the app to the System Settings list.
+/// No-op on non-macOS.
+#[tauri::command]
+pub fn request_input_monitoring() -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    macos::request_input_monitoring();
+    Ok(())
 }

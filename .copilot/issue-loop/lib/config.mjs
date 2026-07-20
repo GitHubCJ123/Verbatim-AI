@@ -73,9 +73,10 @@ export const DEFAULT_CONFIG = {
     readOnlyTools: ["view", "rg", "glob"],
   },
   recovery: {
-    // Off by default: with recovery.enabled=false the loop behaves exactly as
-    // before (single model per phase, blocked gates stop for a human).
-    enabled: false,
+    // On by default: once the loop itself is enabled, a blocked/needs-human
+    // phase attempts bounded multi-model recovery before escalating to a human.
+    // Set to false to restore the original single-model, stop-on-block behavior.
+    enabled: true,
     defaultPolicy: "conservative",
     budgets: {
       maxModelCallsPerIssue: 20,

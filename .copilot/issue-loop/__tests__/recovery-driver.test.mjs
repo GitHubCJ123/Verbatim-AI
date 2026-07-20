@@ -17,11 +17,18 @@ import { isSecuritySensitiveIssue } from "../lib/requirements.mjs";
 // Helpers
 // ---------------------------------------------------------------------------
 
-// Recovery is OFF in DEFAULT_CONFIG; clone and enable it for the enabled-path
-// tests. Callers can further tweak the returned config.
+// Recovery is ON in DEFAULT_CONFIG. enabledConfig() clones it for enabled-path
+// tests; disabledConfig() clones and turns recovery off for the no-op tests.
 function enabledConfig(mutate = () => {}) {
   const config = structuredClone(DEFAULT_CONFIG);
   config.recovery.enabled = true;
+  mutate(config);
+  return config;
+}
+
+function disabledConfig(mutate = () => {}) {
+  const config = structuredClone(DEFAULT_CONFIG);
+  config.recovery.enabled = false;
   mutate(config);
   return config;
 }
@@ -52,8 +59,12 @@ const budget = () =>
 // ---------------------------------------------------------------------------
 
 describe("recoveryEnabled", () => {
-  it("is false when recovery is globally disabled (the default)", () => {
-    expect(recoveryEnabled(DEFAULT_CONFIG, "requirements")).toBe(false);
+  it("is false when recovery is globally disabled", () => {
+    expect(recoveryEnabled(disabledConfig(), "requirements")).toBe(false);
+  });
+
+  it("is true by default (DEFAULT_CONFIG enables recovery)", () => {
+    expect(recoveryEnabled(DEFAULT_CONFIG, "requirements")).toBe(true);
   });
 
   it("is true when enabled and the phase is not explicitly disabled", () => {
@@ -78,7 +89,7 @@ describe("disabled recovery is a no-op", () => {
   it("recoverRequirements returns needs-human without calling runModel", async () => {
     const runModel = vi.fn();
     const { decision } = await recoverRequirements({
-      config: DEFAULT_CONFIG,
+      config: disabledConfig(),
       issue,
       heuristic: "unclear",
       isSecuritySensitive: false,
@@ -96,7 +107,7 @@ describe("disabled recovery is a no-op", () => {
   it("recoverSpecReview returns needs-human without calling runModel", async () => {
     const runModel = vi.fn();
     const { decision } = await recoverSpecReview({
-      config: DEFAULT_CONFIG,
+      config: disabledConfig(),
       issue,
       specText: "SPEC",
       budget: budget(),
@@ -110,7 +121,7 @@ describe("disabled recovery is a no-op", () => {
   it("recoverImplementation returns no model without touching the budget", () => {
     const b = budget();
     const result = recoverImplementation({
-      config: DEFAULT_CONFIG,
+      config: disabledConfig(),
       alreadyTriedModels: ["claude-sonnet-5"],
       budget: b,
     });
@@ -122,7 +133,7 @@ describe("disabled recovery is a no-op", () => {
 
   it("recoverVerification never repairs when disabled and does not reserve budget", () => {
     const b = budget();
-    const result = recoverVerification({ config: DEFAULT_CONFIG, budget: b, attemptsSoFar: 0 });
+    const result = recoverVerification({ config: disabledConfig(), budget: b, attemptsSoFar: 0 });
     expect(result.shouldRepair).toBe(false);
     expect(result.model).toBeNull();
     expect(b.counters.verifierRepairs).toBe(2); // untouched

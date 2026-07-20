@@ -84,7 +84,7 @@
     "readOnlyTools": ["view", "rg", "glob"]
   },
   "recovery": {
-    "enabled": false,
+    "enabled": true,
     "defaultPolicy": "conservative",
     "budgets": {
       "maxModelCallsPerIssue": 20,

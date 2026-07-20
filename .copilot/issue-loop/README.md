@@ -92,8 +92,9 @@ Each phase has a reviewable definition in `.copilot/issue-loop/agents/`. The def
 
 When a phase would otherwise stop for a human (`needs-human`/`blocked`), the loop
 can re-enter that phase and try to recover it with a small roster of
-**different-family AI models** before escalating. Recovery is **opt-in**: with
-`recovery.enabled = false` (the default) the loop behaves exactly as before.
+**different-family AI models** before escalating. Recovery is **on by default**
+once the loop itself is enabled; set `recovery.enabled = false` to restore the
+original single-model behavior (blocked gates stop for a human).
 
 - **Categorized, not one uniform ladder.** Each phase declares a policy under
   `recovery.phases.<id>` (`allowedTiers`, `securityVeto`, `branchStrategy`, ...).

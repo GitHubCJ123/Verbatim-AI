@@ -99,8 +99,13 @@ export function isFunctionKeySpec(spec: string): boolean {
   return isSingleKeySpec(spec) && isFunctionKey(spec);
 }
 
+/** Bare modifier-like keys that must stay hold-only (a stray tap shouldn't start dictation). */
+export function isForcedHoldSpec(spec: string): boolean {
+  return spec === "Fn" || spec === "RightCommand";
+}
+
 export function usesHoldToTalk(cfg: HotkeyConfig): boolean {
-  return cfg.pushToTalk || isMacSingleKeySpec(cfg.spec);
+  return isForcedHoldSpec(cfg.spec) || cfg.pushToTalk;
 }
 
 export async function applyHotkey(spec: string): Promise<void> {
@@ -144,18 +149,43 @@ export async function installHotkeyListeners(): Promise<UnlistenFn> {
   void applyHotkey(cfg0.spec).catch(() => {});
   void syncNativeCaptureArm().catch(() => {});
 
-  // Toggle mode tracks "are we currently recording?" across taps.
-  let toggleRecording = false;
-  let holdToTalkRecording = false;
+  // A single serialized recording state machine drives BOTH hold and
+  // toggle modes. Design notes — each guards a real event interleaving:
+  //  - The session's kind (`activeKind`) is captured *synchronously* in the
+  //    non-async down listener, before any `await`, so a fast key release
+  //    that lands while async startup is still in flight is never dropped
+  //    (`pendingStop` records it; we stop as soon as startup resolves).
+  //  - `gen` tags each start attempt; cancel and every fresh start bump it.
+  //    An in-flight `startFlow`/`stopFlow` re-checks `gen` after each await
+  //    and bails if it moved on, so a superseded attempt can never
+  //    double-start or reset a newer session's state.
+  //  - Stopping keys off the *active session's* `activeKind`, never the
+  //    current config (which the user can change mid-recording).
+  let recState: "idle" | "starting" | "recording" | "stopping" = "idle";
+  let pendingStop = false;
+  let activeKind: "hold" | "toggle" | null = null;
+  let gen = 0;
 
-  const offDown = await listen("hotkey:down", async () => {
-    if (isHotkeyPaused()) return;
-    if (!isOnboardingComplete()) return;
-    const pressedAt = Date.now();
-    const cfg = loadHotkeyConfig();
-    const { mode, activeWindow } = await resolveModeAtPress();
+  const resetState = () => {
+    recState = "idle";
+    pendingStop = false;
+    activeKind = null;
+  };
+
+  async function startFlow(pressedAt: number, myGen: number): Promise<void> {
+    // precondition: recState === 'starting', activeKind set, gen === myGen.
+    let resolved: Awaited<ReturnType<typeof resolveModeAtPress>>;
+    try {
+      resolved = await resolveModeAtPress();
+    } catch {
+      if (gen === myGen) resetState();
+      return;
+    }
+    if (gen !== myGen) return; // superseded (cancel / newer press) during lookup
+    const { mode, activeWindow } = resolved;
     if (!mode) {
       console.warn("[Verbatim AI] no modes available — sign in / hydrate first.");
+      if (gen === myGen) resetState();
       return;
     }
     // Window titles can contain sensitive content — dev builds only.
@@ -166,54 +196,93 @@ export async function installHotkeyListeners(): Promise<UnlistenFn> {
         }`,
       );
     }
-
-    if (usesHoldToTalk(cfg)) {
-      if (holdToTalkRecording) return;
-      holdToTalkRecording = true;
-      preloadWhisperIfNeeded(mode);
+    preloadWhisperIfNeeded(mode);
+    try {
+      await startRecording(mode.name, mode.id, pressedAt);
+    } catch (e) {
+      if (gen === myGen) resetState();
+      // startRecording may have emitted `recording:start` before
+      // failing; stop defensively so the overlay/mic never strands.
       try {
-        await startRecording(mode.name, mode.id, pressedAt);
-      } catch (e) {
-        holdToTalkRecording = false;
-        // startRecording may have armed Esc-to-cancel before failing;
-        // clean up so Escape never lingers globally.
-        await cancelRecording().catch(() => {});
-        throw e;
+        await stopRecording();
+      } catch {
+        /* ignore */
+      }
+      console.error("[Verbatim AI] start failed", e);
+      return;
+    }
+    // Cancel (Escape) or a newer press superseded us mid-startup. The owner
+    // of the current `gen` handles the overlay; don't touch shared state.
+    if (gen !== myGen) return;
+    if (pendingStop) {
+      // A release (hold) or net toggle-off arrived during startup.
+      pendingStop = false;
+      recState = "stopping";
+      try {
+        await stopRecording();
+      } finally {
+        if (gen === myGen) resetState();
       }
     } else {
-      if (toggleRecording) {
-        toggleRecording = false;
-        await stopRecording();
-      } else {
-        toggleRecording = true;
-        preloadWhisperIfNeeded(mode);
-        try {
-          await startRecording(mode.name, mode.id, pressedAt);
-        } catch (e) {
-          toggleRecording = false;
-          await cancelRecording().catch(() => {});
-          throw e;
-        }
-      }
+      recState = "recording";
     }
+  }
+
+  async function stopFlow(myGen: number): Promise<void> {
+    recState = "stopping";
+    try {
+      await stopRecording();
+    } finally {
+      if (gen === myGen) resetState();
+    }
+  }
+
+  const offDown = await listen("hotkey:down", () => {
+    if (isHotkeyPaused()) return;
+    if (!isOnboardingComplete()) return;
+    const pressedAt = Date.now();
+    if (recState === "idle") {
+      // Fresh session — choose hold vs toggle from the *current* config.
+      const kind = usesHoldToTalk(loadHotkeyConfig()) ? "hold" : "toggle";
+      gen += 1;
+      recState = "starting";
+      activeKind = kind;
+      pendingStop = false;
+      void startFlow(pressedAt, gen);
+      return;
+    }
+    // A session is active/in-flight — act on ITS kind, not current config.
+    if (activeKind === "toggle") {
+      if (recState === "recording") {
+        void stopFlow(gen); // toggle-off
+      } else if (recState === "starting") {
+        pendingStop = !pendingStop; // converge to the latest toggle intent
+      }
+      // stopping: already tearing down — ignore.
+    }
+    // activeKind === "hold": extra downs (auto-repeat / re-press) are ignored.
   });
 
-  const offUp = await listen("hotkey:up", async () => {
+  const offUp = await listen("hotkey:up", () => {
     if (isHotkeyPaused()) return;
-    const cfg = loadHotkeyConfig();
-    if (usesHoldToTalk(cfg) && holdToTalkRecording) {
-      holdToTalkRecording = false;
-      await stopRecording();
+    // Only hold sessions stop on release — decide from the session's captured
+    // kind, NOT current config (which can change while a key is held).
+    if (activeKind !== "hold") return;
+    if (recState === "recording") {
+      void stopFlow(gen);
+    } else if (recState === "starting") {
+      // Released before startup resolved — stop as soon as it does.
+      pendingStop = true;
     }
   });
 
   // Global Escape (armed by the recording bridge only while recording)
   // discards the in-progress dictation: no audio saved, overlay hidden,
-  // nothing pasted. Reset both state machines so the next hotkey press
+  // nothing pasted. Reset the state machine so the next hotkey press
   // starts fresh regardless of toggle/hold mode.
   const offCancel = await listen("hotkey:cancel", async () => {
-    toggleRecording = false;
-    holdToTalkRecording = false;
+    gen += 1; // invalidate any in-flight startup so it can't resurrect state
+    resetState();
     await cancelRecording();
   });
 

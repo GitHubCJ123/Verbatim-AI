@@ -18,7 +18,7 @@ import {
   SelectItem,
 } from "../components/ui/Select";
 import { HotkeyRecorder } from "../components/settings/HotkeyRecorder";
-import { applyHotkey, isMacSingleKeySpec, loadHotkeyConfig, saveHotkeyConfig } from "../lib/hotkey";
+import { applyHotkey, isForcedHoldSpec, loadHotkeyConfig, saveHotkeyConfig } from "../lib/hotkey";
 import {
   isAutostartEnabled,
   setAutostart,
@@ -658,7 +658,7 @@ export default function Settings() {
   const location = useLocation();
   const [hotkey, setHotkey] = useState(() => loadHotkeyConfig());
   const [autostart, setAutostartState] = useState(false);
-  const singleKeyHoldToTalk = isMacSingleKeySpec(hotkey.spec);
+  const forcedHold = isForcedHoldSpec(hotkey.spec);
 
   // Tab + row deep-linking for the Cmd+K palette:
   // /settings?tab=recording&highlight=hotkey
@@ -697,7 +697,7 @@ export default function Settings() {
   const handleHotkeyChange = async (spec: string) => {
     try {
       await applyHotkey(spec);
-      setHotkey((h) => ({ ...h, spec, pushToTalk: h.pushToTalk || isMacSingleKeySpec(spec) }));
+      setHotkey((h) => ({ ...h, spec, pushToTalk: h.pushToTalk || isForcedHoldSpec(spec) }));
       toast.success("Hotkey updated", { description: `Now using ${spec}` });
     } catch (e) {
       toast.error("Couldn't register that shortcut", {
@@ -778,14 +778,14 @@ export default function Settings() {
                 id="push-to-talk"
                 title="Push-to-talk"
                 description={
-                  singleKeyHoldToTalk
-                    ? "Single-key macOS shortcuts always record while held."
+                  forcedHold
+                    ? "fn and right ⌘ always record while held, so a stray tap can't start dictation."
                     : "Hold to record. Off = tap to toggle."
                 }
               >
                 <Switch
-                  checked={singleKeyHoldToTalk || hotkey.pushToTalk}
-                  disabled={singleKeyHoldToTalk}
+                  checked={forcedHold || hotkey.pushToTalk}
+                  disabled={forcedHold}
                   onCheckedChange={(checked) => setHotkey((h) => ({ ...h, pushToTalk: checked }))}
                 />
               </SettingRow>

@@ -24,6 +24,8 @@ let historyData = null; // { closedIssues: [] } fetched on demand
 
 const density = localStorage.getItem("vb.density") === "cozy" ? "cozy" : "compact";
 document.body.dataset.density = density;
+if (localStorage.getItem("vb.leftCollapsed") === "1") document.body.classList.add("left-collapsed");
+if (localStorage.getItem("vb.rightCollapsed") === "1") document.body.classList.add("right-collapsed");
 
 const PHASE_SHORT = {
   requirements: "Reqs",
@@ -45,8 +47,10 @@ byId("refreshBtn").addEventListener("click", () => load());
 byId("densityCompact").addEventListener("click", () => setDensity("compact"));
 byId("densityCozy").addEventListener("click", () => setDensity("cozy"));
 byId("helpBtn").addEventListener("click", () => byId("helpPopover").classList.toggle("hidden"));
-byId("collapseRight").addEventListener("click", toggleRightRail);
-byId("showRight").addEventListener("click", toggleRightRail);
+byId("collapseLeft").addEventListener("click", () => toggleRail("left"));
+byId("showLeft").addEventListener("click", () => toggleRail("left"));
+byId("collapseRight").addEventListener("click", () => toggleRail("right"));
+byId("showRight").addEventListener("click", () => toggleRail("right"));
 byId("historyBtn").addEventListener("click", toggleHistory);
 byId("historyClose").addEventListener("click", closeHistory);
 byId("historyBackdrop").addEventListener("click", closeHistory);
@@ -701,6 +705,8 @@ function onKeydown(e) {
   if (typing) return;
   if (e.key === "?" || (e.shiftKey && e.key === "/")) { e.preventDefault(); byId("helpPopover").classList.toggle("hidden"); return; }
   if (e.key.toLowerCase() === "h") { e.preventDefault(); toggleHistory(); return; }
+  if (e.key === "[") { e.preventDefault(); toggleRail("left"); return; }
+  if (e.key === "]") { e.preventDefault(); toggleRail("right"); return; }
   if (e.key === "/") { e.preventDefault(); byId("issueFilters").querySelector(".filter-chip")?.focus(); return; }
   if (e.key.toLowerCase() === "r") { e.preventDefault(); void load(); return; }
   if (e.key.toLowerCase() === "s") { e.preventDefault(); markInteraction(); scanAll = !scanAll; render(); return; }
@@ -733,17 +739,11 @@ function setDensityButtons() {
   byId("densityCompact").classList.toggle("is-on", document.body.dataset.density === "compact");
   byId("densityCozy").classList.toggle("is-on", document.body.dataset.density === "cozy");
 }
-function toggleRightRail() {
-  const rail = byId("rightRail");
-  const showBtn = byId("showRight");
-  const hidden = rail.classList.toggle("forced-open");
-  // On wide screens the rail is in the grid; the button hides/shows it.
-  if (window.matchMedia("(max-width: 1280px)").matches) {
-    showBtn.classList.toggle("hidden", hidden);
-  } else {
-    rail.classList.toggle("hidden");
-    showBtn.classList.toggle("hidden", !rail.classList.contains("hidden"));
-  }
+function toggleRail(side) {
+  const cls = side === "left" ? "left-collapsed" : "right-collapsed";
+  const collapsed = document.body.classList.toggle(cls);
+  localStorage.setItem(`vb.${side}Collapsed`, collapsed ? "1" : "0");
+  byId(side === "left" ? "collapseLeft" : "collapseRight")?.setAttribute("aria-expanded", String(!collapsed));
 }
 
 // ---------------------------------------------------------------------------

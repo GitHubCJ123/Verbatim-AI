@@ -36,6 +36,7 @@
       <aside class="rail rail-left" aria-label="Issues">
         <div class="rail-head">
           <span class="rail-title">Issues <span id="issueCount" class="rail-count"></span></span>
+          <button id="collapseLeft" class="btn btn-mini" type="button" aria-expanded="true" title="Collapse issues ([)">Hide</button>
         </div>
         <div class="filters" id="issueFilters" role="tablist" aria-label="Issue filters"></div>
         <div class="rail-scroll" id="issueList" role="listbox" aria-label="Issues" tabindex="0"></div>
@@ -54,7 +55,8 @@
       </aside>
     </main>
 
-    <button id="showRight" class="show-right hidden" type="button" aria-label="Show context">Context</button>
+    <button id="showLeft" class="show-left" type="button" aria-label="Show issues">Issues</button>
+    <button id="showRight" class="show-right" type="button" aria-label="Show context">Context</button>
 
     <div id="helpPopover" class="help-popover hidden" role="dialog" aria-label="Keyboard shortcuts">
       <div class="help-title">Keyboard shortcuts</div>
@@ -64,6 +66,7 @@
         <li><kbd>R</kbd> refresh</li>
         <li><kbd>/</kbd> focus filter</li>
         <li><kbd>S</kbd> scan all phases</li>
+        <li><kbd>[</kbd><kbd>]</kbd> collapse issues / context</li>
         <li><kbd>H</kbd> history (closed issues / PRs)</li>
         <li><kbd>Esc</kbd> close</li>
       </ul>

@@ -1,26 +1,21 @@
 /**
- * HotkeyRecorder — focusable widget that captures a keyboard
- * combination from the user and returns its Tauri shortcut spec
- * string (e.g. "CommandOrControl+Space", "Alt+F1").
- *
- * Build-up UX: modifiers appear in the field as soon as you press them.
- * Press a non-modifier next to commit. Click again to start over.
- *
- * "Single key" dropdown offers fn, right ⌘ (macOS only), and
- * function keys (all platforms) as a one-click alternative to recording.
+ * HotkeyRecorder — one control that temporarily clears the active global
+ * shortcut, then captures either a keyboard combination or a supported
+ * single key. On macOS, native capture events add support for bare fn.
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { Kbd } from "../ui/Kbd";
 import { Button } from "../ui/Button";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-} from "../ui/Select";
 import { cn } from "../../lib/utils";
-import { applyHotkey, clearHotkey, isFunctionKey } from "../../lib/hotkey";
+import {
+  applyHotkey,
+  clearHotkey,
+  isFunctionKey,
+  IS_MAC,
+} from "../../lib/hotkey";
+import { setHotkeyPaused } from "../../lib/preferences";
 import { toast } from "../ui/Toast";
 
 interface HotkeyRecorderProps {
@@ -28,8 +23,7 @@ interface HotkeyRecorderProps {
   onChange: (spec: string) => void;
 }
 
-const IS_MAC =
-  typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
+const FN_HINT_DISMISSED = "sw.hotkey.fnHintDismissed";
 
 const MODIFIER_LABEL: Record<string, string> = IS_MAC
   ? {
@@ -47,220 +41,400 @@ const MODIFIER_LABEL: Record<string, string> = IS_MAC
       Shift: "Shift",
       Alt: "Alt",
       Super: "Win",
+      RightCommand: "right ⌘",
     };
 
-// Function keys offered in the "Single key" dropdown (all platforms).
-const FUNCTION_KEYS = [
-  "F1", "F2", "F3", "F4", "F5", "F6",
-  "F7", "F8", "F9", "F10", "F11", "F12",
-];
-
 function parts(spec: string): string[] {
-  return spec.split("+").map((p) => p.trim()).filter(Boolean);
+  return spec
+    .split("+")
+    .map((part) => part.trim())
+    .filter(Boolean);
 }
 
 function modifierFromEvent(e: KeyboardEvent): string | null {
-  if (e.key === "Control" || e.code === "ControlLeft" || e.code === "ControlRight") return "Control";
-  if (e.key === "Shift" || e.code === "ShiftLeft" || e.code === "ShiftRight") return "Shift";
-  if (e.key === "Alt" || e.code === "AltLeft" || e.code === "AltRight") return "Alt";
-  if (e.key === "Meta" || e.key === "OS" || e.code === "MetaLeft" || e.code === "MetaRight") return "Super";
+  if (e.key === "Control" || e.code === "ControlLeft" || e.code === "ControlRight") {
+    return "Control";
+  }
+  if (e.key === "Shift" || e.code === "ShiftLeft" || e.code === "ShiftRight") {
+    return "Shift";
+  }
+  if (e.key === "Alt" || e.code === "AltLeft" || e.code === "AltRight") {
+    return "Alt";
+  }
+  if (
+    e.key === "Meta" ||
+    e.key === "OS" ||
+    e.code === "MetaLeft" ||
+    e.code === "MetaRight"
+  ) {
+    return "Super";
+  }
   return null;
 }
 
-// Returns the canonical main-key name (non-modifier) or null.
 function mainKeyFromEvent(e: KeyboardEvent): string | null {
   const key = e.key;
   if (key === " " || e.code === "Space") return "Space";
   if (e.code?.startsWith("Arrow")) return e.code.replace("Arrow", "");
   if (key.length === 1) return key.toUpperCase();
   if (key.startsWith("Arrow")) return key.replace("Arrow", "");
-  if (key === "Escape" || key === "Tab" || key === "Enter" || key === "Backspace") return null;
-  // Function keys (F1, F12, etc.) come through as multi-char e.key.
+  if (key === "Escape" || key === "Tab" || key === "Enter" || key === "Backspace") {
+    return null;
+  }
   if (key.length > 1) return key;
   return null;
 }
 
-export function HotkeyRecorder({ value, onChange }: HotkeyRecorderProps) {
-  const [recording, setRecording] = useState(false);
-  // Pending modifiers accumulated as the user presses keys.
-  const [pendingMods, setPendingMods] = useState<string[]>([]);
-  const [committed, setCommitted] = useState<string | null>(null);
-  const committedRef = useRef<string | null>(null);
+interface CaptureCallbacks {
+  onRecordingChange: (recording: boolean) => void;
+  onBusyChange: (busy: boolean) => void;
+  onPendingModifiersChange: (modifiers: string[]) => void;
+  onReset: () => void;
+  onCommit: (spec: string) => void;
+  onFnCaptureUnavailable: () => void;
+  onError: (message: string) => void;
+}
 
-  const handleKey = useCallback(
-    (e: KeyboardEvent) => {
-      if (!recording) return;
-      e.preventDefault();
-      e.stopPropagation();
+/**
+ * Owns one capture transaction. Keeping the teardown and event guards here
+ * makes native fn events, WebView key events, cancel, and unmount share the
+ * same restore path.
+ */
+export class HotkeyCaptureSession {
+  private done = true;
+  private prevSpec = "";
+  private pendingFn = false;
+  private pendingModifiers: string[] = [];
+  private unlisteners: UnlistenFn[] = [];
+  private clearInFlight: Promise<void> | null = null;
+  private nativeStartInFlight: Promise<void> | null = null;
+  private cleanupInFlight: Promise<void> | null = null;
+  private paused = false;
 
-      if (e.key === "Escape") {
-        setRecording(false);
-        setPendingMods([]);
-        setCommitted(null);
-        committedRef.current = null;
-        return;
-      }
+  constructor(private readonly callbacks: CaptureCallbacks) {}
 
-      // Modifier key pressed — add to pending list (if not already there).
-      const mod = modifierFromEvent(e);
-      if (mod) {
-        setPendingMods((mods) => (mods.includes(mod) ? mods : [...mods, mod]));
-        return;
-      }
+  private readonly handleKeydown = (e: KeyboardEvent) => {
+    if (this.done) return;
+    e.preventDefault();
+    e.stopPropagation();
 
-      // Non-modifier — commit if we have at least one modifier. On macOS,
-      // single-key press-and-hold is allowed for push-to-talk; on every
-      // platform a lone function key (e.g. F6) is allowed as a single-key
-      // hotkey.
-      const mainKey = mainKeyFromEvent(e);
-      if (!mainKey) return;
+    // A WebView key means this is not a bare-fn gesture. This deliberately
+    // runs before Escape/modifier handling so a late fn-up cannot win.
+    this.pendingFn = false;
 
-      // Pull mods from BOTH the event state (e.ctrlKey etc.) and the
-      // accumulated pending list — Windows IME / global hotkeys may
-      // strip the modifier flag from a follow-up keystroke.
-      setPendingMods((accumulated) => {
-        const all = new Set<string>(accumulated);
-        if (e.ctrlKey) all.add("Control");
-        if (e.metaKey) all.add("Super");
-        if (e.shiftKey) all.add("Shift");
-        if (e.altKey) all.add("Alt");
-        if (all.size === 0 && !IS_MAC && !isFunctionKey(mainKey)) {
-          // No modifier and not a function key — not a usable global
-          // shortcut on non-macOS (a bare letter/Space would hijack
-          // ordinary typing). Keep recording.
-          return accumulated;
-        }
-        const spec = all.size === 0 ? mainKey : [...all, mainKey].join("+");
-        committedRef.current = spec;
-        setCommitted(spec);
-        setRecording(false);
-        onChange(spec);
-        return [];
-      });
-    },
-    [recording, onChange],
-  );
-
-  useEffect(() => {
-    if (!recording) return;
-    window.addEventListener("keydown", handleKey, true);
-    return () => {
-      window.removeEventListener("keydown", handleKey, true);
-      // Re-register whatever the user committed (or fall back to what
-      // they had before they opened the recorder).
-      const spec = committedRef.current ?? value;
-      if (spec) void applyHotkey(spec).catch(() => {});
-    };
-  }, [recording, handleKey, value]);
-
-  // Shared handler for Input-Monitoring-gated single keys (fn, right ⌘).
-  // fn / right ⌘ never produce a keydown in the WebView, so they can't be
-  // captured by the recorder — the "Single key" dropdown provides the path.
-  // The Rust side runs a flags-changed event tap (fn_hotkey.rs) and needs
-  // the Input Monitoring permission.
-  const applyInputMonitoringKey = async (spec: string, label: string) => {
-    try {
-      await applyHotkey(spec);
-      committedRef.current = spec;
-      setCommitted(spec);
-      onChange(spec);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      if (msg.includes("needs-input-monitoring")) {
-        toast.error("Input Monitoring permission needed", {
-          description:
-            "Enable Verbatim AI under System Settings → Privacy & Security → " +
-            `Input Monitoring (opening now), then relaunch the app and pick ${label} again.`,
-        });
-        void invoke("open_input_monitoring_settings").catch(() => {});
-      } else {
-        toast.error(`Couldn't enable the ${label} key`, { description: msg });
-      }
+    if (e.key === "Escape") {
+      void this.cleanup().catch((error) => this.reportError(error));
+      return;
     }
+
+    const modifier = modifierFromEvent(e);
+    if (modifier) {
+      if (!this.pendingModifiers.includes(modifier)) {
+        this.pendingModifiers = [...this.pendingModifiers, modifier];
+        this.callbacks.onPendingModifiersChange(this.pendingModifiers);
+      }
+      return;
+    }
+
+    const mainKey = mainKeyFromEvent(e);
+    if (!mainKey) return;
+
+    const allModifiers = new Set(this.pendingModifiers);
+    if (e.ctrlKey) allModifiers.add("Control");
+    if (e.metaKey) allModifiers.add("Super");
+    if (e.shiftKey) allModifiers.add("Shift");
+    if (e.altKey) allModifiers.add("Alt");
+
+    // Reject a bare alphanumeric/Space key on ALL platforms: registered as a
+    // global shortcut it would hijack that key system-wide. Legitimate
+    // single-key hotkeys are function keys (here) and fn / right-⌘ (native).
+    if (allModifiers.size === 0 && !isFunctionKey(mainKey)) return;
+
+    const spec =
+      allModifiers.size === 0
+        ? mainKey
+        : [...allModifiers, mainKey].join("+");
+    void this.commit(spec);
   };
 
-  const handleSingleKey = async (val: string) => {
-    if (!val) return;
-    if (val === "Fn") {
-      await applyInputMonitoringKey("Fn", "fn");
-    } else if (val === "RightCommand") {
-      await applyInputMonitoringKey("RightCommand", "right ⌘");
-    } else {
-      // Plain function key — no special permission needed.
-      try {
-        await applyHotkey(val);
-        committedRef.current = val;
-        setCommitted(val);
-        onChange(val);
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        toast.error(`Couldn't enable ${val}`, { description: msg });
+  private readonly handleFnDown = () => {
+    if (this.done) return;
+    this.pendingFn = true;
+  };
+
+  private readonly handleFnUp = () => {
+    if (this.done || !this.pendingFn) return;
+    this.pendingFn = false;
+    void this.commit("Fn");
+  };
+
+  async start(prevSpec: string): Promise<void> {
+    if (!this.done || this.cleanupInFlight) return;
+
+    this.done = false;
+    this.prevSpec = prevSpec;
+    this.pendingFn = false;
+    this.pendingModifiers = [];
+    this.callbacks.onReset();
+    this.callbacks.onBusyChange(true);
+
+    const clear = clearHotkey();
+    this.clearInFlight = clear;
+    try {
+      await clear;
+    } catch (error) {
+      await this.cleanup().catch(() => {});
+      this.reportError(error);
+      return;
+    } finally {
+      if (this.clearInFlight === clear) this.clearInFlight = null;
+    }
+
+    // Cancel/unmount may have arrived while clear_hotkey was in flight.
+    if (this.done) return;
+
+    try {
+      setHotkeyPaused(true);
+      this.paused = true;
+      window.addEventListener("keydown", this.handleKeydown, true);
+      this.callbacks.onRecordingChange(true);
+      this.callbacks.onBusyChange(false);
+    } catch (error) {
+      await this.cleanup().catch(() => {});
+      this.reportError(error);
+      return;
+    }
+
+    if (!IS_MAC) return;
+
+    let subscriptions: UnlistenFn[];
+    try {
+      subscriptions = await Promise.all([
+        listen("hotkey-capture:fn-down", this.handleFnDown),
+        listen("hotkey-capture:fn-up", this.handleFnUp),
+      ]);
+    } catch {
+      if (!this.done) this.callbacks.onFnCaptureUnavailable();
+      return;
+    }
+    if (this.done) {
+      subscriptions.forEach((unlisten) => unlisten());
+      return;
+    }
+    this.unlisteners.push(...subscriptions);
+
+    const nativeStart = invoke<void>("start_hotkey_capture");
+    this.nativeStartInFlight = nativeStart;
+    try {
+      await nativeStart;
+    } catch {
+      if (!this.done) this.callbacks.onFnCaptureUnavailable();
+    } finally {
+      if (this.nativeStartInFlight === nativeStart) {
+        this.nativeStartInFlight = null;
       }
     }
+  }
+
+  async cleanup(committedSpec?: string): Promise<void> {
+    if (this.cleanupInFlight) return this.cleanupInFlight;
+    if (this.done && !this.clearInFlight && !this.paused) return;
+
+    this.done = true;
+    this.pendingFn = false;
+    this.callbacks.onRecordingChange(false);
+    this.callbacks.onBusyChange(true);
+    this.callbacks.onPendingModifiersChange([]);
+
+    const restoreSpec = committedSpec ?? this.prevSpec;
+    const previousSpec = this.prevSpec;
+    const pendingClear = this.clearInFlight;
+    const pendingNativeStart = this.nativeStartInFlight;
+
+    const cleanup = (async () => {
+      let restoreError: unknown = null;
+      try {
+        await pendingClear?.catch(() => {});
+        await pendingNativeStart?.catch(() => {});
+      } finally {
+        window.removeEventListener("keydown", this.handleKeydown, true);
+        this.unlisteners.splice(0).forEach((unlisten) => unlisten());
+        if (IS_MAC) {
+          await invoke("stop_hotkey_capture").catch(() => {});
+        }
+        if (this.paused) {
+          setHotkeyPaused(false);
+          this.paused = false;
+        }
+        if (restoreSpec) {
+          try {
+            await applyHotkey(restoreSpec);
+          } catch (error) {
+            // A failed new binding must not leave the user without the
+            // shortcut that was active before capture began.
+            if (committedSpec && previousSpec && previousSpec !== restoreSpec) {
+              await applyHotkey(previousSpec).catch(() => {});
+            }
+            restoreError = error;
+          }
+        }
+      }
+      // Surface a restore failure OUTSIDE the finally block: throwing from
+      // within finally (no-unsafe-finally) would mask other control flow.
+      if (restoreError) throw restoreError;
+    })();
+
+    this.cleanupInFlight = cleanup;
+    try {
+      await cleanup;
+    } finally {
+      if (this.cleanupInFlight === cleanup) this.cleanupInFlight = null;
+      this.callbacks.onBusyChange(false);
+    }
+  }
+
+  private async commit(spec: string): Promise<void> {
+    if (this.done) return;
+    try {
+      await this.cleanup(spec);
+      this.callbacks.onCommit(spec);
+    } catch (error) {
+      this.reportError(error);
+    }
+  }
+
+  private reportError(error: unknown): void {
+    this.callbacks.onError(error instanceof Error ? error.message : String(error));
+  }
+}
+
+function isFnHintDismissed(): boolean {
+  return (
+    typeof localStorage !== "undefined" &&
+    localStorage.getItem(FN_HINT_DISMISSED) === "1"
+  );
+}
+
+export function HotkeyRecorder({ value, onChange }: HotkeyRecorderProps) {
+  const [recording, setRecording] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [pendingModifiers, setPendingModifiers] = useState<string[]>([]);
+  const [committed, setCommitted] = useState<string | null>(null);
+  const [showFnHint, setShowFnHint] = useState(false);
+  const mountedRef = useRef(true);
+  const valueRef = useRef(value);
+  const onChangeRef = useRef(onChange);
+  valueRef.current = value;
+  onChangeRef.current = onChange;
+
+  const sessionRef = useRef<HotkeyCaptureSession | null>(null);
+  if (!sessionRef.current) {
+    const ifMounted = <T extends unknown[]>(callback: (...args: T) => void) =>
+      (...args: T) => {
+        if (mountedRef.current) callback(...args);
+      };
+
+    sessionRef.current = new HotkeyCaptureSession({
+      onRecordingChange: ifMounted(setRecording),
+      onBusyChange: ifMounted(setBusy),
+      onPendingModifiersChange: ifMounted(setPendingModifiers),
+      onReset: ifMounted(() => {
+        setPendingModifiers([]);
+        setCommitted(null);
+      }),
+      onCommit: (spec) => {
+        // Always propagate the committed spec — even if the recorder unmounted
+        // mid-commit — so the saved preference can't desync from the hotkey
+        // that cleanup() already applied natively.
+        if (mountedRef.current) setCommitted(spec);
+        onChangeRef.current(spec);
+      },
+      onFnCaptureUnavailable: ifMounted(() => {
+        if (!isFnHintDismissed()) setShowFnHint(true);
+      }),
+      onError: ifMounted((message) => {
+        toast.error("Couldn't change the shortcut", { description: message });
+      }),
+    });
+  }
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      void sessionRef.current?.cleanup().catch(() => {});
+    };
+  }, []);
+
+  const dismissFnHint = () => {
+    localStorage.setItem(FN_HINT_DISMISSED, "1");
+    setShowFnHint(false);
+  };
+
+  const enableInputMonitoring = async () => {
+    try {
+      await invoke("request_input_monitoring");
+    } catch {
+      // System Settings is still useful when the explicit prompt cannot run.
+    }
+    await invoke("open_input_monitoring_settings").catch(() => {});
+    dismissFnHint();
   };
 
   const displayed = committed ?? value;
-  const tokens = recording && pendingMods.length > 0 ? pendingMods : parts(displayed);
+  const tokens =
+    recording && pendingModifiers.length > 0
+      ? pendingModifiers
+      : recording
+        ? []
+        : parts(displayed);
 
-  // One concise helper line beneath the controls, appropriate to the
-  // current selection. Shown only when there is something useful to say.
-  const helperContent =
-    displayed === "Fn" ? (
-      <p className="max-w-[280px] text-right text-[11px] leading-snug text-text-muted">
-        Hold <Kbd>fn</Kbd> to talk · If it opens the emoji picker, set System
-        Settings → Keyboard → &ldquo;Press 🌐 key to&rdquo; → Do Nothing.
-      </p>
-    ) : displayed === "RightCommand" ? (
-      <p className="max-w-[280px] text-right text-[11px] leading-snug text-text-muted">
-        Hold <Kbd>right ⌘</Kbd> to talk · Input Monitoring required; left ⌘ and
-        normal shortcuts are unaffected.
-      </p>
-    ) : displayed && parts(displayed).length === 1 ? (
-      <p className="max-w-[280px] text-right text-[11px] leading-snug text-text-muted">
-        Hold to talk.
-      </p>
-    ) : null;
+  const helperContent = recording ? (
+    <p className="max-w-[320px] text-right text-[11px] leading-snug text-text-muted">
+      Press a key or combination… Current shortcut is temporarily cleared.
+    </p>
+  ) : displayed === "Fn" ? (
+    <p className="max-w-[280px] text-right text-[11px] leading-snug text-text-muted">
+      Hold <Kbd>fn</Kbd> to talk · If it opens the emoji picker, set System
+      Settings → Keyboard → &ldquo;Press 🌐 key to&rdquo; → Do Nothing.
+    </p>
+  ) : displayed && parts(displayed).length === 1 ? (
+    <p className="max-w-[280px] text-right text-[11px] leading-snug text-text-muted">
+      Hold to talk.
+    </p>
+  ) : null;
 
   return (
     <div className="flex flex-col items-end gap-1.5">
       <div className="flex items-center gap-2">
-        {/* Primary capture button */}
         <button
           type="button"
-          onClick={async () => {
-            // Free the active global shortcut so its keys reach the
-            // recorder instead of triggering the recording pipeline.
-            try {
-              await clearHotkey();
-            } catch {
-              /* ignore */
-            }
-            setPendingMods([]);
-            setCommitted(null);
-            committedRef.current = null;
-            setRecording(true);
-          }}
+          disabled={recording || busy}
+          onClick={() => void sessionRef.current?.start(valueRef.current)}
           className={cn(
-            "flex h-9 min-w-[160px] items-center justify-center gap-1 rounded-md border px-3 transition-colors",
+            "flex h-9 min-w-[160px] items-center justify-center gap-1 rounded-md border px-3 transition-colors disabled:cursor-default",
             recording
               ? "border-accent-solid/60 bg-accent-solid/10 text-accent-start"
-              : "border-border-subtle bg-bg-base text-text-primary hover:border-border-strong",
+              : "border-border-subtle bg-bg-base text-text-primary hover:border-border-strong disabled:opacity-70",
           )}
+          aria-label={recording ? "Recording shortcut" : "Record shortcut"}
         >
           {tokens.length === 0 ? (
             recording ? (
               <span className="text-xs text-text-secondary">
-                {IS_MAC
-                  ? "Press a key or shortcut…"
-                  : "Press a shortcut or function key (e.g. F6)…"}
+                Press a key or combination…
               </span>
+            ) : busy ? (
+              <span className="text-xs text-text-muted">Updating…</span>
             ) : (
               <span className="text-xs text-text-muted">No shortcut</span>
             )
           ) : (
             <>
-              {tokens.map((t, i) => (
-                <Kbd key={i}>{MODIFIER_LABEL[t] ?? t}</Kbd>
+              {tokens.map((token, index) => (
+                <Kbd key={`${token}-${index}`}>
+                  {MODIFIER_LABEL[token] ?? token}
+                </Kbd>
               ))}
               {recording && (
                 <span className="ml-1 text-xs text-text-muted">+ key…</span>
@@ -269,48 +443,49 @@ export function HotkeyRecorder({ value, onChange }: HotkeyRecorderProps) {
           )}
         </button>
 
-        {recording ? (
+        {recording && (
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => {
-              setRecording(false);
-              setPendingMods([]);
-              committedRef.current = null;
-            }}
+            disabled={busy}
+            onClick={() =>
+              void sessionRef.current
+                ?.cleanup()
+                .catch((error) =>
+                  toast.error("Couldn't restore the shortcut", {
+                    description:
+                      error instanceof Error ? error.message : String(error),
+                  }),
+                )
+            }
           >
             Cancel
           </Button>
-        ) : (
-          // "Single key" dropdown — replaces the two loose "Use fn" /
-          // "Use right ⌘" buttons. Offers macOS-specific single keys
-          // (fn, right ⌘) and function keys valid on all platforms.
-          // value="" keeps the trigger label fixed at "Single key".
-          <Select value="" onValueChange={(val) => void handleSingleKey(val)}>
-            <SelectTrigger
-              className="h-9 w-auto gap-1.5 px-3 text-xs text-text-secondary"
-              aria-label="Pick a single key shortcut"
-            >
-              <span>Single key</span>
-            </SelectTrigger>
-            <SelectContent>
-              {IS_MAC && (
-                <>
-                  <SelectItem value="Fn">fn — hold to talk</SelectItem>
-                  <SelectItem value="RightCommand">right ⌘ — hold to talk</SelectItem>
-                </>
-              )}
-              {FUNCTION_KEYS.map((fk) => (
-                <SelectItem key={fk} value={fk}>
-                  {fk}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
         )}
       </div>
 
       {helperContent}
+
+      {showFnHint && !recording && (
+        <p className="max-w-[320px] text-right text-[11px] leading-snug text-text-muted">
+          Pressing fn needs Input Monitoring —{" "}
+          <button
+            type="button"
+            className="text-accent-start hover:underline"
+            onClick={() => void enableInputMonitoring()}
+          >
+            Enable
+          </button>
+          <span aria-hidden="true"> · </span>
+          <button
+            type="button"
+            className="hover:text-text-secondary"
+            onClick={dismissFnHint}
+          >
+            Dismiss
+          </button>
+        </p>
+      )}
     </div>
   );
 }

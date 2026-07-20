@@ -281,6 +281,7 @@ async function applyQuickDefaults() {
     setAiProviderKind("local-whisper");
     setCleanupProviderKind("local-ollama");
     setAiImproveDisabled(true);
+    setLocalWhisperTier("tiny");
   } else {
     setAiProviderKind("cloud");
     setCleanupProviderKind("cloud");
@@ -291,6 +292,28 @@ async function applyQuickDefaults() {
   const ob = useOnboarding.getState();
   ob.setHotkey(cfg.spec);
   ob.setPushToTalk(true);
+}
+
+// Quick Start kicks the on-device model download off in the background so the
+// app is usable as soon as it finishes, without a separate manual step. The
+// download runs in Rust and continues even after onboarding closes; failures
+// surface as a toast with a retry pointer instead of leaving the user with a
+// silent, unusable app.
+async function setupLocalModelInBackground() {
+  try {
+    toast.success("Setting up local dictation…", {
+      description: "Downloading a small on-device model so dictation works offline.",
+    });
+    if (!(await isWhisperRuntimeInstalled())) await installWhisperRuntime();
+    await downloadLocalModel("tiny");
+    toast.success("Local model ready", { description: "You can dictate now." });
+  } catch (e) {
+    toast.error("Couldn't finish local model setup", {
+      description:
+        (e instanceof Error ? e.message : String(e)) +
+        " — retry from Settings → AI model.",
+    });
+  }
 }
 
 function Welcome() {
@@ -317,6 +340,7 @@ function Welcome() {
         return;
       }
       await applyQuickDefaults();
+      if (isLocalMode()) void setupLocalModelInBackground();
       setStep(TOTAL_STEPS - 1); // straight to "You're all set"
     } catch (e) {
       toast.error("Couldn't apply the default setup", {

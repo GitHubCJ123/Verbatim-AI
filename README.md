@@ -108,9 +108,9 @@ To trigger it:
 4. Run `pnpm automation:issues -- --once --config .copilot/issue-loop/config.local.json`.
 5. If the dry run is correct, set `dryRun: false` and run the same command, or use `--watch` for continuous polling.
 
-The loop first critiques requirements and creates a repo-tracked spec in `docs/automation/specs/`. Clear requirements and clear spec review can move forward automatically; human input is requested only when review raises open questions. Any PR it opens starts as a draft, must pass agent PR review, verification, and screenshot requirements, and still requires human review/merge.
+The loop first critiques requirements and creates repo-tracked artifacts in `docs/automation/specs/issue-<number>-<slug>/artifacts/`. Each phase has a reviewable agent definition in `.copilot/issue-loop/agents/`, produces a standardized artifact ID (`PRD-001`, `SPEC-001`, `ADV-001`, `IMPL-001`, and so on), and appends a durable summary to the issue run log. Clear requirements and clear spec review can move forward automatically; human input is requested only when a phase raises open questions or blockers. Any PR it opens is created from a dedicated worktree under `.copilot-issue-loop/worktrees/`, starts as a draft, must pass agent PR review, verification, and screenshot requirements, and still requires human review/merge. After merge, cleanup removes the automation worktree and automation branch after containment checks.
 
-For a visual workflow, run `pnpm automation:dashboard` and open the printed localhost URL. The dashboard shows real open issues, requirements critique status, phase approvals, feedback, and self-reflection without writing to GitHub by default. There is no demo issue; use a real issue and the `automate` label when you want implementation to become eligible.
+For a visual workflow, run `pnpm automation:dashboard` and open the printed localhost URL. The dashboard shows real open issues, related PRs, active/running phases, durable artifacts, phase approvals, feedback, and self-reflection without writing to GitHub by default. There is no demo issue; use a real issue and the `automate` label when you want implementation to become eligible.
 
 ## License
 

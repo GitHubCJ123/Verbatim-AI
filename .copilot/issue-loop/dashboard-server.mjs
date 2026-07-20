@@ -63,6 +63,12 @@ async function handle(req, res, ctx) {
     return;
   }
 
+  if (url.pathname === "/favicon.ico") {
+    res.writeHead(204, { "cache-control": "no-store" });
+    res.end();
+    return;
+  }
+
   if (url.pathname.startsWith("/ui/")) {
     await serveStatic(req, res, url.pathname.slice(4));
     return;
@@ -188,6 +194,7 @@ async function runReflectionJob(ctx, { issue, issueId, actionId, runAgent }) {
 async function buildState(ctx) {
   const issues = [];
   const prs = await safeGhPRs();
+  const dashboardPrs = prs.map(normalizePrForDashboard);
   const ghIssues = await safeGhIssues();
   issues.push(...ghIssues.map((issue) => ({
     id: `gh-${issue.number}`,
@@ -208,8 +215,8 @@ async function buildState(ctx) {
       prs,
       localIssue: local,
     });
-    const relatedPrs = prs.filter((pr) =>
-      pr.closingIssuesReferences?.some((ref) => String(ref.number) === String(issue.number)),
+    const relatedPrs = dashboardPrs.filter((pr) =>
+      pr.relatedIssues?.some((number) => String(number) === String(issue.number)),
     );
     hydrated.push({
       ...issue,
@@ -236,16 +243,55 @@ async function buildState(ctx) {
       host: "127.0.0.1",
     },
     phases: PHASES,
-    prs: prs.map((pr) => ({
-      number: pr.number,
-      title: pr.title,
-      url: pr.url,
-      isDraft: pr.isDraft,
-      mergeStateStatus: pr.mergeStateStatus,
-      closingIssues: pr.closingIssuesReferences?.map((ref) => ref.number) ?? [],
-    })),
+    prs: dashboardPrs,
     issues: hydrated,
   };
+}
+
+function normalizePrForDashboard(pr) {
+  const closingIssues = pr.closingIssuesReferences?.map((ref) => ref.number) ?? [];
+  const relatedIssues = uniqueNumbers([
+    ...closingIssues,
+    ...issueRefsFromTitle(pr.title),
+    ...issueRefsFromBody(pr.body),
+  ]);
+  const status = pr.mergedAt || pr.state === "MERGED"
+    ? "merged"
+    : pr.state === "CLOSED"
+      ? "closed"
+      : pr.isDraft
+        ? "draft"
+        : "open";
+  return {
+    number: pr.number,
+    title: pr.title,
+    url: pr.url,
+    state: pr.state,
+    status,
+    statusLabel: status.toUpperCase(),
+    isDraft: pr.isDraft,
+    mergedAt: pr.mergedAt ?? null,
+    closedAt: pr.closedAt ?? null,
+    mergeStateStatus: pr.mergeStateStatus,
+    closingIssues,
+    relatedIssues,
+  };
+}
+
+function issueRefsFromTitle(text) {
+  return [...String(text ?? "").matchAll(/(?:^|[^\w])#(\d+)\b/g)]
+    .map((match) => Number(match[1]))
+    .filter(Number.isFinite);
+}
+
+function issueRefsFromBody(text) {
+  return [...String(text ?? "").matchAll(/\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?|refs?)\s+#(\d+)\b/gi)]
+    .map((match) => Number(match[1]))
+    .filter(Number.isFinite);
+}
+
+function uniqueNumbers(values) {
+  return [...new Set(values.filter(Number.isFinite))].sort((a, b) => a - b);
 }
 
 async function safeGhIssues() {
@@ -279,7 +325,7 @@ async function safeGhPRs() {
       "--limit",
       "50",
       "--json",
-      "number,title,url,isDraft,mergeStateStatus,closingIssuesReferences",
+      "number,title,body,url,state,isDraft,mergedAt,closedAt,mergeStateStatus,closingIssuesReferences",
     ]);
   } catch {
     return [];

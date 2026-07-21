@@ -14,6 +14,7 @@ const collapsedCtx = new Set();
 const openForms = new Set();       // `${issueId}:${phaseId}:approval|feedback`
 const approvalDrafts = new Map();
 const feedbackDrafts = new Map();
+const continueDrafts = new Map();
 const expandedOutputs = new Set();
 let lastInteractionAt = 0;
 let loadedOnce = false;
@@ -116,6 +117,7 @@ function renderSignature() {
     r: (is.eligibility?.reasons ?? []).map((x) => x.code),
     p: is.phases.map((p) => [
       p.id, p.status, p.statusLabel ?? "", p.output ?? "",
+      p.needsHuman ? 1 : 0, p.blockedReason ?? "",
       p.recoverable ? 1 : 0, (p.artifacts ?? []).length,
       (p.feedback ?? []).length, (p.approvals ?? []).length,
       (p.activeActions ?? []).length,
@@ -382,6 +384,7 @@ function phasePanel(issue, phase) {
   const outputText = phase.status === "running" && phase.activeActions?.length
     ? `${phase.activeActions.map((a) => a.message).join("\n")}\n\n${phase.output || ""}`
     : (phase.output || "(no output yet)");
+  if (phase.needsHuman) body.append(continueForm(issue, phase, outputText));
   const outKey = `${issue.id}:${phase.id}`;
   const pre = node("pre", { class: `output ${expandedOutputs.has(outKey) ? "expanded" : ""}`, text: outputText });
   body.append(pre);
@@ -421,6 +424,47 @@ function phasePanel(issue, phase) {
 
   panel.append(body);
   return panel;
+}
+
+function continueForm(issue, phase, outputText) {
+  const key = `${issue.id}:${phase.id}:continue`;
+  const draftKey = `${issue.id}:${phase.id}:continue`;
+  const form = node("form", { class: "needs-human" });
+  form.append(
+    node("div", { class: "needs-human-title", text: "Needs your input" }),
+    node("div", { class: "needs-human-reason", text: phase.blockedReason || firstLine(outputText) || "Automation is waiting for maintainer feedback before it can continue." }),
+    node("label", { class: "field-label", text: "Feedback for the next automation tick" }),
+  );
+  const ta = node("textarea");
+  ta.name = "feedback";
+  ta.maxLength = 6000;
+  ta.placeholder = "Explain what to do next, any constraints, and what would make this phase safe to resume.";
+  ta.value = continueDrafts.get(draftKey) ?? "";
+  ta.addEventListener("focus", () => openForms.add(key));
+  ta.addEventListener("blur", () => openForms.delete(key));
+  ta.addEventListener("input", () => {
+    continueDrafts.set(draftKey, ta.value);
+    openForms.add(key);
+  });
+  form.append(ta);
+  const rowBtns = node("div", { class: "form-row" });
+  const submit = node("button", { class: "btn btn-accent btn-mini", text: "Continue" });
+  submit.type = "submit";
+  rowBtns.append(submit);
+  form.append(rowBtns);
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    openForms.delete(key);
+    const out = await post(`/api/issues/${issue.id}/phases/${phase.id}/continue`, {
+      feedback: ta.value,
+      issueInputSha: issue.requirementsIssueInputSha,
+    });
+    if (out) {
+      continueDrafts.delete(draftKey);
+      toast("Feedback sent — automation will resume this step on the next tick.", "ok");
+    }
+  });
+  return form;
 }
 
 function approvalForm(issue, phase, approveBtn) {

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
@@ -43,6 +44,7 @@ import {
 import {
   critiqueRequirements,
   isSecuritySensitiveIssue,
+  issueInputSha,
   latestRequirementsMarker,
   requirementsMarker,
   requirementsReview,
@@ -89,14 +91,63 @@ async function main() {
     console.log("Issue loop is in dry-run mode; no GitHub or git write actions will be taken.");
   }
 
-  if (args.watch) {
-    while (true) {
+  // Single-active-service guard: refuse to start if another watcher is live, so
+  // two schedulers can never process the same issue concurrently (state safety).
+  const lock = await acquireServiceLock(ROOT);
+  try {
+    if (args.watch) {
+      while (true) {
+        await lock.heartbeat();
+        await tick(config, args);
+        await sleep(config.pollIntervalSeconds * 1000);
+      }
+    } else {
       await tick(config, args);
-      await sleep(config.pollIntervalSeconds * 1000);
     }
-  } else {
-    await tick(config, args);
+  } finally {
+    await lock.release();
   }
+}
+
+function isProcessAlive(pid) {
+  if (!Number.isInteger(pid)) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error.code === "EPERM"; // exists but owned by another user
+  }
+}
+
+async function acquireServiceLock(root) {
+  const lockPath = path.join(root, ".copilot-issue-loop", "service.lock");
+  await fs.mkdir(path.dirname(lockPath), { recursive: true });
+  try {
+    const prev = JSON.parse(await fs.readFile(lockPath, "utf8"));
+    const fresh = Date.now() - (Number(prev.heartbeat) || 0) < 90_000;
+    if (fresh && isProcessAlive(Number(prev.pid))) {
+      throw new Error(
+        `Another issue-loop service is already running (pid ${prev.pid}, host ${prev.host}). ` +
+          `Stop it or remove ${path.relative(root, lockPath)} if it is stale.`,
+      );
+    }
+  } catch (error) {
+    if (error.code !== "ENOENT") {
+      if (/already running/.test(error.message)) throw error;
+      // Corrupt/unreadable lock: treat as stale and overwrite.
+    }
+  }
+  const record = { pid: process.pid, host: os.hostname(), startedAt: new Date().toISOString(), heartbeat: Date.now() };
+  await fs.writeFile(lockPath, `${JSON.stringify(record)}\n`);
+  return {
+    async heartbeat() {
+      record.heartbeat = Date.now();
+      await fs.writeFile(lockPath, `${JSON.stringify(record)}\n`).catch(() => {});
+    },
+    async release() {
+      await fs.rm(lockPath, { force: true }).catch(() => {});
+    },
+  };
 }
 
 async function tick(config, args) {
@@ -484,7 +535,43 @@ async function maybeRecoverRequirements(config, issue, critique, specDir, runId,
 // implementation (recovery reached a deterministic proceed with no security
 // veto), false when it must stay blocked. When recovery is disabled this
 // reproduces the EXACT original block behavior (comment + durable status).
+async function consumeHumanContinue(issue, phaseIds) {
+  const inputSha = issueInputSha(issue);
+  for (const phaseId of phaseIds) {
+    const approval = await readDashboardApproval(ROOT, issue, phaseId, { issueInputSha: inputSha });
+    if (!approval) continue;
+    const summary = await readIssueAutomationSummary(ROOT, issue);
+    const details = summary.phaseStatuses?.["spec-review"]?.details ?? {};
+    if (details.consumedContinueId === approval.id) continue; // single-use per feedback
+    const resumeCount = Number(details.humanResumeCount ?? 0);
+    if (resumeCount >= 3) continue; // bounded: stop auto-resuming after 3 human continues
+    await setDurablePhaseStatus(ROOT, issue, "spec-review", "approved", {
+      consumedContinueId: approval.id,
+      humanResumeCount: resumeCount + 1,
+      approvalId: approval.id,
+      reason: `Human Continue for ${phaseId}: ${truncateForComment(approval.note || "(no note)", 240)}`,
+    });
+    return { approval, phaseId, note: approval.note ?? "" };
+  }
+  return null;
+}
+
+async function appendHumanGuidance(specPath, note) {
+  if (!note || !note.trim()) return;
+  const reviewPath = path.join(path.dirname(specPath), "adversarial-review.md");
+  const block = `\n\n## Human maintainer guidance (Continue)\n\n${redactSecrets(String(note)).slice(0, 4000)}\n`;
+  await fs.appendFile(reviewPath, block).catch(() => {});
+}
+
 async function maybeRecoverSpecReview(config, issue, specPath, review, runId) {
+  // Human "Continue" from the dashboard overrides the gate: if the maintainer
+  // submitted feedback for the blocked spec/review/implementation phase, thread
+  // the note to the implementer and proceed to implementation.
+  const humanContinue = await consumeHumanContinue(issue, ["adversarial-review", "spec-review", "implementation"]);
+  if (humanContinue) {
+    await appendHumanGuidance(specPath, humanContinue.note);
+    return true;
+  }
   const blockAsBefore = async () => {
     await maybeComment(
       config,

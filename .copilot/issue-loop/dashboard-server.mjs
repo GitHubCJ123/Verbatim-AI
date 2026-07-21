@@ -111,6 +111,12 @@ async function handlePost(req, res, url, ctx) {
     return handleRecover(req, res, ctx, issueId, phaseId);
   }
 
+  const continuePhase = url.pathname.match(/^\/api\/issues\/([^/]+)\/phases\/([^/]+)\/continue$/);
+  if (continuePhase) {
+    const [, issueId, phaseId] = continuePhase;
+    return handleContinue(req, res, ctx, issueId, phaseId);
+  }
+
   const body = await readJson(req).catch(() => {
     throw httpError(400, "Invalid JSON");
   });
@@ -162,6 +168,46 @@ async function handlePost(req, res, url, ctx) {
   }
 
   sendJson(res, 404, { error: "Unknown endpoint" });
+}
+
+async function handleContinue(req, res, ctx, issueId, phaseId) {
+  if (req.headers["x-dashboard-nonce"] !== currentNonce(ctx.state)) {
+    return sendJson(res, 403, { error: "Bad dashboard nonce" });
+  }
+  const rateKey = `${issueId}:${phaseId}`;
+  if (shouldRateLimit(ctx.rateLimits ?? new Map(), rateKey, Date.now())) {
+    return sendJson(res, 429, { error: "Continue is rate limited for this phase" });
+  }
+
+  const dashboard = await buildState(ctx);
+  const issue = dashboard.issues.find((item) => item.id === issueId);
+  if (!issue) return sendJson(res, 404, { error: "Issue not found" });
+  const phase = issue.phases.find((item) => item.id === phaseId);
+  if (!phase) return sendJson(res, 404, { error: "Phase not found" });
+  if (!canRecoverPhase(phase.status) && phase.status !== "needs-human" && phase.status !== "blocked") {
+    return sendJson(res, 409, { error: "Phase is not waiting on human feedback" });
+  }
+
+  const body = await readJson(req).catch(() => {
+    throw httpError(400, "Invalid JSON");
+  });
+  const feedback = String(body.feedback ?? "").slice(0, 6000);
+  if (!feedback.trim()) return sendJson(res, 400, { error: "Feedback is required" });
+
+  applyApproval(ctx.state, issueId, phaseId, {
+    approver: "local-maintainer",
+    note: feedback,
+    issueInputSha: body.issueInputSha,
+    spec: issue.spec,
+  });
+  await appendRunlog(ROOT, { number: issue.number }, {
+    type: "dashboard.continue",
+    phaseId,
+    at: new Date().toISOString(),
+  });
+  rotateNonce(ctx.state);
+  await saveDashboardState(ctx.statePath, ctx.state);
+  return sendJson(res, 202, { ok: true, state: await buildState(ctx) });
 }
 
 async function handleRecover(req, res, ctx, issueId, phaseId) {

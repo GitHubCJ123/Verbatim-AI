@@ -359,6 +359,46 @@ body.right-collapsed .rail-right { display: none; }
 .rcell b { display: block; font: 700 9px/1 var(--ff-ui); text-transform: uppercase; letter-spacing: 0.08em; color: var(--faint); }
 .rcell span { display: block; margin-top: 3px; font: var(--fs-meta)/1.35 var(--ff-mono); color: var(--ink); word-break: break-word; }
 
+/* human continuation gate */
+.needs-human {
+  border: 1px solid rgba(248, 81, 73, 0.38);
+  border-left: 3px solid var(--st-red);
+  border-radius: var(--rad);
+  background:
+    linear-gradient(135deg, rgba(248, 81, 73, 0.13), rgba(227, 179, 65, 0.06)),
+    var(--raised);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  box-shadow: 0 0 0 1px rgba(248, 81, 73, 0.04) inset;
+}
+.needs-human-title {
+  color: #ffb4ae;
+  font: 800 12px/1 var(--ff-ui);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+.needs-human-reason {
+  color: var(--ink);
+  font: var(--fs-meta)/1.45 var(--ff-mono);
+  word-break: break-word;
+}
+.needs-human textarea {
+  min-height: 110px;
+  border-color: rgba(248, 81, 73, 0.28);
+}
+.needs-human textarea:focus { border-color: var(--st-red); }
+.needs-human .btn-accent {
+  border-color: rgba(248, 81, 73, 0.55);
+  background: rgba(248, 81, 73, 0.16);
+  color: #ffb4ae;
+}
+.needs-human .btn-accent:hover {
+  border-color: var(--st-red);
+  background: rgba(248, 81, 73, 0.24);
+}
+
 /* forms */
 .pform { border-top: 1px solid var(--line); padding-top: 10px; display: flex; flex-direction: column; gap: 8px; }
 textarea {

@@ -215,6 +215,7 @@ export function buildPhaseView(issue, stateIssue, derived) {
     const feedback = (stateIssue?.feedback ?? []).filter((item) => item.phaseId === phase.id);
     const approvals = stateIssue?.approvals?.[phase.id] ? [stateIssue.approvals[phase.id]] : [];
     const transitions = (stateIssue?.transitions ?? []).filter((item) => item.phaseId === phase.id);
+    const needsHuman = status === "needs-human" || status === "blocked";
     const canApprove =
       activeActions.length === 0 &&
       ["ready", "needs-revision", "local-approved"].includes(status) &&
@@ -229,6 +230,8 @@ export function buildPhaseView(issue, stateIssue, derived) {
       sideEffect: phase.sideEffect,
       recovery: base.recovery ?? null,
       recoverable: canRecoverPhase(status),
+      needsHuman,
+      blockedReason: needsHuman ? blockedReasonForPhase(base, transitions) : "",
       feedback,
       approvals,
       transitions,
@@ -239,6 +242,17 @@ export function buildPhaseView(issue, stateIssue, derived) {
         ["ready", "complete", "approved", "needs-revision", "needs-redo"].includes(status),
     };
   });
+}
+
+function blockedReasonForPhase(base, transitions) {
+  const latestTransitionMessage = [...transitions].reverse()
+    .map((item) => item?.message)
+    .find((message) => String(message ?? "").trim());
+  return redactSafeText(latestTransitionMessage || firstOutputLine(base?.output), 300);
+}
+
+function firstOutputLine(text) {
+  return String(text ?? "").split(/\r?\n/).map((line) => line.trim()).find(Boolean) ?? "";
 }
 
 export async function deriveIssueState({ root, issue, prs, localIssue, config = DEFAULT_CONFIG }) {

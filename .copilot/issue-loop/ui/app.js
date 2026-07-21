@@ -97,13 +97,49 @@ async function load(options = {}) {
   if (!selectedId || !state.issues.some((i) => i.id === selectedId)) {
     selectedId = state.issues[0]?.id ?? null;
   }
-  render();
+  render({ background: options.background });
 }
 
 // ---------------------------------------------------------------------------
 // render
 // ---------------------------------------------------------------------------
-function render() {
+let lastSig = null;
+
+// A stable fingerprint of everything the DOM is built from. Background polls
+// that produce an identical fingerprint are skipped entirely, so an idle
+// dashboard never rebuilds the DOM (no flicker). User actions always render.
+function renderSignature() {
+  const issues = (state?.issues ?? []).map((is) => ({
+    id: is.id,
+    t: is.title,
+    e: is.eligibility?.eligible ?? null,
+    r: (is.eligibility?.reasons ?? []).map((x) => x.code),
+    p: is.phases.map((p) => [
+      p.id, p.status, p.statusLabel ?? "", p.output ?? "",
+      p.recoverable ? 1 : 0, (p.artifacts ?? []).length,
+      (p.feedback ?? []).length, (p.approvals ?? []).length,
+      (p.activeActions ?? []).length,
+    ]),
+    pr: (is.relatedPrs ?? []).map((x) => [x.number, x.status]),
+    a: (is.automationSummary?.artifacts ?? []).length,
+  }));
+  return JSON.stringify({
+    issues,
+    prs: (state?.prs ?? []).map((p) => [p.number, p.status]),
+    live: state?.mode?.agentRunsEnabled ?? false,
+    sel: selectedId,
+    ph: [...selectedPhaseByIssue.entries()],
+    filter, scanAll, showCompletedPrs,
+    d: document.body.dataset.density,
+    of: [...openForms].sort(),
+    eo: [...expandedOutputs].sort(),
+  });
+}
+
+function render(opts = {}) {
+  const sig = renderSignature();
+  if (opts.background && sig === lastSig) return; // nothing changed → no rebuild
+  lastSig = sig;
   const scroll = snapshotScroll();
   renderTopbar();
   renderFilters();

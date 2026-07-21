@@ -489,8 +489,6 @@ body.right-collapsed .center-scroll { padding-right: 34px; }
 @keyframes pulse { from { box-shadow: 0 0 0 rgba(227, 179, 65, 0); } to { box-shadow: 0 0 10px rgba(227, 179, 65, 0.6); } }
 @keyframes slideIn { from { opacity: 0; transform: translateX(8px); } to { opacity: 1; transform: none; } }
 @keyframes shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
-@keyframes fadeUp { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
-.center-scroll > * { animation: fadeUp 0.16s ease both; }
 
 /* ---- responsive ---------------------------------------------------------- */
 /* On smaller screens the Context rail leaves the grid (reachable only on wide

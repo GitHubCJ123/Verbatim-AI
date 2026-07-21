@@ -19,9 +19,12 @@ export function isSafeModelToken(model) {
 }
 
 export async function runCopilot(config, { role, prompt, worktree, modelOverride }) {
-  const args = (config.copilot.baseArgs ?? []).map((arg) =>
-    arg === "{worktree}" ? worktree : arg,
-  );
+  // `-p`/`--prompt` must be the FINAL flag with the prompt as its value; the
+  // Copilot CLI rejects `-p <flags> <prompt>`. Strip any -p/--prompt from
+  // baseArgs and re-append it (with the prompt) last.
+  const args = (config.copilot.baseArgs ?? [])
+    .map((arg) => (arg === "{worktree}" ? worktree : arg))
+    .filter((arg) => arg !== "-p" && arg !== "--prompt");
   const model =
     modelOverride && modelOverride !== "auto"
       ? modelOverride
@@ -35,7 +38,7 @@ export async function runCopilot(config, { role, prompt, worktree, modelOverride
   for (const tool of toolsForRole(config, role)) {
     args.push("--allow-tool", tool);
   }
-  args.push(prompt);
+  args.push("-p", prompt);
   return spawnFile(config.copilot.command, args, { cwd: worktree });
 }
 

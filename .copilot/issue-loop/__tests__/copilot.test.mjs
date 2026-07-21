@@ -4,9 +4,10 @@ import { architectPrompt, toolsForRole, isSafeModelToken, runCopilot } from "../
 
 describe("copilot role safety", () => {
   it("keeps architect and adversarial reviewer read-only by default", () => {
-    expect(toolsForRole(DEFAULT_CONFIG, "architect")).toEqual(["view", "rg", "glob"]);
-    expect(toolsForRole(DEFAULT_CONFIG, "adversarialReviewer")).toEqual(["view", "rg", "glob"]);
-    expect(toolsForRole(DEFAULT_CONFIG, "implementer")).toContain("apply_patch");
+    expect(toolsForRole(DEFAULT_CONFIG, "architect")).toEqual(["view"]);
+    expect(toolsForRole(DEFAULT_CONFIG, "adversarialReviewer")).toEqual(["view"]);
+    expect(toolsForRole(DEFAULT_CONFIG, "implementer")).toContain("write");
+    expect(toolsForRole(DEFAULT_CONFIG, "implementer")).not.toContain("shell");
   });
 
   it("delimits issue content as untrusted in architect prompts", () => {

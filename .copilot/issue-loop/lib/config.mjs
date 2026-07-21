@@ -67,10 +67,10 @@ export const DEFAULT_CONFIG = {
   copilot: {
     command: "copilot",
     model: "auto",
-    baseArgs: ["-p", "--add-dir", "{worktree}"],
-    allowTools: ["view", "rg", "glob", "apply_patch"],
+    baseArgs: ["--add-dir", "{worktree}"],
+    allowTools: ["view", "write", "str_replace"],
     readOnlyRoles: ["architect", "adversarialReviewer", "agentPrReviewer"],
-    readOnlyTools: ["view", "rg", "glob"],
+    readOnlyTools: ["view"],
   },
   recovery: {
     // On by default: once the loop itself is enabled, a blocked/needs-human

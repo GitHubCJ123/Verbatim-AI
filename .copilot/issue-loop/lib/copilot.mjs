@@ -39,7 +39,8 @@ export async function runCopilot(config, { role, prompt, worktree, modelOverride
     args.push("--allow-tool", tool);
   }
   args.push("-p", prompt);
-  return spawnFile(config.copilot.command, args, { cwd: worktree });
+  const timeoutMs = Math.max(1, Number(config.copilot?.timeoutMinutes) || 15) * 60_000;
+  return spawnFile(config.copilot.command, args, { cwd: worktree, timeoutMs });
 }
 
 export function toolsForRole(config, role) {

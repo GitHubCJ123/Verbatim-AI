@@ -71,6 +71,7 @@ export const DEFAULT_CONFIG = {
     allowTools: ["view", "write", "str_replace"],
     readOnlyRoles: ["architect", "adversarialReviewer", "agentPrReviewer"],
     readOnlyTools: ["view"],
+    timeoutMinutes: 15,
   },
   recovery: {
     // On by default: once the loop itself is enabled, a blocked/needs-human

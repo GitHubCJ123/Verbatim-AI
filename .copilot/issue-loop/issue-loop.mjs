@@ -172,7 +172,15 @@ async function tick(config, args) {
     console.log("No eligible issues.");
   } else {
     for (const issue of selected) {
-      await processIssue(config, issue, args);
+      try {
+        await processIssue(config, issue, args);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`processIssue failed for #${issue.number}: ${message}`);
+        await setDurablePhaseStatus(ROOT, issue, "implementation", "blocked", {
+          reason: `Unhandled error: ${truncateForComment(message, 500)}`,
+        }).catch(() => {});
+      }
     }
   }
 

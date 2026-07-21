@@ -81,7 +81,8 @@
     "baseArgs": ["--add-dir", "{worktree}"],
     "allowTools": ["view", "write", "str_replace"],
     "readOnlyRoles": ["architect", "adversarialReviewer", "agentPrReviewer"],
-    "readOnlyTools": ["view"]
+    "readOnlyTools": ["view"],
+    "timeoutMinutes": 15
   },
   "recovery": {
     "enabled": true,

@@ -14,6 +14,8 @@ interface RecordingPillProps {
   controller?: AudioController | null;
   /** Optional error message for the error state. */
   error?: string | null;
+  /** Optional structured title for actionable error states. */
+  errorTitle?: string | null;
   /** Where this recording's content goes (resolved per-mode). */
   privacy?: DataLocality | null;
   /**
@@ -57,6 +59,7 @@ export function RecordingPill({
   modeName,
   controller,
   error,
+  errorTitle,
   privacy,
   partialText,
 }: RecordingPillProps) {
@@ -138,7 +141,18 @@ export function RecordingPill({
             )}
             {state === "success" && <div className="text-sm font-medium text-success">Done</div>}
             {state === "error" && (
-              <div className="truncate text-xs text-danger">{error ?? "Something went wrong"}</div>
+              <div className="min-w-0 text-danger">
+                {errorTitle ? (
+                  <>
+                    <div className="truncate text-xs font-semibold">{errorTitle}</div>
+                    <div className="line-clamp-2 text-[11px] leading-snug text-danger/90">
+                      {error ?? "Something went wrong"}
+                    </div>
+                  </>
+                ) : (
+                  <div className="truncate text-xs">{error ?? "Something went wrong"}</div>
+                )}
+              </div>
             )}
           </div>
 

@@ -19,6 +19,7 @@ import {
 } from "../components/ui/Select";
 import { HotkeyRecorder } from "../components/settings/HotkeyRecorder";
 import { applyHotkey, isForcedHoldSpec, loadHotkeyConfig, saveHotkeyConfig } from "../lib/hotkey";
+import { handleInputMonitoringError } from "../components/settings/inputMonitoring";
 import {
   isAutostartEnabled,
   setAutostart,
@@ -700,9 +701,11 @@ export default function Settings() {
       setHotkey((h) => ({ ...h, spec, pushToTalk: h.pushToTalk || isForcedHoldSpec(spec) }));
       toast.success("Hotkey updated", { description: `Now using ${spec}` });
     } catch (e) {
-      toast.error("Couldn't register that shortcut", {
-        description: e instanceof Error ? e.message : String(e),
-      });
+      if (!handleInputMonitoringError(e)) {
+        toast.error("Couldn't register that shortcut", {
+          description: e instanceof Error ? e.message : String(e),
+        });
+      }
     }
   };
 

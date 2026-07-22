@@ -1,0 +1,21 @@
+{
+  "assets": {
+    "whisper-bin-macos-arm64.zip": {
+      "sha256": "1347c764e967bef6ba5491bafc0d9e86b235ec6c19896eed284cb042533fc1e9",
+      "size": 1731604
+    },
+    "whisper-bin-windows-x64-cpu.zip": {
+      "sha256": "0adfe397e1a81ed857428748de8031ed235674a2725fbdcf78f8541042e0d5b5",
+      "size": 4216818
+    },
+    "whisper-bin-windows-x64-cuda.zip": {
+      "sha256": "be02b5759350e73d38e077fb164c6d43ba238986ba107f1643839ee77ab8940c",
+      "size": 460443550
+    },
+    "whisper-bin-windows-x64-vulkan.zip": {
+      "sha256": "490b8975b7b339822ae90558b7cb627c68590421b3288e30c8fe49a76cda5923",
+      "size": 14569918
+    }
+  },
+  "version": "v0.5.12"
+}

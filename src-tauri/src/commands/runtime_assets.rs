@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+use base64::Engine as _;
 use bzip2::read::BzDecoder;
 use flate2::read::GzDecoder;
 use futures_util::StreamExt;
@@ -79,10 +80,32 @@ pub(crate) fn verify_minisign(
     verification_failure_prefix: &str,
 ) -> Result<(), String> {
     let public_key = PublicKey::decode(public_key_text).map_err(|e| e.to_string())?;
-    let signature = Signature::decode(signature_text).map_err(|e| e.to_string())?;
+    let signature = decode_minisign_signature(signature_text)?;
     public_key
         .verify(bytes, &signature, false)
         .map_err(|e| format!("{verification_failure_prefix}: {e}"))
+}
+
+/// Decode a minisign signature supplied either as raw minisign text (the
+/// standard `untrusted comment: ...` format that `minisign_verify` parses) or
+/// as base64-wrapped text.
+///
+/// `tauri signer sign <file>` writes `<file>.sig` as the base64 encoding of the
+/// entire minisign signature file, so the whisper runtime manifest signature
+/// produced in CI (shipped both bundled inside the app and on the GitHub
+/// release) arrives base64-wrapped. We accept both encodings transparently; the
+/// caller always still verifies the decoded signature against the public key,
+/// so tolerating the extra layer does not weaken the trust check.
+fn decode_minisign_signature(signature_text: &str) -> Result<Signature, String> {
+    if let Ok(signature) = Signature::decode(signature_text) {
+        return Ok(signature);
+    }
+    let decoded = base64::engine::general_purpose::STANDARD
+        .decode(signature_text.trim().as_bytes())
+        .map_err(|_| "Invalid encoding in minisign data".to_string())?;
+    let decoded_text = std::str::from_utf8(&decoded)
+        .map_err(|_| "Invalid encoding in minisign data".to_string())?;
+    Signature::decode(decoded_text).map_err(|e| e.to_string())
 }
 
 #[derive(Clone, Copy)]
@@ -271,4 +294,56 @@ pub(crate) fn clear_dir_contents(dir: &Path) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Real fixtures captured from the signed whisper runtime manifest.
+    const PUBLIC_KEY: &str = "untrusted comment: minisign public key: 89A198BC00AE1902\nRWQCGa4AvJihibrPt0tf7NaYo91fwiVD6F8qMvToNlJEdsu9G6hqLY6P";
+    const MANIFEST: &[u8] = include_bytes!("testdata/whisper-runtimes.json");
+    // As emitted by `tauri signer sign` (base64-wrapped minisign signature).
+    const SIG_BASE64_WRAPPED: &str = include_str!("testdata/whisper-runtimes.json.sig");
+
+    fn raw_minisign_sig() -> String {
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(SIG_BASE64_WRAPPED.trim().as_bytes())
+            .expect("fixture signature is valid base64");
+        String::from_utf8(decoded).expect("decoded signature is utf8")
+    }
+
+    #[test]
+    fn verifies_base64_wrapped_tauri_signature() {
+        // Regression for the "Invalid encoding in minisign data" failure:
+        // `tauri signer sign` emits base64-wrapped minisign text, which is what
+        // ships bundled in the app and on the release. It must verify.
+        verify_minisign(MANIFEST, SIG_BASE64_WRAPPED, PUBLIC_KEY, "manifest sig")
+            .expect("base64-wrapped signature should verify");
+    }
+
+    #[test]
+    fn verifies_raw_minisign_signature() {
+        let raw = raw_minisign_sig();
+        verify_minisign(MANIFEST, &raw, PUBLIC_KEY, "manifest sig")
+            .expect("raw minisign signature should verify");
+    }
+
+    #[test]
+    fn rejects_tampered_manifest() {
+        let mut tampered = MANIFEST.to_vec();
+        tampered[0] ^= 0xff;
+        assert!(
+            verify_minisign(&tampered, SIG_BASE64_WRAPPED, PUBLIC_KEY, "manifest sig").is_err(),
+            "a tampered manifest must not verify"
+        );
+    }
+
+    #[test]
+    fn rejects_garbage_signature() {
+        assert!(
+            verify_minisign(MANIFEST, "not a signature", PUBLIC_KEY, "manifest sig").is_err(),
+            "garbage signature text must not verify"
+        );
+    }
 }

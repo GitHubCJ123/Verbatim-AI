@@ -56,6 +56,10 @@ import {
 } from "../lib/preferences";
 import { applyInlinePostProcessing } from "../lib/postProcess";
 import { getPrivacyStatus, type DataLocality } from "../lib/privacyStatus";
+import {
+  classifyRecordingError,
+  type RecordingErrorPresentation,
+} from "../lib/recordingErrors";
 import type { Mode } from "../types/mode";
 
 function noPasteTargetMessage(): string {
@@ -87,6 +91,9 @@ export default function Overlay() {
   const [rawText, setRawText] = useState("");
   const [partialText, setPartialText] = useState("");
   const [privacy, setPrivacy] = useState<DataLocality | null>(null);
+  const [errorPresentation, setErrorPresentation] = useState<RecordingErrorPresentation | null>(
+    null,
+  );
 
   const controllerRef = useRef<AudioController | null>(null);
   const autoStopRef = useRef<AutoStopDetector | null>(null);
@@ -103,14 +110,21 @@ export default function Overlay() {
   // still being acquired must await this so the stream is never leaked.
   const startingRef = useRef<Promise<AudioController> | null>(null);
   const modeRef = useRef<Mode | null>(null);
+  const hideRequestRef = useRef(0);
 
   const hideAfter = async (ms: number) => {
+    const request = ++hideRequestRef.current;
     if (ms > 0) await new Promise((r) => setTimeout(r, ms));
+    if (request !== hideRequestRef.current) return;
     try {
       await getCurrentWindow().hide();
     } catch {
       /* ignore */
     }
+  };
+
+  const cancelPendingHide = () => {
+    hideRequestRef.current++;
   };
 
   const reset = async () => {
@@ -121,6 +135,7 @@ export default function Overlay() {
     setPartialText("");
     partialTextRef.current = "";
     setError(null);
+    setErrorPresentation(null);
     await resizeOverlayToPill();
     await clearCapturedTarget();
     await hideAfter(0);
@@ -239,7 +254,9 @@ export default function Overlay() {
   };
 
   const start = async (mode: string, modeId: string | null, pressedAt?: number) => {
+    cancelPendingHide();
     setError(null);
+    setErrorPresentation(null);
     setStreamingCleaned("");
     setRawText("");
     setPartialText("");
@@ -302,6 +319,7 @@ export default function Overlay() {
         onFrame,
         onError: (e) => {
           setError(e.message);
+          setErrorPresentation(null);
           setState("error");
         },
       });
@@ -319,6 +337,7 @@ export default function Overlay() {
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       setError(msg);
+      setErrorPresentation(null);
       setState("error");
       void hideAfter(2500);
     }
@@ -479,15 +498,20 @@ export default function Overlay() {
         setState("idle");
       }
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
+      const presentation = classifyRecordingError(e);
       console.error("[Verbatim AI] pipeline error:", e);
       void invoke("relay_event", {
         name: "recording:error",
-        payload: { message: msg, stack: e instanceof Error ? e.stack : undefined },
+        payload: presentation,
       });
-      setError(msg);
+      setErrorPresentation(presentation);
+      setError(presentation.message);
       setState("error");
-      void hideAfter(3500);
+      if (presentation.persistent) {
+        cancelPendingHide();
+      } else {
+        void hideAfter(3500);
+      }
     }
   };
 
@@ -595,6 +619,7 @@ export default function Overlay() {
       setState("idle");
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
+      setErrorPresentation(null);
       setState("error");
     }
   };
@@ -663,6 +688,7 @@ export default function Overlay() {
           modeName={modeName}
           controller={controllerRef.current}
           error={error}
+          errorTitle={errorPresentation?.title}
           privacy={privacy}
           partialText={partialText}
         />

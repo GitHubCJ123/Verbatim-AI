@@ -14,6 +14,7 @@ import { startRecording as bridgeStart, stopRecording as bridgeStop } from "./li
 import { resolveModeAtPress } from "./lib/modeResolver";
 import { isHotkeyPaused, setHotkeyPaused, isHistoryDisabled } from "./lib/preferences";
 import { CLOUD_FEATURES_ENABLED } from "./lib/features";
+import type { RecordingErrorRelayPayload } from "./lib/recordingErrors";
 
 // Install global hotkey event listeners as soon as the app boots.
 void installHotkeyListeners();
@@ -136,11 +137,11 @@ void listen<{ emitId?: string; action: OutputAction; cleaned: string; modeId: st
   },
 );
 
-void listen<{ message: string; stack?: string }>("recording:error", (e) => {
-  console.error("[Verbatim AI] recording error:", e.payload.message, e.payload.stack);
-  toast.error("Transcription failed", {
+void listen<RecordingErrorRelayPayload>("recording:error", (e) => {
+  console.error("[Verbatim AI] recording error:", e.payload.kind, e.payload.title);
+  toast.error(e.payload.title, {
     description: e.payload.message,
-    duration: 10000,
+    duration: e.payload.persistent ? 30000 : 10000,
   });
 });
 

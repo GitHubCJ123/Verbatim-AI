@@ -432,7 +432,7 @@ jobs:
               }
           print(json.dumps({"version": os.environ["VERSION"], "assets": assets}, indent=2, sort_keys=True))
           PY
-            pnpm tauri signer sign whisper-runtimes.json > whisper-runtimes.json.sig
+            pnpm tauri signer sign whisper-runtimes.json
           fi
 
       - name: Stage bundled Whisper runtime resources
@@ -688,7 +688,7 @@ jobs:
               raise SystemExit("No Whisper runtime assets found in runtime fragments")
           print(json.dumps({"version": os.environ["VERSION"], "assets": assets}, indent=2, sort_keys=True))
           PY
-          pnpm tauri signer sign whisper-runtimes.json > whisper-runtimes.json.sig
+          pnpm tauri signer sign whisper-runtimes.json
           gh release upload "$VERSION" whisper-runtimes.json whisper-runtimes.json.sig --clobber --repo "$REPOSITORY"
 
       # Auto-publish. This is the LAST step of the LAST job, and the whole job

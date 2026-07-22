@@ -6,8 +6,15 @@ describe("copilot role safety", () => {
   it("keeps architect and adversarial reviewer read-only by default", () => {
     expect(toolsForRole(DEFAULT_CONFIG, "architect")).toEqual(["view"]);
     expect(toolsForRole(DEFAULT_CONFIG, "adversarialReviewer")).toEqual(["view"]);
+    expect(toolsForRole(DEFAULT_CONFIG, "architect")).not.toContain("shell");
+    expect(toolsForRole(DEFAULT_CONFIG, "adversarialReviewer")).not.toContain("shell");
     expect(toolsForRole(DEFAULT_CONFIG, "implementer")).toContain("write");
-    expect(toolsForRole(DEFAULT_CONFIG, "implementer")).not.toContain("shell");
+    expect(toolsForRole(DEFAULT_CONFIG, "implementer")).toContain("shell");
+  });
+
+  it("denies dangerous shell commands for the implementer", () => {
+    expect(DEFAULT_CONFIG.copilot.denyTools).toContain("shell(gh:*)");
+    expect(DEFAULT_CONFIG.copilot.denyTools).toContain("shell(git push:*)");
   });
 
   it("delimits issue content as untrusted in architect prompts", () => {

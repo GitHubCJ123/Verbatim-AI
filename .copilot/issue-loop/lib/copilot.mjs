@@ -35,8 +35,17 @@ export async function runCopilot(config, { role, prompt, worktree, modelOverride
     }
     args.push("--model", model);
   }
-  for (const tool of toolsForRole(config, role)) {
+  const roleTools = toolsForRole(config, role);
+  for (const tool of roleTools) {
     args.push("--allow-tool", tool);
+  }
+  // When a role can run shell (the implementer), deny dangerous commands: no
+  // pushing/merging/PR manipulation, no history rewrite, no network exfil, no
+  // privilege escalation. Validated against the CLI's shell(<cmd>:*) rule form.
+  if (roleTools.includes("shell")) {
+    for (const deny of config.copilot.denyTools ?? []) {
+      args.push("--deny-tool", deny);
+    }
   }
   args.push("-p", prompt);
   const timeoutMs = Math.max(1, Number(config.copilot?.timeoutMinutes) || 15) * 60_000;
@@ -44,9 +53,13 @@ export async function runCopilot(config, { role, prompt, worktree, modelOverride
 }
 
 export function toolsForRole(config, role) {
-  return (config.copilot.readOnlyRoles ?? []).includes(role)
-    ? (config.copilot.readOnlyTools ?? [])
-    : (config.copilot.allowTools ?? []);
+  if ((config.copilot.readOnlyRoles ?? []).includes(role)) {
+    return config.copilot.readOnlyTools ?? [];
+  }
+  if (role === "implementer" && Array.isArray(config.copilot.implementerTools)) {
+    return config.copilot.implementerTools;
+  }
+  return config.copilot.allowTools ?? [];
 }
 
 export function architectPrompt(issue, specPath, approvalNote = "") {

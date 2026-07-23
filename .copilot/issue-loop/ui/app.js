@@ -675,6 +675,7 @@ function dominantState(issue) {
   const done = doneCount(issue);
   if (done === issue.phases.length) return { key: "complete", label: "Complete" };
   if (done > 0) return { key: "progress", label: "In progress" };
+  if (st.every((s) => s === "not-started")) return { key: "queued", label: "Queued" };
   return { key: "idle", label: "Idle" };
 }
 

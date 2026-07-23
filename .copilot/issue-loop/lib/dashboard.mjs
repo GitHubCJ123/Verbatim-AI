@@ -384,6 +384,18 @@ export async function deriveIssueState({ root, issue, prs, localIssue, config = 
   for (const phaseId of ["requirements", "spec"]) {
     if (derived[phaseId]) derived[phaseId].recovery = recoveryView(automationSummary, phaseId);
   }
+  // Honesty pass: a phase that has neither a durable run status nor a real
+  // artifact never actually ran, so the heuristic fallbacks above (e.g.
+  // "requirements complete", "spec ready", downstream "blocked") are misleading.
+  // Show such phases as "not started" instead of implying phantom progress.
+  for (const [phaseId, view] of Object.entries(derived)) {
+    const durable = automationSummary.phaseStatuses?.[phaseId]?.status;
+    const hasArtifact = (view.artifacts?.length ?? 0) > 0;
+    if (!durable && !hasArtifact) {
+      view.status = "not-started";
+      view.statusLabel = "not started";
+    }
+  }
   return { derived, spec, linkedPr, automationSummary, eligibility };
 }
 

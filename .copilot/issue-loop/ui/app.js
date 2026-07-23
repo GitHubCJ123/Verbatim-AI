@@ -22,6 +22,8 @@ let historyOpen = false;
 let historyTab = "issues";
 let historyPrFilter = "all";
 let historyData = null; // { closedIssues: [] } fetched on demand
+let artifactOpen = false;
+let artifactCurrent = null; // last fetched artifact payload (for Copy)
 
 const density = localStorage.getItem("vb.density") === "cozy" ? "cozy" : "compact";
 document.body.dataset.density = density;
@@ -55,6 +57,11 @@ byId("showRight").addEventListener("click", () => toggleRail("right"));
 byId("historyBtn").addEventListener("click", toggleHistory);
 byId("historyClose").addEventListener("click", closeHistory);
 byId("historyBackdrop").addEventListener("click", closeHistory);
+byId("artifactClose").addEventListener("click", closeArtifact);
+byId("artifactBackdrop").addEventListener("click", closeArtifact);
+byId("artifactCopy").addEventListener("click", () => {
+  if (artifactCurrent?.content != null) void copyText(artifactCurrent.content);
+});
 for (const tab of document.querySelectorAll("#historyOverlay .otab")) {
   tab.addEventListener("click", () => { historyTab = tab.dataset.tab; renderHistory(); });
 }
@@ -398,11 +405,12 @@ function phasePanel(issue, phase) {
   outTools.append(copyButton("Copy output", () => phase.output || ""));
   body.append(outTools);
 
-  // artifacts for this phase
+  // artifacts for this phase (newest first; click any version to read full output)
   if ((phase.artifacts ?? []).length) {
-    body.append(node("div", { class: "field-label", text: "Phase artifacts" }));
+    const n = phase.artifacts.length;
+    body.append(node("div", { class: "field-label", text: n > 1 ? `Phase artifacts (${n} versions — click to view)` : "Phase artifact (click to view)" }));
     const chips = node("div", { class: "chips" });
-    for (const a of phase.artifacts) chips.append(artifactChip(a));
+    for (const a of [...phase.artifacts].reverse()) chips.append(artifactChip(a, issue.id));
     body.append(chips);
   }
 
@@ -597,7 +605,7 @@ function renderRight() {
   const artifacts = issue?.automationSummary?.artifacts ?? [];
   const artSection = ctxSection("artifacts", "Artifact trail", artifacts.length, (body) => {
     if (!artifacts.length) { body.append(node("div", { class: "empty-note", text: "No durable artifacts yet." })); return; }
-    for (const a of artifacts.slice(-12).reverse()) body.append(artifactChip(a, true));
+    for (const a of artifacts.slice(-12).reverse()) body.append(artifactChip(a, issue?.id, true));
   });
   panel.append(artSection);
 }
@@ -630,16 +638,77 @@ function prRow(pr) {
   return row;
 }
 
-function artifactChip(a, withPhase = false) {
+function artifactChip(a, issueId, withPhase = false) {
   const chip = node("div", { class: "chip-row" });
-  chip.append(node("span", { class: "artifact-id", text: a.displayId ?? a.id ?? "artifact" }));
+  const idBtn = node("button", { class: "artifact-id-btn", text: a.displayId ?? a.id ?? "artifact" });
+  idBtn.type = "button";
+  idBtn.title = "View full agent output";
+  if (issueId) idBtn.addEventListener("click", () => void openArtifact(issueId, a));
+  else idBtn.disabled = true;
+  chip.append(idBtn);
   if (withPhase) chip.append(node("span", { class: "artifact-phase", text: a.phase ?? "" }));
-  else chip.append(node("span", { class: "artifact-phase", text: "" }));
-  chip.append(
-    node("span", { class: "artifact-text", text: a.summary || a.title || a.path || "" }),
-    copyButton("Copy", () => copyableArtifactText(a)),
-  );
+  chip.append(node("span", { class: "artifact-text", text: a.summary || a.title || a.path || "" }));
+  const viewBtn = node("button", { class: "copy-btn", text: "View" });
+  viewBtn.type = "button";
+  if (issueId) viewBtn.addEventListener("click", () => void openArtifact(issueId, a));
+  else viewBtn.disabled = true;
+  chip.append(viewBtn, copyButton("Copy", () => copyableArtifactText(a)));
   return chip;
+}
+
+// ---------------------------------------------------------------------------
+// artifact viewer overlay (full agent output for any phase version)
+// ---------------------------------------------------------------------------
+function closeArtifact() {
+  artifactOpen = false;
+  artifactCurrent = null;
+  byId("artifactOverlay").classList.add("hidden");
+}
+
+async function openArtifact(issueId, artifact) {
+  markInteraction();
+  artifactOpen = true;
+  artifactCurrent = null;
+  byId("artifactOverlay").classList.remove("hidden");
+  const meta = byId("artifactMeta");
+  const body = byId("artifactBody");
+  meta.textContent = "";
+  meta.append(node("span", { class: "artifact-head-id", text: artifact.displayId ?? artifact.id ?? "artifact" }));
+  if (artifact.title) meta.append(node("span", { class: "artifact-head-sub", text: artifact.title }));
+  body.textContent = "";
+  body.append(node("div", { class: "artifact-loading", text: "Loading full output…" }));
+  const key = artifact.displayId ?? artifact.id;
+  try {
+    const res = await fetch(
+      `/api/issues/${encodeURIComponent(issueId)}/artifacts/${encodeURIComponent(key)}`,
+      { headers },
+    );
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    if (!artifactOpen) return; // user closed it while loading
+    artifactCurrent = data;
+    renderArtifact(data);
+  } catch (err) {
+    if (!artifactOpen) return;
+    body.textContent = "";
+    body.append(node("div", { class: "artifact-error", text: `Could not load artifact: ${err.message}` }));
+  }
+}
+
+function renderArtifact(data) {
+  const meta = byId("artifactMeta");
+  meta.textContent = "";
+  meta.append(node("span", { class: "artifact-head-id", text: data.displayId ?? "artifact" }));
+  const sub = [
+    PHASE_SHORT[data.phase] ?? data.phase,
+    data.agent,
+    data.decision ? `decision: ${data.decision}` : "",
+    data.createdAt ? fmtDate(data.createdAt) : "",
+  ].filter(Boolean).join("  ·  ");
+  if (sub) meta.append(node("span", { class: "artifact-head-sub", text: sub }));
+  const body = byId("artifactBody");
+  body.textContent = "";
+  body.append(node("pre", { class: "artifact-content", text: data.content || "(empty artifact)" }));
 }
 
 // ---------------------------------------------------------------------------
@@ -779,6 +848,7 @@ function mutationHeaders() {
 function onKeydown(e) {
   const typing = ["TEXTAREA", "INPUT"].includes(document.activeElement?.tagName);
   if (e.key === "Escape") {
+    if (artifactOpen) { closeArtifact(); return; }
     if (historyOpen) { closeHistory(); return; }
     byId("helpPopover").classList.add("hidden");
     return;

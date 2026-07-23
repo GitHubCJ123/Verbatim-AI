@@ -87,6 +87,20 @@
       </div>
     </div>
 
+    <div id="artifactOverlay" class="overlay hidden" role="dialog" aria-modal="true" aria-label="Artifact content">
+      <div class="overlay-backdrop" id="artifactBackdrop"></div>
+      <div class="overlay-panel">
+        <div class="overlay-head">
+          <div class="artifact-head-meta" id="artifactMeta"></div>
+          <div class="artifact-head-tools">
+            <button id="artifactCopy" class="btn btn-mini" type="button">Copy</button>
+            <button id="artifactClose" class="btn btn-mini" type="button">Close</button>
+          </div>
+        </div>
+        <div class="overlay-body" id="artifactBody"></div>
+      </div>
+    </div>
+
     <script src="/ui/app.js" type="module"></script>
   </body>
 </html>

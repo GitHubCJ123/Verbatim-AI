@@ -10,6 +10,7 @@ import {
   nextArtifactId,
   readIssueAutomationSummary,
   recordArtifact,
+  resolveArtifactFilePath,
   runlogPath,
   summaryPath,
 } from "../lib/artifacts.mjs";
@@ -160,5 +161,43 @@ describe("automation artifact helpers", () => {
 
     const line = (await fs.readFile(runlogPath(runtimeRoot, issue), "utf8")).trim();
     expect(JSON.parse(line).event).toBe("[REDACTED]");
+  });
+});
+
+describe("resolveArtifactFilePath confinement", () => {
+  const root = "/repo";
+  const iss = { number: 73, title: "Warn on hotkey conflicts" };
+
+  it("resolves a legitimate artifact path inside the issue's artifacts dir", () => {
+    const rel = "docs/automation/specs/issue-0073-warn-on-hotkey/artifacts/SPEC-008.md";
+    expect(resolveArtifactFilePath(root, iss, rel)).toBe(path.resolve(root, rel));
+  });
+
+  it("accepts a folder that is exactly issue-NNNN with no slug", () => {
+    const rel = "docs/automation/specs/issue-0073/artifacts/PRD-001.md";
+    expect(resolveArtifactFilePath(root, iss, rel)).toBe(path.resolve(root, rel));
+  });
+
+  it("rejects path traversal that escapes the specs root", () => {
+    expect(resolveArtifactFilePath(root, iss, "docs/automation/specs/../../../etc/passwd")).toBeNull();
+    expect(resolveArtifactFilePath(root, iss, "../../../etc/passwd")).toBeNull();
+  });
+
+  it("rejects a path belonging to a different issue", () => {
+    expect(
+      resolveArtifactFilePath(root, iss, "docs/automation/specs/issue-0040-other/artifacts/SPEC-001.md"),
+    ).toBeNull();
+  });
+
+  it("rejects non-markdown files and nested subpaths", () => {
+    expect(resolveArtifactFilePath(root, iss, "docs/automation/specs/issue-0073-x/artifacts/secret.json")).toBeNull();
+    expect(resolveArtifactFilePath(root, iss, "docs/automation/specs/issue-0073-x/artifacts/sub/dir/SPEC.md")).toBeNull();
+    expect(resolveArtifactFilePath(root, iss, "docs/automation/specs/issue-0073-x/notes/SPEC-001.md")).toBeNull();
+  });
+
+  it("rejects empty, non-string, or numberless input", () => {
+    expect(resolveArtifactFilePath(root, iss, "")).toBeNull();
+    expect(resolveArtifactFilePath(root, iss, null)).toBeNull();
+    expect(resolveArtifactFilePath(root, { title: "no number" }, "docs/automation/specs/issue-0073-x/artifacts/SPEC-001.md")).toBeNull();
   });
 });

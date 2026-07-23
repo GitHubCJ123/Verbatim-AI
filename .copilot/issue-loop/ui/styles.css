@@ -348,12 +348,31 @@ body.right-collapsed .rail-right { display: none; }
 /* artifacts */
 .chips { display: flex; flex-direction: column; gap: 5px; }
 .chip-row {
-  display: grid; grid-template-columns: auto auto 1fr auto; gap: 8px; align-items: center;
+  display: flex; gap: 8px; align-items: center;
   border: 1px solid var(--line); border-radius: var(--rad-sm); padding: 6px 8px; background: var(--raised);
 }
 .artifact-id { font: 700 10px/1 var(--ff-mono); color: #05100a; background: var(--accent); border-radius: 5px; padding: 3px 6px; }
-.artifact-phase { font: 600 10px/1 var(--ff-mono); color: var(--accent); text-transform: uppercase; }
-.artifact-text { color: var(--muted); font-size: var(--fs-meta); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.artifact-id-btn {
+  font: 700 10px/1 var(--ff-mono); color: #05100a; background: var(--accent);
+  border: 1px solid transparent; border-radius: 5px; padding: 3px 6px; cursor: pointer; flex: none;
+}
+.artifact-id-btn:hover { filter: brightness(1.12); }
+.artifact-id-btn:disabled { opacity: 0.6; cursor: default; }
+.artifact-phase { font: 600 10px/1 var(--ff-mono); color: var(--accent); text-transform: uppercase; flex: none; }
+.artifact-text { color: var(--muted); font-size: var(--fs-meta); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* artifact viewer overlay */
+.artifact-head-meta { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+.artifact-head-tools { display: flex; gap: 6px; flex: none; }
+.artifact-head-id { font: 700 12px/1 var(--ff-mono); color: var(--accent); }
+.artifact-head-sub { font-size: var(--fs-meta); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.artifact-content {
+  margin: 0; white-space: pre-wrap; word-break: break-word; overflow-wrap: anywhere;
+  font: 400 12px/1.55 var(--ff-mono); color: var(--ink);
+  background: var(--bg); border: 1px solid var(--line); border-radius: var(--rad-sm); padding: 12px 14px;
+}
+.artifact-loading, .artifact-error { font-size: var(--fs-meta); color: var(--muted); padding: 10px 2px; }
+.artifact-error { color: var(--st-red); }
 
 /* recovery panel */
 .recovery { border: 1px solid rgba(63, 185, 80, 0.28); border-left: 3px solid var(--st-green); border-radius: var(--rad-sm); background: rgba(63, 185, 80, 0.06); padding: 10px; }

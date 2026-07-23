@@ -26,7 +26,8 @@ import {
   setPhaseStatus,
   issueState,
 } from "./lib/dashboard.mjs";
-import { appendRunlog } from "./lib/artifacts.mjs";
+import { appendRunlog, resolveArtifactFilePath } from "./lib/artifacts.mjs";
+import { redactSecrets } from "./lib/redaction.mjs";
 import { DEFAULT_CONFIG, loadConfig } from "./lib/config.mjs";
 import { acquireLock, releaseLock } from "./lib/recovery.mjs";
 
@@ -113,6 +114,11 @@ async function handle(req, res, ctx) {
     }
     if (req.method === "GET" && url.pathname === "/api/history") {
       sendJson(res, 200, await buildHistory());
+      return;
+    }
+    const artifactMatch = url.pathname.match(/^\/api\/issues\/([^/]+)\/artifacts\/([^/]+)$/);
+    if (req.method === "GET" && artifactMatch) {
+      await handleArtifactContent(res, ctx, decodeURIComponent(artifactMatch[1]), decodeURIComponent(artifactMatch[2]));
       return;
     }
     if (req.method === "POST") {
@@ -362,6 +368,43 @@ async function runReflectionJob(ctx, { issue, issueId, actionId, runAgent }) {
   } finally {
     await saveDashboardState(ctx.statePath, ctx.state);
   }
+}
+
+// Resolve an artifact's on-disk path defensively (see resolveArtifactFilePath).
+function resolveArtifactPath(issue, relPath) {
+  return resolveArtifactFilePath(ROOT, issue, relPath);
+}
+
+async function handleArtifactContent(res, ctx, issueId, artifactId) {
+  const dashboard = await buildState(ctx);
+  const issue = dashboard.issues.find((item) => item.id === issueId);
+  if (!issue) return sendJson(res, 404, { error: "Issue not found" });
+  const artifacts = issue.automationSummary?.artifacts ?? [];
+  const artifact = artifacts.find((item) => item.displayId === artifactId || item.id === artifactId);
+  if (!artifact || !artifact.path) return sendJson(res, 404, { error: "Artifact not found" });
+
+  const resolved = resolveArtifactPath(issue, artifact.path);
+  if (!resolved) return sendJson(res, 403, { error: "Artifact path is outside the allowed directory" });
+
+  let content;
+  try {
+    content = await fs.readFile(resolved, "utf8");
+  } catch {
+    return sendJson(res, 404, { error: "Artifact file not found" });
+  }
+  sendJson(res, 200, {
+    id: artifact.id,
+    displayId: artifact.displayId ?? null,
+    phase: artifact.phase ?? null,
+    title: artifact.title ?? null,
+    agent: artifact.agent ?? null,
+    decision: artifact.decision ?? null,
+    status: artifact.status ?? null,
+    createdAt: artifact.createdAt ?? null,
+    sha256: artifact.sha256 ?? null,
+    path: artifact.path,
+    content: redactSecrets(content),
+  });
 }
 
 async function buildState(ctx) {

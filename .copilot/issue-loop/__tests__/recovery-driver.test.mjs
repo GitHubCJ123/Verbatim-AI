@@ -196,7 +196,9 @@ describe("recoverRequirements", () => {
   });
 
   it("stays needs-human when allowAiDowngrade=false even if the council proceeds", async () => {
-    const config = enabledConfig(); // requirements.allowAiDowngrade stays false
+    const config = enabledConfig((c) => {
+      c.recovery.phases.requirements.allowAiDowngrade = false;
+    });
     const runModel = vi.fn(async () => jsonVote(PROCEED));
 
     const { decision } = await recoverRequirements({
@@ -511,12 +513,16 @@ describe("makeRunModel", () => {
 // ---------------------------------------------------------------------------
 
 describe("isSecuritySensitiveIssue", () => {
-  it("flags issues mentioning credentials, tokens, auth, or code execution", () => {
+  it("flags genuine security terms but not general engineering topics", () => {
     expect(isSecuritySensitiveIssue({ number: 1, title: "Store an API token", body: "" })).toBe(true);
     expect(isSecuritySensitiveIssue({ number: 2, title: "Bug", body: "the oauth login breaks" })).toBe(true);
-    expect(isSecuritySensitiveIssue({ number: 3, title: "RCE via exec", body: "" })).toBe(true);
-    expect(isSecuritySensitiveIssue({ number: 4, title: "CI pipeline", body: "sandbox permission denied" })).toBe(true);
-    expect(isSecuritySensitiveIssue({ number: 5, title: "Fix", body: "filesystem and network access" })).toBe(true);
+    expect(isSecuritySensitiveIssue({ number: 3, title: "RCE via command injection", body: "" })).toBe(true);
+    expect(isSecuritySensitiveIssue({ number: 4, title: "handle the private key and credentials", body: "" })).toBe(true);
+    // Narrowed on purpose: general engineering topics are NOT security-sensitive
+    // (security is reviewed at the spec/implementation phases, not requirements).
+    expect(
+      isSecuritySensitiveIssue({ number: 5, title: "CI pipeline", body: "sandbox a runtime binary with network access on the filesystem" }),
+    ).toBe(false);
   });
 
   it("does not flag a plain UI/formatting issue", () => {

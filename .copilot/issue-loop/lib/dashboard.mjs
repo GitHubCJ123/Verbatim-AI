@@ -287,10 +287,15 @@ export async function deriveIssueState({ root, issue, prs, localIssue, config = 
       ? `${artifact.displayId}: ${artifact.summary || artifact.title || artifact.path}`
       : fallback;
   };
+  const requirementsReason = automationSummary.phaseStatuses?.requirements?.status === "needs-human"
+    ? redactSafeText(automationSummary.phaseStatuses.requirements.details?.reason ?? "", 600)
+    : "";
   const derived = {
     requirements: {
       status: phaseStatus("requirements", requirements.status === "clear" ? "complete" : "needs-revision"),
-      output: artifactOutput("requirements", requirementsReview(issue, requirements)),
+      output: requirementsReason
+        ? `${requirementsReason}\n\n${artifactOutput("requirements", requirementsReview(issue, requirements))}`
+        : artifactOutput("requirements", requirementsReview(issue, requirements)),
       issueInputSha: requirements.issueInputSha,
       artifacts: phaseArtifacts("requirements"),
     },

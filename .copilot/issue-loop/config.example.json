@@ -116,7 +116,7 @@
       "requirements": {
         "enabled": true,
         "allowedTiers": ["primary", "requirementsCritic"],
-        "allowAiDowngrade": false,
+        "allowAiDowngrade": true,
         "allowAiDowngradeForSecuritySensitive": false
       },
       "spec-review": {

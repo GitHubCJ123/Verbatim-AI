@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   critiqueRequirements,
+  isSecuritySensitiveIssue,
   issueInputSha,
   latestRequirementsMarker,
   requirementsMarker,
@@ -26,6 +27,37 @@ describe("requirements critique", () => {
     expect(
       critiqueRequirements({ number: 1, title: "Bug", body: "broken", comments: [] }).status,
     ).toBe("needs-human");
+  });
+
+  it("clears well-structured feature/design issues without demanding repro steps", () => {
+    const issue = {
+      number: 40,
+      title: "Full multi-architecture model catalogue",
+      labels: [{ name: "enhancement" }],
+      body: "## Gap\nWe only run two engines today.\n\n## Proposed approach\n- Evaluate a GGUF multi-architecture engine as a sidecar so there is no in-process linking.\n\n## Non-goals\n- No in-process whisper.cpp linking.",
+      comments: [],
+    };
+    const critique = critiqueRequirements(issue);
+    expect(critique.status).toBe("clear");
+    expect(critique.issueType).toBe("feature");
+    expect(critique.questions.join(" ")).not.toMatch(/reproduction steps/i);
+  });
+
+  it("does not treat general engineering/security topics as security-sensitive", () => {
+    const design = {
+      number: 40,
+      title: "sidecar engine",
+      body: "Evaluate a sidecar engine with network access, exec of a runtime binary, and a release pipeline in CI.",
+      comments: [],
+    };
+    expect(isSecuritySensitiveIssue(design)).toBe(false);
+    const real = {
+      number: 41,
+      title: "harden",
+      body: "We must store a bearer token and handle the private key / api key for auth.",
+      comments: [],
+    };
+    expect(isSecuritySensitiveIssue(real)).toBe(true);
   });
 
   it("parses latest requirements markers", () => {

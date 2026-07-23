@@ -22,24 +22,17 @@ export function issueInputSha(issue) {
 // concrete terms (secrets, credentials, auth, permissions, sandbox/exec, RCE,
 // filesystem/network, CI, GitHub tokens, code execution).
 const SECURITY_SENSITIVE_PATTERNS = [
-  /secret/i,
-  /credential/i,
-  /\btokens?\b/i,
-  /\b(?:github|access|api|bearer)\s+tokens?\b/i,
-  /password|passphrase/i,
-  /\bauth\b|authentication|authorization|authori[sz]e|unauthori[sz]ed/i,
-  /permission/i,
-  /oauth/i,
-  /\bjwt\b/i,
-  /sandbox/i,
-  /\bexec\b|execute|execution|executable/i,
-  /\brce\b|remote code execution|code execution/i,
-  /file\s?system/i,
-  /\bnetwork\b/i,
-  /\bssrf\b|\bxss\b|\bcsrf\b|injection/i,
-  /\bapi keys?\b/i,
-  /private key/i,
-  /\bci\b|\bci\/cd\b|continuous integration/i,
+  /\bsecret(?:s)?\b/i,
+  /\bcredential/i,
+  /\bpassword|passphrase\b/i,
+  /\b(?:api|access|bearer|github|personal[- ]access)\s?tokens?\b/i,
+  /\bprivate\s?key\b|\bapi\s?keys?\b/i,
+  /\b(?:oauth|jwt|sso|saml)\b/i,
+  /authenticat|authori[sz]/i,
+  /\brce\b|remote code execution/i,
+  /\bssrf\b|\bxss\b|\bcsrf\b|sql\s?injection|command\s?injection/i,
+  /\bvulnerabilit|exploit|privilege escalation|sandbox escape\b/i,
+  /\bencryption\b|cryptograph/i,
 ];
 
 export function isSecuritySensitiveIssue(issue) {
@@ -50,30 +43,64 @@ export function isSecuritySensitiveIssue(issue) {
 export function critiqueRequirements(issue) {
   const body = issue.body ?? "";
   const text = issueInputText(issue);
+  const labels = (issue.labels ?? [])
+    .map((label) => (typeof label === "string" ? label : label?.name ?? ""))
+    .map((name) => name.toLowerCase());
   const findings = [];
   const questions = [];
 
-  if (body.trim().length < 80) {
-    questions.push("Please add the exact behavior you expected and what happened instead.");
-  }
-  if (!/(error|404|not found|expected|actual|steps?|when i|selected|clicked|install|crash|quota|security|leak|bug|fails?)/i.test(text)) {
-    questions.push("Please add reproduction steps, expected behavior, and observed behavior.");
-  }
-  if (/(store|hardcode|add|expose)\s+(a\s+)?(secret|token|credential|password)/i.test(text)) {
-    questions.push("This appears to require handling credentials or secrets; a maintainer should scope it manually.");
+  const isBug =
+    labels.includes("bug") ||
+    /\b(bug|crash(?:es|ed|ing)?|regression|broken|does\s?n['’]?t\s+work|not\s+working|stack\s?trace|exception|throws?)\b/i.test(text);
+  const isFeatureType = labels.some((label) =>
+    ["enhancement", "feature", "design", "proposal", "docs", "documentation", "refactor", "chore", "task"].includes(label),
+  );
+  // A structured proposal (problem/approach/acceptance/goals/etc.) is enough to
+  // draft a spec, regardless of issue type.
+  const wellStructured =
+    /(?:^|\n)\s*#{1,6}\s*(problem|gap|goal|non[- ]goals?|proposed|proposal|approach|solution|design|scope|acceptance|requirements?|context|why|background|tasks?|plan|summary)\b/i.test(body) ||
+    /acceptance criteria|proposed (?:approach|fix|solution|change|design)|non[- ]goals?|success (?:criteria|metric)/i.test(text);
+
+  const hasDiagnostics =
+    /https?:\/\/\S+|HTTP status|\b404\b|not found|stack\s?trace|screenshot|attachment|\berror\b|\bexception\b|quota/i.test(text);
+  const hasReproContext =
+    /(steps?|repro|reproduc|when i|selected|clicked|opened|installed|\b1\.|\b2\.)/i.test(text);
+  const substantial = body.trim().length >= 200;
+
+  // Clear-enough to draft a spec if ANY strong signal is present. We lean toward
+  // "clear": spec review, adversarial review, and the human PR-merge gate still
+  // guard everything downstream, so the requirements gate only stops genuinely
+  // empty/ambiguous issues.
+  const actionable =
+    wellStructured || substantial || hasDiagnostics || (isFeatureType && body.trim().length >= 80);
+
+  if (!actionable) {
+    if (body.trim().length < 80) {
+      questions.push("Add the outcome you want, who it is for, and how we will know it is done (acceptance criteria).");
+    } else if (isBug && !hasReproContext) {
+      questions.push("For this bug, add reproduction steps, expected behavior, and observed behavior.");
+    } else {
+      questions.push("Clarify the concrete change requested and its acceptance criteria.");
+    }
   }
 
-  if (/https?:\/\/\S+|HTTP status|404|stack|trace|screenshot|attachment/i.test(text)) {
-    findings.push("Issue includes concrete diagnostic evidence.");
+  // Narrow secret-handling flag: only when the issue asks to handle REAL
+  // credentials/secrets, not merely mentions security topics in a design.
+  if (
+    /(store|hardcode|hard-code|embed|commit|expose|leak|print|log)\s+(?:a\s+|the\s+|real\s+|production\s+)?(secret|token|credential|password|passphrase|api\s?key|private\s?key)/i.test(text)
+  ) {
+    questions.push("This appears to require handling real credentials/secrets; a maintainer should scope it manually.");
   }
-  if (/\b(1\.|2\.|when|selected|clicked|opened|installed)\b/i.test(text)) {
-    findings.push("Issue includes reproduction context.");
-  }
+
+  if (wellStructured) findings.push("Issue is well-structured (problem/approach/acceptance context present).");
+  if (hasDiagnostics) findings.push("Issue includes concrete diagnostic evidence.");
+  if (isBug && hasReproContext) findings.push("Bug includes reproduction context.");
 
   const status = questions.length === 0 ? "clear" : "needs-human";
   return {
     status,
     issueInputSha: issueInputSha(issue),
+    issueType: isBug ? "bug" : isFeatureType || wellStructured ? "feature" : "unknown",
     summary:
       status === "clear"
         ? "Requirements are clear enough to draft a spec without a human requirements gate."

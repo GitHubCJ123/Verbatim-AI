@@ -108,8 +108,10 @@ export const DEFAULT_CONFIG = {
       requirements: {
         enabled: true,
         allowedTiers: ["primary", "requirementsCritic"],
-        // Hard safety invariant: AI may never clear a security-sensitive issue.
-        allowAiDowngrade: false,
+        // The AI council may clear a regex-flagged non-security issue so the
+        // pipeline is not a dead-end. Security-sensitive issues (narrowly
+        // detected) can still never be AI-cleared.
+        allowAiDowngrade: true,
         allowAiDowngradeForSecuritySensitive: false,
       },
       "spec-review": {

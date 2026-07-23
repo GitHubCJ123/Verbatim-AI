@@ -33,16 +33,26 @@ import { acquireLock, releaseLock } from "./lib/recovery.mjs";
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const UI_DIR = path.join(ROOT, ".copilot/issue-loop/ui");
 
-// Merged config (config.example.json + config.local.json), memoized. Falling
-// back to DEFAULT_CONFIG keeps the dashboard usable even without a config file.
+// Merged config, memoized. Prefer config.local.json (what the service runs),
+// then the committed config.example.json, then the in-code DEFAULT_CONFIG. This
+// keeps the dashboard pointed at the operator's real repository/settings and
+// makes the loop portable to any project.
 let cachedConfig = null;
 async function getConfig() {
   if (cachedConfig) return cachedConfig;
-  try {
-    cachedConfig = await loadConfig();
-  } catch {
-    cachedConfig = DEFAULT_CONFIG;
+  const candidates = [
+    path.join(ROOT, ".copilot/issue-loop/config.local.json"),
+    path.join(ROOT, ".copilot/issue-loop/config.example.json"),
+  ];
+  for (const candidate of candidates) {
+    try {
+      cachedConfig = await loadConfig(candidate);
+      return cachedConfig;
+    } catch {
+      // Missing or invalid; fall through to the next candidate.
+    }
   }
+  cachedConfig = DEFAULT_CONFIG;
   return cachedConfig;
 }
 

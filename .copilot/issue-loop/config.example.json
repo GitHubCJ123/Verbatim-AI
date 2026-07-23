@@ -2,6 +2,7 @@
   "enabled": false,
   "dryRun": true,
   "repository": "GitHubCJ123/Verbatim-AI",
+  "projectName": "Verbatim AI",
   "baseBranch": "main",
   "pollIntervalSeconds": 300,
   "maxConcurrentIssues": 1,
@@ -72,6 +73,7 @@
     "heavyCommands": ["pnpm tauri build"],
     "runHeavyCommands": false,
     "allowHostExecution": false,
+    "allowedCommandPrefixes": ["corepack ", "pnpm ", "npm ", "cargo ", "git diff --check"],
     "sandboxCommand": "",
     "timeoutMinutes": 45
   },

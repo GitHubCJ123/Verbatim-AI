@@ -653,7 +653,7 @@ async function writeArchitectSpec(config, issue, specPath, runId, approvalNote =
   const result = await runCopilot(config, {
     role: "architect",
     worktree: ROOT,
-    prompt: architectPrompt(issue, path.relative(ROOT, specPath), approvalNote),
+    prompt: architectPrompt(issue, path.relative(ROOT, specPath), approvalNote, config.projectName),
   });
   if (result.code !== 0) throw new Error(result.stderr);
   const spec = normalizeAgentMarkdown(result.stdout, "Spec");
@@ -893,7 +893,7 @@ async function attemptImplementation(
   const runOpts = {
     role: "implementer",
     worktree: worktree.path,
-    prompt: implementerPrompt(issue, path.relative(worktree.path, specPath), specContent, reviewContent),
+    prompt: implementerPrompt(issue, path.relative(worktree.path, specPath), specContent, reviewContent, config.projectName),
   };
   if (modelOverride) runOpts.modelOverride = modelOverride;
   const result = await runCopilot(config, runOpts);
@@ -1065,7 +1065,7 @@ async function runImplementationRevisionPhase(
   const result = await runCopilot(config, {
     role: "implementer",
     worktree: worktreePath,
-    prompt: implementerPrompt(issue, path.relative(worktreePath, specPath), specContent, reviewContent),
+    prompt: implementerPrompt(issue, path.relative(worktreePath, specPath), specContent, reviewContent, config.projectName),
   });
   if (result.code !== 0) {
     await setDurablePhaseStatus(ROOT, issue, "implementation", "blocked", {
@@ -1223,7 +1223,7 @@ async function runAgentPrReviewPhase(config, issue, { pr, worktreePath, specPath
   const result = await runCopilot(config, {
     role: "agentPrReviewer",
     worktree: worktreePath,
-    prompt: prReviewPrompt(issue, pr, diff, specContent),
+    prompt: prReviewPrompt(issue, pr, diff, specContent, config.projectName),
   });
   if (result.code !== 0) {
     await setDurablePhaseStatus(ROOT, issue, "agent-pr-review", "blocked", {
@@ -1363,6 +1363,7 @@ async function repairForVerification(config, issue, { worktreePath, specPath, br
       "Verifier output:",
       redactSecrets(truncateForComment(failureText, 4000)),
     ].join("\n"),
+    config.projectName,
   );
   const result = await runCopilot(config, {
     role: "implementer",

@@ -27,11 +27,24 @@ import {
   issueState,
 } from "./lib/dashboard.mjs";
 import { appendRunlog } from "./lib/artifacts.mjs";
-import { DEFAULT_CONFIG } from "./lib/config.mjs";
+import { DEFAULT_CONFIG, loadConfig } from "./lib/config.mjs";
 import { acquireLock, releaseLock } from "./lib/recovery.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const UI_DIR = path.join(ROOT, ".copilot/issue-loop/ui");
+
+// Merged config (config.example.json + config.local.json), memoized. Falling
+// back to DEFAULT_CONFIG keeps the dashboard usable even without a config file.
+let cachedConfig = null;
+async function getConfig() {
+  if (cachedConfig) return cachedConfig;
+  try {
+    cachedConfig = await loadConfig();
+  } catch {
+    cachedConfig = DEFAULT_CONFIG;
+  }
+  return cachedConfig;
+}
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
@@ -239,8 +252,9 @@ async function handleRecover(req, res, ctx, issueId, phaseId) {
   }
 
   const stateIssue = issueState(ctx.state, issueId);
+  const recoveryConfig = await getConfig();
   const lockResult = acquireLock(stateIssue.recoveryLock, {
-    ttlMinutes: DEFAULT_CONFIG.recovery.locking.ttlMinutes,
+    ttlMinutes: recoveryConfig.recovery.locking.ttlMinutes,
     operation: `dashboard-recover:${phaseId}`,
   });
   if (!lockResult.ok) {
@@ -256,7 +270,7 @@ async function handleRecover(req, res, ctx, issueId, phaseId) {
       at: new Date().toISOString(),
     });
     action = startAction(ctx.state, issueId, phaseId, "recover-plan", "Planning recovery");
-    const plan = computeRecoveryPlan({ config: DEFAULT_CONFIG, phaseId });
+    const plan = computeRecoveryPlan({ config: recoveryConfig, phaseId });
     stateIssue.recoveryPlans ??= {};
     stateIssue.recoveryPlans[phaseId] = {
       plan,
@@ -292,7 +306,7 @@ async function handleRecover(req, res, ctx, issueId, phaseId) {
 
 async function runFeedbackJob(ctx, { issue, issueId, phaseId, phase, actionId, feedback, runAgent }) {
   try {
-    const prompt = feedbackPrompt(issue, phaseId, feedback, phase?.output ?? "");
+    const prompt = feedbackPrompt(issue, phaseId, feedback, phase?.output ?? "", (await getConfig()).projectName);
     const agentResult = await runTextAgent({
       prompt,
       allowAgentRuns: Boolean(ctx.args.allowAgentRuns && runAgent),
@@ -449,11 +463,12 @@ function uniqueNumbers(values) {
 
 async function safeGhIssues() {
   try {
+    const config = await getConfig();
     return await ghJson([
       "issue",
       "list",
       "--repo",
-      "GitHubCJ123/Verbatim-AI",
+      config.repository,
       "--state",
       "open",
       "--limit",
@@ -468,11 +483,12 @@ async function safeGhIssues() {
 
 async function safeGhPRs() {
   try {
+    const config = await getConfig();
     return await ghJson([
       "pr",
       "list",
       "--repo",
-      "GitHubCJ123/Verbatim-AI",
+      config.repository,
       "--state",
       "all",
       "--limit",
@@ -506,11 +522,12 @@ async function buildHistory() {
 
 async function safeGhClosedIssues() {
   try {
+    const config = await getConfig();
     return await ghJson([
       "issue",
       "list",
       "--repo",
-      "GitHubCJ123/Verbatim-AI",
+      config.repository,
       "--state",
       "closed",
       "--limit",

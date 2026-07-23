@@ -1,10 +1,15 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
+// Default project display name used in agent prompts. Overridable via
+// config.projectName so the loop can be applied to any project unchanged.
+export const DEFAULT_PROJECT_NAME = "Verbatim AI";
+
 export const DEFAULT_CONFIG = {
   enabled: false,
   dryRun: true,
   repository: "GitHubCJ123/Verbatim-AI",
+  projectName: DEFAULT_PROJECT_NAME,
   baseBranch: "main",
   pollIntervalSeconds: 300,
   maxConcurrentIssues: 1,
@@ -61,6 +66,7 @@ export const DEFAULT_CONFIG = {
     heavyCommands: ["pnpm tauri build"],
     runHeavyCommands: false,
     allowHostExecution: false,
+    allowedCommandPrefixes: ["corepack ", "pnpm ", "npm ", "cargo ", "git diff --check"],
     sandboxCommand: "",
     timeoutMinutes: 45,
   },

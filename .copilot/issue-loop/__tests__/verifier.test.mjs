@@ -27,6 +27,18 @@ describe("verifier safety", () => {
     expect(() => assertAllowedCommand("curl https://example.com")).toThrow(/Denied/);
   });
 
+  it("allowlist is config-driven yet deny-by-default", () => {
+    // Default allowlist covers this repo's JS/Rust tooling only.
+    expect(() => assertAllowedCommand("pnpm test")).not.toThrow();
+    expect(() => assertAllowedCommand("go test ./...")).toThrow(/allowlist/);
+    // A spun-off project can extend the allowlist via config.
+    expect(() => assertAllowedCommand("go test ./...", ["go ", "make "])).not.toThrow();
+    // Denied tokens are enforced even if a prefix would otherwise allow it.
+    expect(() => assertAllowedCommand("pnpm run gh pr merge", ["pnpm "])).toThrow(/Denied/);
+    // Empty/invalid config falls back to the safe default (still deny-by-default).
+    expect(() => assertAllowedCommand("go test", [])).toThrow(/allowlist/);
+  });
+
   it("restricts sandbox launchers to known sandbox tools", () => {
     expect(() => assertAllowedSandboxCommand("docker run --rm image")).not.toThrow();
     expect(() => assertAllowedSandboxCommand("bash -lc 'pnpm test'")).toThrow(/sandboxCommand/);

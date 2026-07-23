@@ -89,6 +89,24 @@ export const DEFAULT_CONFIG = {
     readOnlyTools: ["view"],
     timeoutMinutes: 15,
   },
+  skills: {
+    // Vendored best-practice skills (addyosmani/agent-skills, MIT) injected into
+    // each phase prompt. `dir` is a git submodule pinned to a release tag; bump
+    // the tag to re-sync. Disable by setting enabled:false.
+    enabled: true,
+    dir: "vendor/agent-skills",
+    maxChars: 8000,
+    roleSkills: {
+      requirements: "interview-me",
+      requirementsCritic: "interview-me",
+      architect: "spec-driven-development",
+      planner: "planning-and-task-breakdown",
+      implementer: "incremental-implementation",
+      verifier: "test-driven-development",
+      adversarialReviewer: "code-review-and-quality",
+      agentPrReviewer: "code-review-and-quality",
+    },
+  },
   recovery: {
     // On by default: once the loop itself is enabled, a blocked/needs-human
     // phase attempts bounded multi-model recovery before escalating to a human.

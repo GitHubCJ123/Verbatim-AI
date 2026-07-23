@@ -119,6 +119,44 @@ original single-model behavior (blocked gates stop for a human).
 Configure it under the `recovery` block in `config.example.json` (see
 `config.schema.json` for the full shape).
 
+## Best-practice skills (vendored)
+
+Each phase prompt is augmented with a vendored best-practice **skill** from
+[addyosmani/agent-skills](https://github.com/addyosmani/agent-skills) (MIT). The
+library is a pure prompt/skill collection; this loop is the engine that runs it.
+The skills ship as a git **submodule** pinned to a release tag under
+`vendor/agent-skills`, so they travel with the automation if it is spun off, and
+their MIT `LICENSE` is preserved.
+
+- Each role maps to one skill (`skills.roleSkills`): architect →
+  `spec-driven-development`, planner → `planning-and-task-breakdown`, implementer
+  → `incremental-implementation`, verifier → `test-driven-development`,
+  adversarial/PR reviewer → `code-review-and-quality`, requirements →
+  `interview-me` (its confidence-based assessment principles; its interactive
+  loop is never invoked non-interactively).
+- The relevant `SKILL.md` is stripped of frontmatter, bounded to
+  `skills.maxChars` (cut at a section heading), and appended to the phase prompt
+  as **trusted** guidance (clearly separated from untrusted issue content).
+- Disable entirely with `skills.enabled = false`.
+
+**Staying in sync with upstream:**
+
+```bash
+# One-time (fresh clone): pull the pinned submodule
+git submodule update --init .copilot/issue-loop/vendor/agent-skills
+
+# Adopt a newer upstream release
+cd .copilot/issue-loop/vendor/agent-skills
+git fetch --tags
+git checkout <new-tag>          # e.g. 0.6.5
+cd -
+git add .copilot/issue-loop/vendor/agent-skills
+git commit -m "chore(automation): bump agent-skills to <new-tag>"
+```
+
+Pinning to a tag (never a moving branch) keeps upstream changes reviewable: you
+adopt them deliberately by bumping the pin, never silently.
+
 ## Durable artifacts and IDs
 
 The loop writes durable summaries to `docs/automation/specs/issue-<number>-<slug>/artifacts/`:

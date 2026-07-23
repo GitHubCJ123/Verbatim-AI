@@ -1,6 +1,7 @@
 import { spawnFile } from "./process.mjs";
 import { modelFamily } from "./config.mjs";
 import { normalizeApprovalNote } from "./dashboard.mjs";
+import { withSkillGuidance } from "./skills.mjs";
 
 export function assertArchitectReviewerDiversity(config) {
   const architect = config.agents.architect.model;
@@ -47,7 +48,9 @@ export async function runCopilot(config, { role, prompt, worktree, modelOverride
       args.push("--deny-tool", deny);
     }
   }
-  args.push("-p", prompt);
+  // Inject the role's vendored best-practice skill (config-gated, bounded).
+  const finalPrompt = withSkillGuidance(config, role, prompt);
+  args.push("-p", finalPrompt);
   const timeoutMs = Math.max(1, Number(config.copilot?.timeoutMinutes) || 15) * 60_000;
   return spawnFile(config.copilot.command, args, { cwd: worktree, timeoutMs });
 }

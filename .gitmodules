@@ -1,0 +1,3 @@
+[submodule ".copilot/issue-loop/vendor/agent-skills"]
+	path = .copilot/issue-loop/vendor/agent-skills
+	url = https://github.com/addyosmani/agent-skills.git

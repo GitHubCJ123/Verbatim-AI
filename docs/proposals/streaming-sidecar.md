@@ -1,7 +1,8 @@
 # True token-level streaming transcription — dedicated streaming sidecar
 
 Issue: [#33](https://github.com/GitHubCJ123/Verbatim-AI/issues/33) — follow-up
-from #23 (P2.6) and #36. Status: **design + non-breaking app-side scaffold + guarded CI packaging hook**.
+from #23 (P2.6) and #36. Status: **design + non-breaking app-side scaffold +
+Settings UI toggle + guarded CI packaging hook**.
 The release pipeline now attempts to build and bundle the streaming sidecar when
 its source target is present; the first tagged release that includes the source
 still needs archive-level validation.
@@ -136,6 +137,14 @@ Overlay listener → setPartialText(...)                [src/overlay/Overlay.tsx
   Partials paint into the existing `partialText` state (same UI slot the chunked
   path uses). The final full-quality stop→transcribe path is **unchanged** and
   still replaces the partial.
+- **Settings UI** (Settings → Recording → "True token-level streaming") exposes
+  the opt-in toggle plus a live availability badge — `Ready` once
+  `is_streaming_sidecar_available` resolves `true` for the active compute
+  variant, or `Not available yet — falls back to live preview` otherwise. The
+  probe runs once on mount; the switch can be turned on ahead of the sidecar
+  binary being bundled since the overlay always falls back gracefully. The row
+  is also registered in `settingsRegistry.ts` so it's reachable from the Cmd+K
+  command palette.
 
 ### 2.5 Non-breaking guarantees & graceful fallback
 

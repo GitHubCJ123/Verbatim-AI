@@ -3,20 +3,46 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // Capture the tauri IPC surface so we can assert on the cancel-shortcut
 // arm/disarm calls the recording bridge makes. `vi.hoisted` keeps these
 // available inside the hoisted `vi.mock` factories below.
-const { invoke, emit } = vi.hoisted(() => ({
-  invoke: vi.fn(() => Promise.resolve()),
-  emit: vi.fn(() => Promise.resolve()),
-}));
+const { invoke, emit, listeners, ackConfig } = vi.hoisted(() => {
+  const listeners = new Map<string, (e: unknown) => void>();
+  const ackConfig = {
+    mode: "listening" as "listening" | "error" | "none",
+    drops: 0,
+  };
+  return {
+    listeners,
+    ackConfig,
+    invoke: vi.fn(() => Promise.resolve()),
+    // startRecording now waits for the overlay to ack `recording:listening`
+    // for the session it emitted. Simulate the overlay's response as soon as
+    // the bridge emits `recording:start`, honoring `ackConfig` so tests can
+    // exercise the error and retry paths.
+    emit: vi.fn((event: string, payload?: { sessionId?: number }) => {
+      if (event === "recording:start") {
+        if (ackConfig.drops > 0) {
+          ackConfig.drops -= 1; // simulate a dropped/throttled event
+          return Promise.resolve();
+        }
+        const sessionId = payload?.sessionId;
+        if (ackConfig.mode === "listening") {
+          listeners.get("recording:listening")?.({ payload: { sessionId } });
+        } else if (ackConfig.mode === "error") {
+          listeners
+            .get("recording:error")
+            ?.({ payload: { sessionId, message: "mic denied" } });
+        }
+      }
+      return Promise.resolve();
+    }),
+  };
+});
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 vi.mock("@tauri-apps/api/event", () => ({
   invoke,
   emit,
-  // The module attaches an `overlay:ready` listener at import time and
-  // gates startRecording on it — fire the callback immediately so the
-  // ready gate resolves without the 3s fallback timeout.
-  listen: (event: string, cb: () => void) => {
-    if (event === "overlay:ready") cb();
+  listen: (event: string, cb: (e: unknown) => void) => {
+    listeners.set(event, cb);
     return Promise.resolve(() => {});
   },
 }));
@@ -55,6 +81,8 @@ describe("recording bridge cancel-shortcut lifecycle", () => {
   beforeEach(() => {
     invoke.mockClear();
     emit.mockClear();
+    ackConfig.mode = "listening";
+    ackConfig.drops = 0;
   });
   afterEach(() => {
     vi.clearAllMocks();
@@ -67,6 +95,22 @@ describe("recording bridge cancel-shortcut lifecycle", () => {
       "recording:start",
       expect.objectContaining({ modeName: "Default" }),
     );
+  });
+
+  it("rejects and disarms when the overlay reports the mic failed to open", async () => {
+    ackConfig.mode = "error";
+    await expect(startRecording("Default", null, Date.now())).rejects.toThrow(
+      /mic denied/,
+    );
+    // Failure must disarm Esc-to-cancel so it never lingers.
+    expect(invoke).toHaveBeenCalledWith("disable_cancel_shortcut");
+  });
+
+  it("retries recording:start until the overlay acks", async () => {
+    ackConfig.drops = 2; // drop the first two emits, then ack
+    await startRecording("Default", null, Date.now());
+    const startEmits = emit.mock.calls.filter((c) => c[0] === "recording:start");
+    expect(startEmits.length).toBeGreaterThanOrEqual(3);
   });
 
   it("disarms the cancel shortcut when recording stops", async () => {

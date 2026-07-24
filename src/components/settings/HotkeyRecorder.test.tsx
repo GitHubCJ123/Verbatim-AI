@@ -62,6 +62,7 @@ function createSession() {
     onReset: vi.fn(),
     onCommit: vi.fn(),
     onFnCaptureUnavailable: vi.fn(),
+    onUnsupportedKey: vi.fn(),
     onError: vi.fn(),
   };
   return { session: new HotkeyCaptureSession(callbacks), callbacks };

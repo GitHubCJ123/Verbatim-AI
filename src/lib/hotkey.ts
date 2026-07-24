@@ -200,13 +200,18 @@ export async function installHotkeyListeners(): Promise<UnlistenFn> {
     try {
       await startRecording(mode.name, mode.id, pressedAt);
     } catch (e) {
-      if (gen === myGen) resetState();
-      // startRecording may have emitted `recording:start` before
-      // failing; stop defensively so the overlay/mic never strands.
-      try {
-        await stopRecording();
-      } catch {
-        /* ignore */
+      // Only tear down if we're still the active session. A superseded start
+      // (cancel or a newer press bumped `gen`) must NOT reset newer state or
+      // stop a newer recording — the current `gen` owner manages the overlay.
+      if (gen === myGen) {
+        resetState();
+        // startRecording may have emitted `recording:start` before failing;
+        // stop defensively so the overlay/mic never strands.
+        try {
+          await stopRecording();
+        } catch {
+          /* ignore */
+        }
       }
       console.error("[Verbatim AI] start failed", e);
       return;

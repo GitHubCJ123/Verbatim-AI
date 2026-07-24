@@ -310,25 +310,24 @@ function trajectoryView(issue) {
     return section;
   }
   const track = node("div", { class: "trajectory-track" });
-  arts.forEach((a, i) => {
-    if (i > 0) track.append(node("span", { class: "traj-arrow", text: "→" }));
-    track.append(trajectoryNode(issue, a));
-  });
+  arts.forEach((a, i) => track.append(trajectoryNode(issue, a, i + 1)));
   section.append(track);
   return section;
 }
 
-function trajectoryNode(issue, a) {
+function trajectoryNode(issue, a, step) {
   const decision = String(a.decision ?? "").toLowerCase();
   const tone = TRAJ_TONE[decision] ?? "neutral";
   const btn = node("button", { class: `traj-node traj-${tone}` });
   btn.type = "button";
   btn.title = `${a.displayId ?? a.id ?? "step"} — ${a.phase ?? ""}${a.decision ? ` — ${a.decision}` : ""} — ${fmtDate(a.createdAt)}`;
   btn.append(
+    node("span", { class: "traj-step", text: String(step ?? "") }),
     node("span", { class: "traj-phase", text: PHASE_SHORT[a.phase] ?? a.phase ?? "step" }),
     node("span", { class: "traj-id", text: a.displayId ?? "" }),
+    node("span", { class: "traj-decision", text: decision || "" }),
+    node("span", { class: "traj-time", text: fmtDate(a.createdAt) }),
   );
-  if (decision) btn.append(node("span", { class: "traj-decision", text: decision }));
   btn.addEventListener("click", () => void openArtifact(issue.id, a));
   return btn;
 }

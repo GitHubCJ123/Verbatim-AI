@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { ghJson } from "./lib/github.mjs";
 import {
   applyApproval,
+  applyRerun,
   buildPhaseView,
   canRecoverPhase,
   computeRecoveryPlan,
@@ -17,6 +18,7 @@ import {
   recordFeedback,
   recordReflection,
   reflectionPrompt,
+  RERUN_ELIGIBLE_PHASES,
   runTextAgent,
   runtimeDirFor,
   saveDashboardState,
@@ -156,6 +158,27 @@ async function handlePost(req, res, url, ctx) {
     rotateNonce(ctx.state);
     await saveDashboardState(ctx.statePath, ctx.state);
     sendJson(res, 200, { ok: true, issue: stateIssue, state: await buildState(ctx) });
+    return;
+  }
+
+  const rerun = url.pathname.match(/^\/api\/issues\/([^/]+)\/phases\/([^/]+)\/rerun$/);
+  if (rerun) {
+    const [, issueId, phaseId] = rerun;
+    if (!RERUN_ELIGIBLE_PHASES.has(phaseId)) {
+      return sendJson(res, 409, { error: "This phase cannot be re-run from the dashboard" });
+    }
+    const stateIssue = applyRerun(ctx.state, issueId, phaseId, {
+      note: body.note ?? body.feedback ?? "",
+      issueInputSha: body.issueInputSha,
+    });
+    await appendRunlog(ROOT, { number: Number(String(issueId).replace(/^gh-/, "")) || 0 }, {
+      type: "dashboard.rerun",
+      phaseId,
+      at: new Date().toISOString(),
+    });
+    rotateNonce(ctx.state);
+    await saveDashboardState(ctx.statePath, ctx.state);
+    sendJson(res, 202, { ok: true, issue: stateIssue, state: await buildState(ctx) });
     return;
   }
 

@@ -54,7 +54,7 @@ import {
   readIssueAutomationSummary,
   setDurablePhaseStatus,
 } from "./lib/artifacts.mjs";
-import { readDashboardApproval } from "./lib/dashboard.mjs";
+import { readDashboardApproval, readDashboardRerun } from "./lib/dashboard.mjs";
 import { evaluateSpecReview } from "./lib/spec-review.mjs";
 import { evaluateEligibility } from "./lib/eligibility.mjs";
 import { createBudget, emptyRecoveryState } from "./lib/recovery.mjs";
@@ -353,16 +353,44 @@ async function processIssue(config, issue, args) {
     });
   }
 
-  const review = await writeSpecAndReview(
-    config,
-    issue,
-    specDir,
-    specPath,
-    critique,
-    args,
-    runId,
-    requirementsApproval?.note ?? "",
+  // Spec-stage human gate. Once the adversarial review has asked for human
+  // input, STOP auto-re-drafting each tick (that is what produced 8+ churned
+  // spec versions on #73). Instead wait for the maintainer to either:
+  //   - Rerun this stage (with optional steering) -> re-draft with guidance, or
+  //   - Approve & continue -> advance using the EXISTING spec+review (no re-draft).
+  const reviewPathAbs = path.join(specDir, "adversarial-review.md");
+  const priorSummary = await readIssueAutomationSummary(ROOT, issue);
+  const specStageNeedsHuman = SPEC_STAGE_PHASES.some(
+    (phaseId) => priorSummary.phaseStatuses?.[phaseId]?.status === "needs-human",
   );
+  const humanRerun = specStageNeedsHuman ? await consumeHumanRerun(issue, critique.issueInputSha) : null;
+  const specApproval = specStageNeedsHuman
+    ? (await readDashboardApproval(ROOT, issue, "adversarial-review", { issueInputSha: critique.issueInputSha })) ??
+      (await readDashboardApproval(ROOT, issue, "spec-review", { issueInputSha: critique.issueInputSha }))
+    : null;
+
+  if (specStageNeedsHuman && humanRerun?.exhausted && !specApproval) {
+    await setDurablePhaseStatus(ROOT, issue, "adversarial-review", "needs-human", {
+      ...(priorSummary.phaseStatuses?.["adversarial-review"]?.details ?? {}),
+      reason: `Human rerun budget (${MAX_HUMAN_RERUNS}) exhausted. Approve & continue to proceed, or edit the issue/spec to reset.`,
+    });
+    console.log(`Issue #${issue.number}: rerun budget exhausted; awaiting Approve & continue.`);
+    return;
+  }
+  if (specStageNeedsHuman && !humanRerun && !specApproval) {
+    console.log(`Issue #${issue.number}: adversarial review awaiting human input; not re-drafting.`);
+    return;
+  }
+
+  let review;
+  if (specStageNeedsHuman && specApproval && !humanRerun) {
+    // Approve & continue: advance using the spec+review the maintainer reviewed.
+    review = await fs.readFile(reviewPathAbs, "utf8").catch(() => "");
+  } else {
+    // First draft, or a maintainer-steered re-run.
+    const steering = humanRerun?.note || requirementsApproval?.note || "";
+    review = await writeSpecAndReview(config, issue, specDir, specPath, critique, args, runId, steering);
+  }
   await maybeCommentRequirements(config, issue, critique, path.join(specDir, "requirements-review.md"));
   await maybeClaim(config, issue, branch);
 
@@ -543,6 +571,43 @@ async function maybeRecoverRequirements(config, issue, critique, specDir, runId,
 // implementation (recovery reached a deterministic proceed with no security
 // veto), false when it must stay blocked. When recovery is disabled this
 // reproduces the EXACT original block behavior (comment + durable status).
+const SPEC_STAGE_PHASES = ["adversarial-review", "spec-review"];
+const MAX_HUMAN_RERUNS = 3;
+
+// Consume a maintainer "Rerun this stage" request (single-use, bounded). Returns
+// { note } to steer a fresh spec+review draft, { exhausted: true } once the rerun
+// budget is spent, or null when there is nothing to do. Consumption is recorded
+// durably (merged into spec-review details) so one click == one re-run.
+async function consumeHumanRerun(issue, issueInputSha) {
+  const rerun = await readDashboardRerun(ROOT, issue, SPEC_STAGE_PHASES, { issueInputSha });
+  if (!rerun) return null;
+  const summary = await readIssueAutomationSummary(ROOT, issue);
+  const details = summary.phaseStatuses?.["spec-review"]?.details ?? {};
+  if (details.consumedRerunId === rerun.id) return null; // single-use per click
+  const count = Number(details.humanRerunCount ?? 0);
+  if (count >= MAX_HUMAN_RERUNS) return { exhausted: true, note: rerun.note ?? "" };
+  await setDurablePhaseStatus(ROOT, issue, "spec-review", "needs-revision", {
+    ...details,
+    consumedRerunId: rerun.id,
+    humanRerunCount: count + 1,
+    reason: `Human rerun ${count + 1}/${MAX_HUMAN_RERUNS}: ${truncateForComment(rerun.note || "(no steering)", 200)}`,
+  });
+  return { note: rerun.note ?? "", rerunId: rerun.id, count: count + 1 };
+}
+
+// Preserve the single-use rerun tracking (consumedRerunId + humanRerunCount)
+// across spec-review status writes, because setDurablePhaseStatus REPLACES
+// details. Without this, a recovery-blocked write would wipe consumedRerunId and
+// the same rerun click would be re-consumed every tick (infinite re-draft).
+async function preserveRerunTracking(issue, details) {
+  const summary = await readIssueAutomationSummary(ROOT, issue);
+  const current = summary.phaseStatuses?.["spec-review"]?.details ?? {};
+  const tracking = {};
+  if (current.consumedRerunId !== undefined) tracking.consumedRerunId = current.consumedRerunId;
+  if (current.humanRerunCount !== undefined) tracking.humanRerunCount = current.humanRerunCount;
+  return { ...tracking, ...details };
+}
+
 async function consumeHumanContinue(issue, phaseIds) {
   const inputSha = issueInputSha(issue);
   for (const phaseId of phaseIds) {
@@ -567,7 +632,12 @@ async function consumeHumanContinue(issue, phaseIds) {
 async function appendHumanGuidance(specPath, note) {
   if (!note || !note.trim()) return;
   const reviewPath = path.join(path.dirname(specPath), "adversarial-review.md");
-  const block = `\n\n## Human maintainer guidance (Continue)\n\n${redactSecrets(String(note)).slice(0, 4000)}\n`;
+  // Treat the maintainer note as untrusted: redact secrets and neutralize any
+  // prompt delimiters before it lands in a file that is later fed to agents.
+  const safeNote = redactSecrets(String(note))
+    .replace(/(?:BEGIN|END)_[A-Z0-9_]+/g, "[neutralized prompt delimiter]")
+    .slice(0, 4000);
+  const block = `\n\n## Human maintainer guidance (untrusted)\n\n${safeNote}\n`;
   await fs.appendFile(reviewPath, block).catch(() => {});
 }
 
@@ -622,10 +692,10 @@ async function maybeRecoverSpecReview(config, issue, specPath, review, runId) {
   }
   if (!decision?.proceed) {
     if (decision) {
-      await setDurablePhaseStatus(ROOT, issue, "spec-review", "needs-human", {
+      await setDurablePhaseStatus(ROOT, issue, "spec-review", "needs-human", await preserveRerunTracking(issue, {
         reason: decision.reason,
         recovery: decision.recovery,
-      });
+      }));
     }
     return blockAsBefore();
   }

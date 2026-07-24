@@ -480,7 +480,8 @@ textarea {
 }
 textarea:focus { outline: none; border-color: var(--accent); }
 .checkline { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: var(--fs-meta); }
-.form-row { display: flex; gap: 6px; }
+.form-row { display: flex; gap: 6px; flex-wrap: wrap; }
+.needs-human .form-row { justify-content: flex-end; gap: 8px; margin-top: 2px; }
 .phase-log { color: var(--muted); font: var(--fs-meta)/1.5 var(--ff-mono); white-space: pre-wrap; word-break: break-word; }
 
 /* ---- scan-all table ------------------------------------------------------ */

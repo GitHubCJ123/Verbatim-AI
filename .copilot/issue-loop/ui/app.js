@@ -496,12 +496,14 @@ function continueForm(issue, phase, outputText) {
   reasonBox.append(node("pre", { class: "attention-text", text: attention }));
   form.append(
     reasonBox,
-    node("label", { class: "field-label", text: "Feedback for the next automation tick" }),
+    node("label", { class: "field-label", text: "Steering (optional) — added to whichever action you choose" }),
   );
   const ta = node("textarea");
   ta.name = "feedback";
   ta.maxLength = 6000;
-  ta.placeholder = "Explain what to do next, any constraints, and what would make this phase safe to resume.";
+  ta.placeholder = phase.rerunnable
+    ? "Optional guidance, e.g. which findings to address on a re-run, or context to approve past them."
+    : "Explain what to do next, any constraints, and what would make this phase safe to resume.";
   ta.value = continueDrafts.get(draftKey) ?? "";
   ta.addEventListener("focus", () => openForms.add(key));
   ta.addEventListener("blur", () => openForms.delete(key));
@@ -510,21 +512,44 @@ function continueForm(issue, phase, outputText) {
     openForms.add(key);
   });
   form.append(ta);
+
   const rowBtns = node("div", { class: "form-row" });
-  const submit = node("button", { class: "btn btn-accent btn-mini", text: "Continue" });
-  submit.type = "submit";
-  rowBtns.append(submit);
+  // "Approve & continue" advances to the next stage using the current artifacts.
+  const approveContinue = node("button", { class: "btn btn-accent btn-mini", text: "Approve & continue →" });
+  approveContinue.type = "submit";
+  approveContinue.title = "Accept this stage and move to the next one (your steering is passed as a note).";
+  // "Rerun this stage" re-drafts spec + review with the steering (only where wired).
+  let rerunBtn = null;
+  if (phase.rerunnable) {
+    rerunBtn = node("button", { class: "btn btn-mini", text: "↻ Rerun this stage" });
+    rerunBtn.type = "button";
+    rerunBtn.title = "Re-run this stage (re-draft the spec and review) using your steering.";
+    rerunBtn.addEventListener("click", async () => {
+      rerunBtn.disabled = true;
+      const out = await post(`/api/issues/${issue.id}/phases/${phase.id}/rerun`, {
+        note: ta.value,
+        issueInputSha: issue.requirementsIssueInputSha,
+      });
+      rerunBtn.disabled = false;
+      if (out) {
+        continueDrafts.delete(draftKey);
+        toast("Rerun requested — this stage will re-run with your steering on the next tick.", "ok");
+      }
+    });
+    rowBtns.append(rerunBtn);
+  }
+  rowBtns.append(approveContinue);
   form.append(rowBtns);
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
     openForms.delete(key);
     const out = await post(`/api/issues/${issue.id}/phases/${phase.id}/continue`, {
-      feedback: ta.value,
+      feedback: ta.value || "Approved by maintainer; continue to the next stage.",
       issueInputSha: issue.requirementsIssueInputSha,
     });
     if (out) {
       continueDrafts.delete(draftKey);
-      toast("Feedback sent — automation will resume this step on the next tick.", "ok");
+      toast("Approved — automation will continue to the next stage.", "ok");
     }
   });
   return form;

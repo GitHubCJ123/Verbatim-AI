@@ -88,8 +88,11 @@ export function dashboardIssueId(issue) {
 }
 
 export function normalizeApprovalNote(note) {
+  // Redact secrets AND neutralize prompt delimiters: this note is stored in
+  // dashboard state and later injected into agent prompts (architect approval
+  // note) and written to spec artifacts, so it must be scrubbed at this source.
   return neutralizePromptDelimiters(
-    String(note ?? "").replace(/\r\n?/g, "\n").slice(0, APPROVAL_NOTE_MAX_CHARS),
+    redactSecrets(String(note ?? "").replace(/\r\n?/g, "\n")).slice(0, APPROVAL_NOTE_MAX_CHARS),
   ).slice(0, APPROVAL_NOTE_MAX_CHARS);
 }
 
@@ -110,6 +113,23 @@ export async function readDashboardApproval(root, issue, phaseId, { issueInputSh
 export async function readDashboardApprovalNote(root, issue, phaseId, options = {}) {
   const approval = await readDashboardApproval(root, issue, phaseId, options);
   return approval?.note ?? "";
+}
+
+// Read a pending "Rerun this stage" signal for the first matching phase.
+export async function readDashboardRerun(root, issue, phaseIds, { issueInputSha } = {}) {
+  if (!issueInputSha) return null;
+  let state;
+  try {
+    state = JSON.parse(await fs.readFile(statePathFor(root), "utf8"));
+  } catch {
+    return null;
+  }
+  const reruns = state?.issues?.[dashboardIssueId(issue)]?.reruns ?? {};
+  for (const phaseId of phaseIds) {
+    const rerun = reruns[phaseId];
+    if (rerun && rerun.issueInputSha === issueInputSha) return { ...rerun, phaseId };
+  }
+  return null;
 }
 
 export function applyApproval(state, issueId, phaseId, context) {
@@ -146,6 +166,41 @@ export function applyApproval(state, issueId, phaseId, context) {
     type: "approval",
     phaseId,
     message: `Approved ${phaseId}`,
+    createdAt: new Date().toISOString(),
+  });
+  return issue;
+}
+
+// Phases where "Rerun this stage" is meaningful (re-draft spec + adversarial
+// review with the maintainer's steering). Other needs-human phases only offer
+// "Approve & continue".
+export const RERUN_ELIGIBLE_PHASES = new Set(["adversarial-review", "spec-review"]);
+
+// Record a maintainer "Rerun this stage" request. Unlike applyApproval this does
+// NOT advance the pipeline: it stores a single-use rerun signal (with optional
+// steering) that the loop consumes before re-drafting, and shows the phase as
+// "needs-revision" (queued for re-run), never "approved".
+export function applyRerun(state, issueId, phaseId, context) {
+  const issue = issueState(state, issueId);
+  const note = normalizeApprovalNote(context?.note);
+  issue.reruns[phaseId] = {
+    id: randomUUID(),
+    issueId,
+    phaseId,
+    note: note.trim() ? note : "",
+    issueInputSha: context?.issueInputSha ? String(context.issueInputSha).slice(0, 128) : null,
+    createdAt: new Date().toISOString(),
+  };
+  setPhaseStatus(issue, phaseId, "needs-revision", {
+    source: "human-rerun",
+    message: `Rerun requested for ${phaseId}`,
+  });
+  markDownstreamNeedsRedo(issue, phaseId, "Maintainer requested a re-run of an upstream phase.");
+  issue.events.push({
+    id: randomUUID(),
+    type: "rerun",
+    phaseId,
+    message: `Rerun requested for ${phaseId}`,
     createdAt: new Date().toISOString(),
   });
   return issue;
@@ -232,6 +287,7 @@ export function buildPhaseView(issue, stateIssue, derived) {
       recovery: base.recovery ?? null,
       recoverable: canRecoverPhase(status),
       needsHuman,
+      rerunnable: needsHuman && RERUN_ELIGIBLE_PHASES.has(phase.id),
       blockedReason: needsHuman ? blockedReasonForPhase(base, transitions) : "",
       feedback,
       approvals,
@@ -558,6 +614,7 @@ export function issueState(state, issueId) {
   state.issues[issueId] ??= {
     overrides: {},
     approvals: {},
+    reruns: {},
     feedback: [],
     reflections: [],
     events: [],
@@ -566,6 +623,7 @@ export function issueState(state, issueId) {
   };
   state.issues[issueId].transitions ??= [];
   state.issues[issueId].activeActions ??= {};
+  state.issues[issueId].reruns ??= {};
   return state.issues[issueId];
 }
 

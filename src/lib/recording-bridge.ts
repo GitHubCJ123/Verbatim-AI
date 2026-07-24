@@ -54,6 +54,9 @@ const OVERLAY_REVIEW_SIZE = { width: 520, height: 360 };
 // failure rejects, so the hotkey state machine resets instead of believing it
 // is recording when it isn't.
 let sessionCounter = 0;
+// The session whose start handshake is currently allowed to retry. A newer
+// start, a stop, or a cancel moves this on, so an orphaned start stops pinging.
+let activeStartSession = 0;
 
 const START_RETRY_INTERVAL_MS = 200;
 const START_ACK_TIMEOUT_MS = 4000;
@@ -112,6 +115,7 @@ export async function startRecording(
   if (!overlay) throw new Error("overlay window unavailable");
 
   const sessionId = ++sessionCounter;
+  activeStartSession = sessionId;
 
   // Subscribe to the overlay's ack first so we never miss it.
   const ack = await listenForSessionAck(sessionId);
@@ -126,7 +130,15 @@ export async function startRecording(
   const emitStart = () =>
     void emit("recording:start", { modeName, modeId, pressedAt, sessionId });
   emitStart();
-  const retry = setInterval(emitStart, START_RETRY_INTERVAL_MS);
+  const retry = setInterval(() => {
+    // Stop retrying the moment this session is superseded (a newer start, a
+    // stop, or a cancel) so an orphaned start can't keep pinging the overlay.
+    if (activeStartSession !== sessionId) {
+      clearInterval(retry);
+      return;
+    }
+    emitStart();
+  }, START_RETRY_INTERVAL_MS);
 
   // Window chrome runs concurrently. Showing the overlay also wakes its
   // (possibly App-Nap-throttled) webview so it can receive the event.
@@ -168,11 +180,13 @@ export async function startRecording(
 }
 
 export async function stopRecording() {
+  activeStartSession = 0; // supersede any in-flight start handshake
   await disarmCancelShortcut();
   await emit("recording:stop", {});
 }
 
 export async function cancelRecording() {
+  activeStartSession = 0; // supersede any in-flight start handshake
   await disarmCancelShortcut();
   await emit("recording:cancel", {});
 }

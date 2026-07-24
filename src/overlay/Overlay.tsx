@@ -648,9 +648,10 @@ export default function Overlay() {
           sessionId?: number;
         }>("recording:start", (e) => {
           const sessionId = e.payload?.sessionId ?? 0;
-          // The bridge re-emits until we ack; ignore duplicates for a
-          // session we're already handling.
-          if (sessionId !== 0 && sessionId === handledSessionRef.current) return;
+          // The bridge re-emits until we ack; ignore duplicate deliveries and
+          // any stale retry from an older, superseded session so it can't
+          // clobber a newer recording.
+          if (sessionId !== 0 && sessionId <= handledSessionRef.current) return;
           handledSessionRef.current = sessionId;
           void start(
             e.payload?.modeName ?? "Default",

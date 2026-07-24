@@ -24,8 +24,6 @@ interface HotkeyRecorderProps {
   onChange: (spec: string) => void;
 }
 
-const FN_HINT_DISMISSED = "sw.hotkey.fnHintDismissed";
-
 const MODIFIER_LABEL: Record<string, string> = IS_MAC
   ? {
       CommandOrControl: "⌘",
@@ -93,6 +91,7 @@ interface CaptureCallbacks {
   onReset: () => void;
   onCommit: (spec: string) => void;
   onFnCaptureUnavailable: () => void;
+  onUnsupportedKey: (key: string) => void;
   onError: (message: string) => void;
 }
 
@@ -119,23 +118,24 @@ export class HotkeyCaptureSession {
     e.preventDefault();
     e.stopPropagation();
 
-    // A WebView key means this is not a bare-fn gesture. This deliberately
-    // runs before Escape/modifier handling so a late fn-up cannot win.
-    this.pendingFn = false;
-
     if (e.key === "Escape") {
+      // cleanup() sets done=true, which blocks any late fn-up from committing.
       void this.cleanup().catch((error) => this.reportError(error));
       return;
     }
 
     const modifier = modifierFromEvent(e);
     if (modifier) {
+      // A lone modifier keydown must NOT cancel a pending bare-fn gesture.
       if (!this.pendingModifiers.includes(modifier)) {
         this.pendingModifiers = [...this.pendingModifiers, modifier];
         this.callbacks.onPendingModifiersChange(this.pendingModifiers);
       }
       return;
     }
+
+    // A real (non-modifier) WebView key means this isn't a bare-fn gesture.
+    this.pendingFn = false;
 
     const mainKey = mainKeyFromEvent(e);
     if (!mainKey) return;
@@ -149,12 +149,16 @@ export class HotkeyCaptureSession {
     // Reject a bare alphanumeric/Space key on ALL platforms: registered as a
     // global shortcut it would hijack that key system-wide. Legitimate
     // single-key hotkeys are function keys (here) and fn / right-⌘ (native).
-    if (allModifiers.size === 0 && !isFunctionKey(mainKey)) return;
+    if (allModifiers.size === 0 && !isFunctionKey(mainKey)) {
+      this.callbacks.onUnsupportedKey(mainKey);
+      return;
+    }
 
     const spec =
       allModifiers.size === 0
         ? mainKey
         : [...allModifiers, mainKey].join("+");
+    this.callbacks.onUnsupportedKey("");
     void this.commit(spec);
   };
 
@@ -309,19 +313,13 @@ export class HotkeyCaptureSession {
   }
 }
 
-function isFnHintDismissed(): boolean {
-  return (
-    typeof localStorage !== "undefined" &&
-    localStorage.getItem(FN_HINT_DISMISSED) === "1"
-  );
-}
-
 export function HotkeyRecorder({ value, onChange }: HotkeyRecorderProps) {
   const [recording, setRecording] = useState(false);
   const [busy, setBusy] = useState(false);
   const [pendingModifiers, setPendingModifiers] = useState<string[]>([]);
   const [committed, setCommitted] = useState<string | null>(null);
   const [showFnHint, setShowFnHint] = useState(false);
+  const [unsupportedKey, setUnsupportedKey] = useState<string | null>(null);
   const mountedRef = useRef(true);
   const valueRef = useRef(value);
   const onChangeRef = useRef(onChange);
@@ -342,6 +340,8 @@ export function HotkeyRecorder({ value, onChange }: HotkeyRecorderProps) {
       onReset: ifMounted(() => {
         setPendingModifiers([]);
         setCommitted(null);
+        setUnsupportedKey(null);
+        setShowFnHint(false);
       }),
       onCommit: (spec) => {
         // Always propagate the committed spec — even if the recorder unmounted
@@ -350,9 +350,8 @@ export function HotkeyRecorder({ value, onChange }: HotkeyRecorderProps) {
         if (mountedRef.current) setCommitted(spec);
         onChangeRef.current(spec);
       },
-      onFnCaptureUnavailable: ifMounted(() => {
-        if (!isFnHintDismissed()) setShowFnHint(true);
-      }),
+      onFnCaptureUnavailable: ifMounted(() => setShowFnHint(true)),
+      onUnsupportedKey: ifMounted((key: string) => setUnsupportedKey(key || null)),
       onError: ifMounted((message) => {
         if (!handleInputMonitoringError(message)) {
           toast.error("Couldn't change the shortcut", { description: message });
@@ -370,7 +369,6 @@ export function HotkeyRecorder({ value, onChange }: HotkeyRecorderProps) {
   }, []);
 
   const dismissFnHint = () => {
-    localStorage.setItem(FN_HINT_DISMISSED, "1");
     setShowFnHint(false);
   };
 
@@ -471,9 +469,17 @@ export function HotkeyRecorder({ value, onChange }: HotkeyRecorderProps) {
 
       {helperContent}
 
-      {showFnHint && !recording && (
+      {recording && unsupportedKey && (
         <p className="max-w-[320px] text-right text-[11px] leading-snug text-text-muted">
-          Pressing fn needs Input Monitoring —{" "}
+          <Kbd>{unsupportedKey}</Kbd> can&apos;t be a global shortcut on its own —
+          add a modifier (⌘/⌃/⌥/⇧) or use a function key (F1–F24)
+          {IS_MAC ? " or fn" : ""}.
+        </p>
+      )}
+
+      {showFnHint && (
+        <p className="max-w-[320px] text-right text-[11px] leading-snug text-text-muted">
+          Pressing fn needs Input Monitoring (relaunch after enabling) —{" "}
           <button
             type="button"
             className="text-accent-start hover:underline"

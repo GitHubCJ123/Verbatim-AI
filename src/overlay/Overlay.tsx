@@ -111,6 +111,9 @@ export default function Overlay() {
   const startingRef = useRef<Promise<AudioController> | null>(null);
   const modeRef = useRef<Mode | null>(null);
   const hideRequestRef = useRef(0);
+  // Dedup guard: the bridge re-emits recording:start until we ack, so ignore
+  // duplicate deliveries for a session we're already handling.
+  const handledSessionRef = useRef(0);
 
   const hideAfter = async (ms: number) => {
     const request = ++hideRequestRef.current;
@@ -253,7 +256,7 @@ export default function Overlay() {
     sinks.push((frame) => segmenter.push(frame));
   };
 
-  const start = async (mode: string, modeId: string | null, pressedAt?: number) => {
+  const start = async (mode: string, modeId: string | null, pressedAt?: number, sessionId = 0) => {
     cancelPendingHide();
     setError(null);
     setErrorPresentation(null);
@@ -328,6 +331,9 @@ export default function Overlay() {
       if (startingRef.current === starting) {
         controllerRef.current = controller;
         setState("recording");
+        // Confirm to the bridge that the mic is actually open so the hotkey
+        // state machine can commit to "recording" (or stop cleanly).
+        if (sessionId) void emit("recording:listening", { sessionId });
         if (pressedAt && isPerfDebugEnabled()) {
           console.info(`[perf] press→listening ${Date.now() - pressedAt}ms`);
         }
@@ -339,6 +345,9 @@ export default function Overlay() {
       setError(msg);
       setErrorPresentation(null);
       setState("error");
+      // Tell the bridge the mic never opened so startRecording rejects and the
+      // hotkey state machine resets instead of believing it is recording.
+      if (sessionId) void emit("recording:error", { sessionId, message: msg });
       void hideAfter(2500);
     }
   };
@@ -625,32 +634,54 @@ export default function Overlay() {
   };
 
   useEffect(() => {
-    const offStart = listen<{ modeName?: string; modeId?: string | null; pressedAt?: number }>(
-      "recording:start",
-      (e) => {
-        void start(
-          e.payload?.modeName ?? "Default",
-          e.payload?.modeId ?? null,
-          e.payload?.pressedAt,
-        );
-      },
-    );
-    const offStop = listen("recording:stop", () => {
-      void stop();
-    });
-    const offCancel = listen("recording:cancel", () => {
-      cancelActive();
-    });
-    // Tell the main window we're alive so it doesn't drop a
-    // recording:start emitted before our listeners attached.
-    void emit("overlay:ready");
+    let unlisteners: Array<() => void> = [];
+    let disposed = false;
+    void (async () => {
+      // Subscribe BEFORE announcing readiness so a recording:start emitted by
+      // the main window can never race ahead of our listener and be silently
+      // dropped (the "mic never opens" bug).
+      const [offStart, offStop, offCancel] = await Promise.all([
+        listen<{
+          modeName?: string;
+          modeId?: string | null;
+          pressedAt?: number;
+          sessionId?: number;
+        }>("recording:start", (e) => {
+          const sessionId = e.payload?.sessionId ?? 0;
+          // The bridge re-emits until we ack; ignore duplicates for a
+          // session we're already handling.
+          if (sessionId !== 0 && sessionId === handledSessionRef.current) return;
+          handledSessionRef.current = sessionId;
+          void start(
+            e.payload?.modeName ?? "Default",
+            e.payload?.modeId ?? null,
+            e.payload?.pressedAt,
+            sessionId,
+          );
+        }),
+        listen("recording:stop", () => {
+          void stop();
+        }),
+        listen("recording:cancel", () => {
+          cancelActive();
+        }),
+      ]);
+      if (disposed) {
+        offStart();
+        offStop();
+        offCancel();
+        return;
+      }
+      unlisteners = [offStart, offStop, offCancel];
+      // Listeners are live now — tell the main window we're ready.
+      void emit("overlay:ready");
+    })();
     // Warm the Silero VAD session so the first recording's VAD paths
     // don't block on a cold model load. No-op if Silero is disabled.
     warmupSpeechModel();
     return () => {
-      void offStart.then((u) => u());
-      void offStop.then((u) => u());
-      void offCancel.then((u) => u());
+      disposed = true;
+      unlisteners.forEach((u) => u());
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

@@ -2,7 +2,7 @@
 
 Issue: [#33](https://github.com/GitHubCJ123/Verbatim-AI/issues/33) — follow-up
 from #23 (P2.6) and #36. Status: **design + non-breaking app-side scaffold +
-Settings UI toggle + guarded CI packaging hook**.
+Settings UI toggle + provider-kind gate + guarded CI packaging hook**.
 The release pipeline now attempts to build and bundle the streaming sidecar when
 its source target is present; the first tagged release that includes the source
 still needs archive-level validation.
@@ -133,18 +133,29 @@ Overlay listener → setPartialText(...)                [src/overlay/Overlay.tsx
   never throws into the audio callback — a rejected `start`/`push` is caught so
   the overlay can fall back.
 - **Overlay** wires a frame sink to the client **only** when
-  `sw.transcribe.trueStreaming === "1"` **and** the sidecar is available.
-  Partials paint into the existing `partialText` state (same UI slot the chunked
-  path uses). The final full-quality stop→transcribe path is **unchanged** and
-  still replaces the partial.
+  `sw.transcribe.trueStreaming === "1"`, the **active transcription engine
+  resolves to Local Whisper** (`isLocalWhisperTranscribeActive`, honoring any
+  per-Mode `transcribeProviderOverride` — the same override-resolution order
+  as `transcribeProvider()` and `getPrivacyStatus`), **and** the sidecar is
+  available. This keeps a Cloud or Parakeet transcription selection from
+  spinning up an unrelated local Whisper process just to paint a preview. The
+  session tier also honors a per-Mode `whisperTierOverride` (falling back to
+  the global tier setting), so the preview uses the same model as the actual
+  final transcription for that mode. Partials paint into the existing
+  `partialText` state (same UI slot the chunked path uses). The final
+  full-quality stop→transcribe path is **unchanged** and still replaces the
+  partial.
 - **Settings UI** (Settings → Recording → "True token-level streaming") exposes
-  the opt-in toggle plus a live availability badge — `Ready` once
+  the opt-in toggle plus a live status badge: `Ready` once
   `is_streaming_sidecar_available` resolves `true` for the active compute
-  variant, or `Not available yet — falls back to live preview` otherwise. The
-  probe runs once on mount; the switch can be turned on ahead of the sidecar
-  binary being bundled since the overlay always falls back gracefully. The row
-  is also registered in `settingsRegistry.ts` so it's reachable from the Cmd+K
-  command palette.
+  variant **and** Local Whisper is the active transcription engine; `Needs
+  Local Whisper as the transcription engine — falls back to live preview` if
+  the sidecar is available but a different engine is selected; or `Not
+  available yet — falls back to live preview` if the sidecar itself isn't
+  bundled. The probe runs once on mount; the switch can be turned on ahead of
+  the sidecar binary being bundled since the overlay always falls back
+  gracefully. The row is also registered in `settingsRegistry.ts` so it's
+  reachable from the Cmd+K command palette.
 
 ### 2.5 Non-breaking guarantees & graceful fallback
 
@@ -203,13 +214,28 @@ marker prints `{"type":"final","text":"final transcript"}`. Tests construct a
 4. A rejected `start`/`push` surfaces so the overlay can fall back; the client
    never throws into the audio callback.
 
+`localWhisper.test.ts` covers the provider-kind gate
+(`isLocalWhisperTranscribeActive`):
+
+1. Defaults `true` with no stored kind / no Mode (Local Whisper is the
+   fallback engine).
+2. `false` when the global kind is Parakeet; `true` when explicitly
+   Local Whisper.
+3. A Mode's `transcribeProviderOverride` always wins over the global kind,
+   in both directions.
+4. A stale persisted `"cloud"` kind coerces to Local Whisper while cloud
+   features are disabled — consistent with `effectiveTranscribeKind`
+   elsewhere, so the gate can't drift from the real active engine.
+
 ### 3.3 No-regression checks
 
 - Default-off assertion: `isTrueStreamingEnabled()` is `false` when the key is
   unset; existing `livePartial` and stop→transcribe tests are untouched and
   still green.
-- Overlay wiring is guarded by both the flag and availability, so the plain
-  push-to-talk path wires nothing (same discipline as `onFrame`/auto-stop).
+- Overlay wiring is guarded by the flag, the provider-kind gate, and sidecar
+  availability, so the plain push-to-talk path wires nothing (same discipline
+  as `onFrame`/auto-stop), and a Cloud/Parakeet transcription selection never
+  starts an unrelated local Whisper process.
 - Full suite gates: `cargo check`, `cargo test`, `tsc --noEmit`,
   `vitest run src/`, `pnpm lint` all pass.
 

@@ -34,7 +34,7 @@ import {
 import { getLocalWhisperTier, getWhisperComputePreference } from "../lib/ai/localWhisper";
 import { mergeRollingPartialText } from "../lib/transcribe/textMerge";
 import type { RecordingState } from "../lib/store/useRecording";
-import { getActiveProvider } from "../lib/ai";
+import { getActiveProvider, isLocalWhisperTranscribeActive } from "../lib/ai";
 import { getModeById, getDefaultMode, loadVocabulary } from "../lib/store/useModes";
 import { applyVocabReplacements } from "../lib/vocab";
 import { resizeOverlayToPill, resizeOverlayToReview } from "../lib/recording-bridge";
@@ -169,19 +169,30 @@ export default function Overlay() {
    * live-partial preview when active. Returns true if streaming was wired;
    * false (with no side effects) if unavailable, so the caller falls back to
    * the chunked path. The final stop→transcribe pipeline is never affected.
+   *
+   * Callers must gate on {@link isLocalWhisperTranscribeActive} first: the
+   * sidecar is a whisper-stream process, so it only makes sense as a preview
+   * when Local Whisper is also the active *transcription* engine. Otherwise
+   * a Cloud/Parakeet selection would still spin up an unrelated local
+   * Whisper process just to paint a preview.
    */
   const setupTrueStreaming = async (
+    mode: Mode | null,
     sinks: Array<(frame: Float32Array) => void>,
   ): Promise<boolean> => {
     const session = sessionRef.current;
     const compute = getWhisperComputePreference();
+    // Per-Mode tier override wins, mirroring transcribeProvider() in
+    // src/lib/ai/index.ts, so the preview uses the same model as the
+    // final transcription for this mode.
+    const tier = mode?.whisperTierOverride ?? getLocalWhisperTier();
     try {
       const available = await isStreamingSidecarAvailable(compute);
       // A stop/cancel may have superseded this recording during the probe.
       if (!available || sessionRef.current !== session) return false;
 
       const transcriber = new StreamingTranscriber({
-        tier: getLocalWhisperTier(),
+        tier,
         computePreference: compute,
         onPartial: (partial) => {
           if (sessionRef.current !== session) return;
@@ -296,13 +307,15 @@ export default function Overlay() {
       }
 
       // Live preview engines (opt-in). True token-level streaming (#33)
-      // supersedes the chunked pseudo-streaming preview when enabled and its
-      // sidecar is available; otherwise we fall back to the chunked path.
-      // Both are best-effort previews — the final stop→transcribe pipeline is
-      // authoritative and untouched.
+      // supersedes the chunked pseudo-streaming preview when enabled, the
+      // active transcription engine is Local Whisper (the only engine with a
+      // matching whisper-stream sidecar), and the sidecar is available;
+      // otherwise we fall back to the chunked path. Both are best-effort
+      // previews — the final stop→transcribe pipeline is authoritative and
+      // untouched.
       let previewWired = false;
-      if (isTrueStreamingEnabled()) {
-        previewWired = await setupTrueStreaming(sinks);
+      if (isTrueStreamingEnabled() && isLocalWhisperTranscribeActive(modeRef.current)) {
+        previewWired = await setupTrueStreaming(modeRef.current, sinks);
       }
       if (!previewWired && isLivePartialEnabled()) {
         setupLivePartial(modeRef.current, sinks);

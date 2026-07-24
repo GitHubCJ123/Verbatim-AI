@@ -280,6 +280,57 @@ function renderDetail() {
   // phase detail panel OR scan-all
   if (scanAll) detail.append(scanTable(issue));
   else detail.append(phasePanel(issue, currentPhase(issue)));
+
+  // full trajectory of every pipeline step (shows the back-and-forth loop)
+  detail.append(trajectoryView(issue));
+}
+
+// ---------------------------------------------------------------------------
+// trajectory: chronological strip of every artifact/step, including loop-backs
+// ---------------------------------------------------------------------------
+// Map a decision to an allowlisted tone (never derive a CSS class from the raw
+// decision string — keeps rendering injection-safe).
+const TRAJ_TONE = {
+  proceed: "ok", recovered: "ok", clear: "ok", approved: "ok", pass: "ok", complete: "ok",
+  "needs-human": "warn", "needs-revision": "warn", "needs-redo": "warn",
+  blocked: "bad", fail: "bad", failed: "bad", rejected: "bad",
+};
+
+function trajectoryView(issue) {
+  const arts = [...(issue?.automationSummary?.artifacts ?? [])]
+    .filter((a) => a && a.createdAt)
+    .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+  const section = node("section", { class: "trajectory" });
+  const head = node("div", { class: "trajectory-head" });
+  head.append(node("span", { class: "trajectory-title", text: "Trajectory" }));
+  head.append(node("span", { class: "trajectory-sub", text: arts.length === 1 ? "1 step" : `${arts.length} steps` }));
+  section.append(head);
+  if (!arts.length) {
+    section.append(node("div", { class: "empty-note", text: "No pipeline steps recorded yet." }));
+    return section;
+  }
+  const track = node("div", { class: "trajectory-track" });
+  arts.forEach((a, i) => {
+    if (i > 0) track.append(node("span", { class: "traj-arrow", text: "→" }));
+    track.append(trajectoryNode(issue, a));
+  });
+  section.append(track);
+  return section;
+}
+
+function trajectoryNode(issue, a) {
+  const decision = String(a.decision ?? "").toLowerCase();
+  const tone = TRAJ_TONE[decision] ?? "neutral";
+  const btn = node("button", { class: `traj-node traj-${tone}` });
+  btn.type = "button";
+  btn.title = `${a.displayId ?? a.id ?? "step"} — ${a.phase ?? ""}${a.decision ? ` — ${a.decision}` : ""} — ${fmtDate(a.createdAt)}`;
+  btn.append(
+    node("span", { class: "traj-phase", text: PHASE_SHORT[a.phase] ?? a.phase ?? "step" }),
+    node("span", { class: "traj-id", text: a.displayId ?? "" }),
+  );
+  if (decision) btn.append(node("span", { class: "traj-decision", text: decision }));
+  btn.addEventListener("click", () => void openArtifact(issue.id, a));
+  return btn;
 }
 
 function eligStrip(issue) {
@@ -438,9 +489,13 @@ function continueForm(issue, phase, outputText) {
   const key = `${issue.id}:${phase.id}:continue`;
   const draftKey = `${issue.id}:${phase.id}:continue`;
   const form = node("form", { class: "needs-human" });
+  form.append(node("div", { class: "needs-human-title", text: "Needs your input" }));
+  const attention = phase.attention || phase.blockedReason || firstLine(outputText) ||
+    "Automation is waiting for maintainer feedback before it can continue.";
+  const reasonBox = node("div", { class: "needs-human-reason" });
+  reasonBox.append(node("pre", { class: "attention-text", text: attention }));
   form.append(
-    node("div", { class: "needs-human-title", text: "Needs your input" }),
-    node("div", { class: "needs-human-reason", text: phase.blockedReason || firstLine(outputText) || "Automation is waiting for maintainer feedback before it can continue." }),
+    reasonBox,
     node("label", { class: "field-label", text: "Feedback for the next automation tick" }),
   );
   const ta = node("textarea");

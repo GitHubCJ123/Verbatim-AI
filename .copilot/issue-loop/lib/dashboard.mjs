@@ -225,6 +225,7 @@ export function buildPhaseView(issue, stateIssue, derived) {
       status,
       statusLabel,
       output: base.output,
+      attention: base.attention ?? "",
       path: base.path ?? null,
       artifacts: base.artifacts ?? [],
       sideEffect: phase.sideEffect,
@@ -389,6 +390,24 @@ export async function deriveIssueState({ root, issue, prs, localIssue, config = 
   for (const phaseId of ["requirements", "spec"]) {
     if (derived[phaseId]) derived[phaseId].recovery = recoveryView(automationSummary, phaseId);
   }
+  // Attention summaries: for phases awaiting human input, surface a concise,
+  // self-sufficient explanation so the maintainer can act without opening the
+  // full artifacts. Prefer the loaded review/critique text; fall back to the
+  // durable phase reason. The gate the UI shows for spec-review IS the
+  // adversarial-review phase, so its attention is the adversarial review.
+  const durableReason = (phaseId) =>
+    redactSafeText(automationSummary.phaseStatuses?.[phaseId]?.details?.reason ?? "", 700);
+  if (derived["adversarial-review"]) {
+    const specReviewReason = durableReason("spec-review");
+    const reviewBody = hasReview ? attentionText(spec.adversarialReview) : "";
+    derived["adversarial-review"].attention = [specReviewReason, reviewBody].filter(Boolean).join("\n\n");
+  }
+  if (derived.requirements) {
+    derived.requirements.attention = requirementsReason;
+  }
+  for (const phaseId of ["implementation", "agent-pr-review", "verification", "finalization", "human-pr-review"]) {
+    if (derived[phaseId]) derived[phaseId].attention = durableReason(phaseId);
+  }
   // Honesty pass: a phase that has neither a durable run status nor a real
   // artifact never actually ran, so the heuristic fallbacks above (e.g.
   // "requirements complete", "spec ready", downstream "blocked") are misleading.
@@ -466,6 +485,41 @@ function sanitizeSmallObject(value) {
 
 function redactSafeText(value, max = 1000) {
   return neutralizePromptDelimiters(redactSecrets(String(value ?? ""))).slice(0, max);
+}
+
+// Strip only the exact artifact envelope recordArtifact writes (leading HTML
+// comment + "# ID: Title" metadata block up to "## Body"); raw files pass through.
+export function stripArtifactEnvelope(text) {
+  let t = String(text ?? "");
+  if (!/^\s*<!--\s*verbatim-ai:artifact:/.test(t)) return t.trim();
+  t = t.replace(/^\s*<!--[\s\S]*?-->\s*/, "");
+  const bodyIdx = t.indexOf("\n## Body");
+  if (bodyIdx !== -1) t = t.slice(bodyIdx + "\n## Body".length);
+  return t.trim();
+}
+
+// A concise, redacted, delimiter-neutralized summary of what needs human
+// attention, bounded and cut at a line boundary so the maintainer can act
+// without opening the full artifact. Agent reviews put their preamble and tool
+// transcript first and the actual findings + DECISION line last, so when the
+// text is long we surface the tail (which contains the decision rationale).
+export function attentionText(raw, max = 1600) {
+  // Drop Copilot CLI tool-transcript decoration lines (●/│/└/✗/✓ ...) so the
+  // summary is prose findings, not a command log.
+  const denoised = String(stripArtifactEnvelope(raw))
+    .split(/\r?\n/)
+    .filter((line) => !/^\s*[●│└✗✓]/.test(line))
+    .join("\n");
+  const cleaned = neutralizePromptDelimiters(redactSecrets(denoised)).trim();
+  if (!cleaned || cleaned.length <= max) return cleaned;
+  if (/[A-Z_]+_DECISION:\s*\S+/.test(cleaned)) {
+    const tail = cleaned.slice(cleaned.length - max);
+    const nl = tail.indexOf("\n");
+    return `…(earlier steps omitted)\n${(nl !== -1 ? tail.slice(nl + 1) : tail).trim()}`;
+  }
+  const head = cleaned.slice(0, max);
+  const nl = head.lastIndexOf("\n");
+  return `${(nl > max * 0.6 ? head.slice(0, nl) : head).trimEnd()}\n\n…(open the artifact for the full text)`;
 }
 
 function normalizedLabels(labels = []) {

@@ -1085,13 +1085,30 @@ async function attemptImplementation(
   };
   if (modelOverride) runOpts.modelOverride = modelOverride;
   const result = await runCopilot(config, runOpts);
-  if (result.code !== 0) {
+  // A timeout (exit 124) is not necessarily a failed run: the implementer often has
+  // already written substantial, valid work. Throwing it away wasted the whole run
+  // and forced a from-scratch retry. Salvage it instead - the result still faces the
+  // secret scan, agent PR review, verification and the required human merge, and it
+  // lands as a DRAFT PR, so preserving partial work is safe.
+  const timedOut = result.code === 124 || /\[timed out after \d+ms\]/.test(String(result.stderr ?? "") + String(result.stdout ?? ""));
+  if (result.code !== 0 && !timedOut) {
     return { ok: false, kind: "error", stderr: result.stderr };
   }
 
   const decision = parseDecisionLine(result.stdout, "IMPLEMENTATION_DECISION", ["ready", "blocked"]);
-  if (decision !== "ready") {
+  if (decision !== "ready" && !timedOut) {
     return { ok: false, kind: "blocked", stdout: result.stdout, decision };
+  }
+  if (timedOut) {
+    // Only salvage a timeout that actually produced changes; otherwise report it.
+    await git(["add", "-A"], worktree.path);
+    const pending = await git(["diff", "--cached", "--name-only"], worktree.path);
+    if (!pending.trim()) {
+      return { ok: false, kind: "error", stderr: "Implementer timed out with no file changes." };
+    }
+    console.log(
+      `Issue #${issue.number}: implementer timed out but produced changes in ${pending.trim().split("\n").length} file(s); preserving them as a draft PR for review.`,
+    );
   }
 
   await git(["add", "-A"], worktree.path);
@@ -1124,6 +1141,7 @@ async function attemptImplementation(
     specPath,
     worktreePath: worktree.path,
     headSha,
+    partial: timedOut,
   });
   const files = stagedFiles
     .split("\n")
@@ -1354,12 +1372,14 @@ async function runImplementationRevisionPhase(
   return { headSha };
 }
 
-async function createDraftPr(config, issue, { branch, specPath, worktreePath, headSha }) {
-  const title = `Implement issue #${issue.number}: ${issue.title}`;
+async function createDraftPr(config, issue, { branch, specPath, worktreePath, headSha, partial = false }) {
+  const title = `${partial ? "[partial] " : ""}Implement issue #${issue.number}: ${issue.title}`;
   const body = [
     `Closes #${issue.number}`,
     "",
-    "Automation draft PR.",
+    partial
+      ? "Automation draft PR (PARTIAL). The implementer hit its time budget before signalling completion, so this contains the work it had produced. Treat it as a starting point: agent PR review and verification still run, and it must not be merged until complete."
+      : "Automation draft PR.",
     "",
     `Spec: ${path.relative(ROOT, specPath)}`,
     `Head SHA: ${headSha}`,

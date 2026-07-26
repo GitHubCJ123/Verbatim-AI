@@ -139,6 +139,23 @@ function pickMimeType(): string {
   return "";
 }
 
+/**
+ * Adopt a native session Rust's push-to-talk hot path already started
+ * (issue #53), instead of arming + starting a new one. Unlike
+ * `startRecording`'s native branch, this never falls back to WebAudio on
+ * failure — Rust has already committed to a native session, so starting a
+ * second (WebAudio) capture on top of it would double-record instead of
+ * recovering. Callers should treat a rejection the same as any other
+ * `AudioControllerOptions.onError` — the caller decides how to present it.
+ */
+export async function adoptNativeRecording(
+  sessionId: number,
+  opts: AudioControllerOptions = {},
+): Promise<AudioController> {
+  const { adoptNativeRecording: adopt } = await import("./nativeAudio");
+  return adopt(sessionId, opts);
+}
+
 export async function startRecording(opts: AudioControllerOptions = {}): Promise<AudioController> {
   // Route 3B (docs/proposals/handy-adoption.md §Phase 3): when opted in, capture
   // in Rust (cpal + rubato) instead of MediaRecorder. Default off keeps the

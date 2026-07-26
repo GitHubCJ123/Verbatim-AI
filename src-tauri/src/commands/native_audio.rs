@@ -17,7 +17,7 @@ use base64::Engine as _;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{FromSample, Sample, SizedSample};
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 /// Target sample rate handed to the ASR engines.
 const TARGET_SAMPLE_RATE: u32 = 16_000;
@@ -46,6 +46,15 @@ const LEVEL_EMITS_PER_SEC: u32 = 20;
 /// dictations avoid reopen latency while the macOS mic indicator still drops.
 const IDLE_DISARM_AFTER: Duration = Duration::from_secs(45);
 
+/// Common-case recording length (seconds) the session buffer is pre-sized
+/// for, so the realtime cpal callback's `Vec::push` rarely pays for growth
+/// (issue #53, N4). Longer recordings still work — the `Vec` just grows
+/// normally past this point, off the hot path.
+const INITIAL_RECORDING_SECONDS: usize = 30;
+
+/// Event name for a sanitized mid-session capture failure (issue #53, S2).
+const ERROR_EVENT: &str = "native_audio:error";
+
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct LevelPayload {
@@ -64,9 +73,27 @@ struct FramePayload {
     data: String,
 }
 
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ErrorPayload {
+    /// The session active when the failure occurred, if any. Absent when the
+    /// stream errors while idle (armed but no recording in progress).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    session_id: Option<u64>,
+    /// Stable, short error code — never a raw OS/backend message on its own.
+    code: &'static str,
+    /// Short, sanitized diagnostic string. Never a path, device unique id,
+    /// transcript, or raw audio.
+    message: String,
+    /// Whether the app can reasonably retry without user action. Always
+    /// `false` today — no automatic stream recovery is implemented.
+    recoverable: bool,
+}
+
 enum AudioEvent {
     Level { session_id: u64, rms: f32 },
     Frame { session_id: u64, frame: Vec<f32> },
+    Error { session_id: Option<u64>, code: &'static str, message: String, recoverable: bool },
 }
 
 /// Streaming linear-interpolation resampler that converts a mono sample stream
@@ -202,6 +229,20 @@ impl SharedAudioState {
         self.stream_frames = stream_frames;
         if !stream_frames {
             self.frame_resampler = None;
+        } else if self.frame_resampler.is_none() {
+            // The Rust-first PTT hot path (issue #53) arms *before* JS has
+            // resolved the mode, so it always requests `stream_frames: false`
+            // (it doesn't yet know whether live-partial/VAD auto-stop needs
+            // frames). JS re-arms with the resolved value right after
+            // adopting the session; wire the resampler on immediately for an
+            // already-active session instead of waiting for the next
+            // `start_session` (which would never come for an adopted
+            // session that's already recording).
+            if let Some(session_id) = self.active_session_id {
+                if self.sessions.contains_key(&session_id) {
+                    self.frame_resampler = Some(FrameResampler::new(self.src_rate));
+                }
+            }
         }
     }
 
@@ -230,7 +271,18 @@ impl SharedAudioState {
         // (including a stopped-but-never-taken one) so they can't accumulate.
         self.active_session_id = None;
         self.sessions.clear();
-        let samples = self.pre_roll_snapshot(pre_roll_ms);
+        let mut samples = self.pre_roll_snapshot(pre_roll_ms);
+        // N4: reserve enough capacity for a common-case recording up front so
+        // the realtime callback's per-sample `push` below rarely triggers an
+        // amortized-growth reallocation+copy. Recordings longer than
+        // `INITIAL_RECORDING_SECONDS` still work; the `Vec` just grows
+        // normally past this point.
+        let initial_capacity = (self.src_rate as usize)
+            .saturating_mul(INITIAL_RECORDING_SECONDS)
+            .saturating_add(samples.len());
+        if samples.capacity() < initial_capacity {
+            samples.reserve(initial_capacity - samples.capacity());
+        }
         self.sessions.insert(
             session_id,
             SessionBuffer {
@@ -300,11 +352,42 @@ struct EngineWorker {
     join: Option<JoinHandle<()>>,
 }
 
+/// Config the Rust-first push-to-talk hot path (issue #53) needs to start
+/// native capture synchronously, cached by `configure_native_ptt_hotpath`
+/// whenever the frontend's recording-engine setting, pre-roll, or mic device
+/// changes — never read or written at key-down time by the frontend.
+#[derive(Clone, Default)]
+struct PttArmConfig {
+    /// Mirrors `isNativeCaptureEnabled()` (recording engine != "standard").
+    /// The hot path never starts native capture when this is `false`, so
+    /// Standard/WebAudio recording is completely untouched.
+    enabled: bool,
+    pre_roll_ms: u32,
+    device_name: Option<String>,
+    keep_warm: bool,
+    stream_frames: bool,
+}
+
+/// Tracks a session the Rust-first hot path itself started, from key-down
+/// until JS has taken (or cancelled) its buffer. Self-limiting: while a
+/// stopped-but-not-yet-taken session is tracked, a new key-down declines to
+/// start another one, because the engine only ever buffers a single session
+/// (`start_session` drops any prior untaken buffer) — starting a second one
+/// here would otherwise race JS's `take_native_recording` and silently drop
+/// audio.
+#[derive(Clone, Copy, Default)]
+struct PttTracker {
+    session_id: Option<u64>,
+    stopped: bool,
+}
+
 /// Tauri managed state for the warm native capture engine.
 #[derive(Default)]
 pub struct NativeCaptureState {
     engine: Mutex<Option<EngineWorker>>,
     compat_session: Mutex<Option<u64>>,
+    ptt_hotpath: Mutex<PttArmConfig>,
+    ptt_tracker: Mutex<PttTracker>,
 }
 
 impl NativeCaptureState {
@@ -401,6 +484,12 @@ fn spawn_engine(app: AppHandle) -> EngineWorker {
                             session_id,
                             data: encode_frame(&frame),
                         },
+                    );
+                }
+                AudioEvent::Error { session_id, code, message, recoverable } => {
+                    let _ = app.emit(
+                        ERROR_EVENT,
+                        ErrorPayload { session_id, code, message, recoverable },
                     );
                 }
             }
@@ -704,7 +793,22 @@ where
     f32: FromSample<T>,
 {
     let channels = config.channels.max(1) as usize;
-    let err_fn = |err| eprintln!("[native_audio] stream error: {err}");
+    let err_shared = shared.clone();
+    let err_event_tx = event_tx.clone();
+    let err_fn = move |err: cpal::StreamError| {
+        eprintln!("[native_audio] stream error: {err}");
+        // Mid-session device loss / stream failure (issue #53, S2). Correlate
+        // to the active session if there is one so the overlay can react;
+        // the message is sanitized so no path, device unique id, or other
+        // backend-internal detail leaks to the frontend/logs.
+        let session_id = err_shared.lock().ok().and_then(|s| s.active_session_id);
+        let _ = err_event_tx.try_send(AudioEvent::Error {
+            session_id,
+            code: classify_stream_error(&err),
+            message: sanitize_stream_error_message(&err),
+            recoverable: false,
+        });
+    };
 
     let stream = device
         .build_input_stream(
@@ -743,6 +847,47 @@ where
         )
         .map_err(|e| format!("failed to build input stream: {e}"))?;
     Ok(stream)
+}
+
+/// Stable, short code for a cpal stream error (issue #53, S2). Never
+/// includes device names/ids or raw backend text — that goes in `message`,
+/// separately sanitized by `sanitize_stream_error_message`.
+fn classify_stream_error(err: &cpal::StreamError) -> &'static str {
+    match err {
+        cpal::StreamError::DeviceNotAvailable => "device_lost",
+        cpal::StreamError::BackendSpecific { .. } => "stream_error",
+    }
+}
+
+/// Longest `message` sent in a `native_audio:error` event. Backend-specific
+/// error text is bounded defensively even though cpal's own messages are
+/// short diagnostics, not user data.
+const MAX_ERROR_MESSAGE_LEN: usize = 200;
+
+/// Render a short, sanitized diagnostic for `native_audio:error`. Never
+/// includes filesystem paths, device unique ids, env vars, transcripts, or
+/// raw audio — cpal's `StreamError` never carries any of those, but the
+/// backend-specific text is still length-bounded defensively.
+fn sanitize_stream_error_message(err: &cpal::StreamError) -> String {
+    match err {
+        cpal::StreamError::DeviceNotAvailable => {
+            "The input device is no longer available.".to_string()
+        }
+        cpal::StreamError::BackendSpecific { .. } => {
+            let raw = err.to_string();
+            if raw.len() <= MAX_ERROR_MESSAGE_LEN {
+                raw
+            } else {
+                // Truncate on a char boundary so a multi-byte UTF-8 sequence
+                // is never split.
+                let mut end = MAX_ERROR_MESSAGE_LEN;
+                while !raw.is_char_boundary(end) {
+                    end -= 1;
+                }
+                format!("{}…", &raw[..end])
+            }
+        }
+    }
 }
 
 /// Encode a 16 kHz mono f32 frame as base64 of its little-endian bytes.
@@ -833,6 +978,32 @@ pub fn arm_native_capture(
     })
 }
 
+/// Cache the config the Rust-first push-to-talk hot path (`notify_ptt_down`)
+/// needs to start native capture synchronously from the hotkey tap / global
+/// shortcut callback, before any JS runs. The frontend calls this whenever
+/// the recording-engine setting, pre-roll, or mic device changes (from
+/// inside `syncNativeCaptureArm`, mirroring `arm_native_capture`) — never at
+/// key-down time.
+#[tauri::command]
+pub fn configure_native_ptt_hotpath(
+    state: State<'_, NativeCaptureState>,
+    enabled: bool,
+    pre_roll_ms: u32,
+    device_name: Option<String>,
+    keep_warm: bool,
+    stream_frames: bool,
+) -> Result<(), String> {
+    let mut cfg = state.ptt_hotpath.lock().map_err(|_| "capture state poisoned")?;
+    *cfg = PttArmConfig {
+        enabled,
+        pre_roll_ms: pre_roll_ms.min(500),
+        device_name,
+        keep_warm,
+        stream_frames,
+    };
+    Ok(())
+}
+
 /// Drop the warm stream and clear live capture markers. Stopped session buffers
 /// that have not yet been taken are preserved.
 #[tauri::command]
@@ -873,10 +1044,14 @@ pub fn take_native_recording(
     state: State<'_, NativeCaptureState>,
     session_id: u64,
 ) -> Result<Vec<f32>, String> {
-    match state.existing_client() {
+    let result = match state.existing_client() {
         Some(client) => client.request(|reply| EngineCommand::TakeSession { session_id, reply }),
         None => Ok(Vec::new()),
-    }
+    };
+    // JS has now taken this session's buffer — the hot path is free to start
+    // a fresh one on the next key-down instead of permanently declining.
+    clear_ptt_tracker_if(state.inner(), session_id);
+    result
 }
 
 /// Drop a session buffer without returning audio.
@@ -885,10 +1060,12 @@ pub fn cancel_native_session(
     state: State<'_, NativeCaptureState>,
     session_id: u64,
 ) -> Result<(), String> {
-    match state.existing_client() {
+    let result = match state.existing_client() {
         Some(client) => client.request(|reply| EngineCommand::CancelSession { session_id, reply }),
         None => Ok(()),
-    }
+    };
+    clear_ptt_tracker_if(state.inner(), session_id);
+    result
 }
 
 /// Whether the native stream is currently open (and therefore the OS mic
@@ -899,6 +1076,173 @@ pub fn is_native_capture_armed(state: State<'_, NativeCaptureState>) -> bool {
         .existing_client()
         .map(|client| client.armed.load(Ordering::SeqCst))
         .unwrap_or(false)
+}
+
+// ── Rust-first push-to-talk hot path (issue #53) ────────────────────────────
+//
+// `notify_ptt_down` / `notify_ptt_up` are plain functions (NOT tauri
+// commands) meant to be called directly from the `fn`/Right-⌘ CGEventTap
+// callback (commands/fn_hotkey.rs) and the global-shortcut handler
+// (commands/hotkey.rs), *before* either emits `hotkey:down` / `hotkey:up`.
+// They talk to the SAME warm-engine worker thread the tauri commands above
+// use — a fast local mpsc round-trip, never the realtime cpal callback —
+// so calling them from a dedicated OS event-tap thread is safe and matches
+// the existing command pattern exactly.
+//
+// Both are infallible from the caller's point of view: every failure or
+// "does not apply" case collapses to `started: false` / `stopped: false` so
+// the caller can unconditionally fall back to the existing JS-orchestrated
+// start/stop path, which already handles Standard/WebAudio and native-start
+// failures.
+
+/// Outcome of the Rust-first push-to-talk hot path on key-down.
+#[derive(Clone, Copy)]
+pub struct PttStartOutcome {
+    /// The native session id, when the hot path started (or re-adopted) one.
+    pub session_id: Option<u64>,
+    /// Whether *this* call resulted in an active native session. When
+    /// `false`, the existing JS-orchestrated start path should run exactly
+    /// as it does today.
+    pub started: bool,
+}
+
+/// Outcome of the Rust-first push-to-talk hot path on key-up.
+#[derive(Clone, Copy)]
+pub struct PttStopOutcome {
+    /// The hot-path-tracked session id, if any (regardless of whether the
+    /// stop itself succeeded).
+    pub session_id: Option<u64>,
+    /// Whether the native engine confirmed the session is now inactive.
+    pub stopped: bool,
+}
+
+/// Pure decision for `notify_ptt_down`, given the current tracker + config.
+/// Separated out so the interesting logic (duplicate-down adoption, the
+/// self-limiting decline while a previous session is un-taken, and the
+/// enabled/disabled gate) is unit-testable without a live `AppHandle`.
+enum PttDownDecision {
+    /// Re-adopt an already-active hot-path session (duplicate key-down).
+    Adopt { session_id: u64 },
+    /// Start a brand new native session.
+    Start,
+    /// Do nothing; the existing JS-orchestrated path should run instead.
+    Decline,
+}
+
+fn decide_ptt_down(tracker: PttTracker, cfg: &PttArmConfig) -> PttDownDecision {
+    if let Some(session_id) = tracker.session_id {
+        if !tracker.stopped {
+            // Auto-repeat / re-press while still held: same session, not a
+            // new one.
+            return PttDownDecision::Adopt { session_id };
+        }
+        // A previous hot-path session was stopped but JS hasn't taken (or
+        // cancelled) its buffer yet. The engine only ever buffers one
+        // session — starting another here would race JS's
+        // `take_native_recording` and silently drop audio. Decline; the
+        // existing JS-orchestrated path is no worse off than it is today.
+        return PttDownDecision::Decline;
+    }
+    if !cfg.enabled {
+        return PttDownDecision::Decline;
+    }
+    PttDownDecision::Start
+}
+
+/// Clear the push-to-talk tracker once JS has actually consumed (or
+/// discarded) the session, so a subsequent `notify_ptt_down` is free to
+/// start fresh instead of permanently declining after one hot-path session.
+fn clear_ptt_tracker_if(state: &NativeCaptureState, session_id: u64) {
+    if let Ok(mut tracker) = state.ptt_tracker.lock() {
+        if tracker.session_id == Some(session_id) {
+            *tracker = PttTracker::default();
+        }
+    }
+}
+
+/// Rust-first push-to-talk hot path: call directly from the `fn` /
+/// Right-⌘ CGEventTap callback and the global-shortcut handler, *before*
+/// emitting `hotkey:down`, so native Fast/Instant capture starts without any
+/// JS/webview round trip. Never blocks on JS, network, active-window lookup,
+/// or the realtime audio callback, and never panics.
+pub fn notify_ptt_down(app: &AppHandle) -> PttStartOutcome {
+    const DECLINE: PttStartOutcome = PttStartOutcome { session_id: None, started: false };
+
+    let Some(state) = app.try_state::<NativeCaptureState>() else {
+        return DECLINE;
+    };
+    let tracker = state.ptt_tracker.lock().map(|g| *g).unwrap_or_default();
+    let cfg = match state.ptt_hotpath.lock() {
+        Ok(guard) => guard.clone(),
+        Err(_) => return DECLINE,
+    };
+
+    match decide_ptt_down(tracker, &cfg) {
+        PttDownDecision::Adopt { session_id } => {
+            PttStartOutcome { session_id: Some(session_id), started: true }
+        }
+        PttDownDecision::Decline => DECLINE,
+        PttDownDecision::Start => {
+            let client = match state.client(Some(app)) {
+                Ok(client) => client,
+                Err(_) => return DECLINE,
+            };
+            // Seed/refresh the engine's arm config so a fully cold engine
+            // (never armed via the JS settings-sync path) can self-arm here
+            // too. Cheap no-op when the requested device is already open.
+            let armed = client.request(|reply| EngineCommand::Arm {
+                config: ArmConfig {
+                    device_name: cfg.device_name.clone(),
+                    keep_warm: cfg.keep_warm,
+                    stream_frames: cfg.stream_frames,
+                },
+                reply,
+            });
+            if armed.is_err() {
+                return DECLINE;
+            }
+            match client.request(|reply| EngineCommand::StartSession {
+                pre_roll_ms: cfg.pre_roll_ms,
+                reply,
+            }) {
+                Ok(session_id) => {
+                    if let Ok(mut t) = state.ptt_tracker.lock() {
+                        *t = PttTracker { session_id: Some(session_id), stopped: false };
+                    }
+                    PttStartOutcome { session_id: Some(session_id), started: true }
+                }
+                Err(_) => DECLINE,
+            }
+        }
+    }
+}
+
+/// Rust-first push-to-talk hot path counterpart for key-up: marks the
+/// hot-path-started session inactive (if any) so the realtime callback stops
+/// appending samples immediately, without waiting for JS. The buffered PCM
+/// is left in place for the existing `take_native_recording` command.
+pub fn notify_ptt_up(app: &AppHandle) -> PttStopOutcome {
+    let Some(state) = app.try_state::<NativeCaptureState>() else {
+        return PttStopOutcome { session_id: None, stopped: false };
+    };
+    let session_id = state.ptt_tracker.lock().ok().and_then(|t| t.session_id);
+    let Some(session_id) = session_id else {
+        return PttStopOutcome { session_id: None, stopped: false };
+    };
+    let Some(client) = state.existing_client() else {
+        return PttStopOutcome { session_id: Some(session_id), stopped: false };
+    };
+    let stopped = client
+        .request(|reply| EngineCommand::StopSession { session_id, reply })
+        .is_ok();
+    if stopped {
+        if let Ok(mut tracker) = state.ptt_tracker.lock() {
+            if tracker.session_id == Some(session_id) {
+                tracker.stopped = true;
+            }
+        }
+    }
+    PttStopOutcome { session_id: Some(session_id), stopped }
 }
 
 /// Backward-compatible shim: open/arm the warm engine and immediately start a
@@ -1070,5 +1414,136 @@ mod tests {
             .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
             .collect();
         assert_eq!(decoded, frame);
+    }
+
+    // ── Rust-first push-to-talk hot path (issue #53) ────────────────────
+
+    #[test]
+    fn decide_ptt_down_declines_when_hotpath_disabled() {
+        let cfg = PttArmConfig { enabled: false, ..Default::default() };
+        match decide_ptt_down(PttTracker::default(), &cfg) {
+            PttDownDecision::Decline => {}
+            _ => panic!("expected Decline when the hot path is disabled"),
+        }
+    }
+
+    #[test]
+    fn decide_ptt_down_starts_when_enabled_and_no_tracked_session() {
+        let cfg = PttArmConfig { enabled: true, ..Default::default() };
+        match decide_ptt_down(PttTracker::default(), &cfg) {
+            PttDownDecision::Start => {}
+            _ => panic!("expected Start when enabled with no tracked session"),
+        }
+    }
+
+    #[test]
+    fn decide_ptt_down_readopts_duplicate_down_while_held() {
+        let cfg = PttArmConfig { enabled: true, ..Default::default() };
+        let tracker = PttTracker { session_id: Some(7), stopped: false };
+        match decide_ptt_down(tracker, &cfg) {
+            PttDownDecision::Adopt { session_id } => assert_eq!(session_id, 7),
+            _ => panic!("expected Adopt for a duplicate down on an active session"),
+        }
+    }
+
+    #[test]
+    fn decide_ptt_down_declines_when_prior_session_not_yet_taken() {
+        // Even with the hot path enabled, a stopped-but-untaken session must
+        // block a new start so the engine's single-session buffer can't be
+        // wiped out from under a pending `take_native_recording`.
+        let cfg = PttArmConfig { enabled: true, ..Default::default() };
+        let tracker = PttTracker { session_id: Some(3), stopped: true };
+        match decide_ptt_down(tracker, &cfg) {
+            PttDownDecision::Decline => {}
+            _ => panic!("expected Decline while a stopped session is un-taken"),
+        }
+    }
+
+    #[test]
+    fn clear_ptt_tracker_if_only_clears_matching_session() {
+        let state = NativeCaptureState::default();
+        *state.ptt_tracker.lock().unwrap() = PttTracker { session_id: Some(5), stopped: true };
+        clear_ptt_tracker_if(&state, 999); // different id: no-op
+        assert_eq!(state.ptt_tracker.lock().unwrap().session_id, Some(5));
+        clear_ptt_tracker_if(&state, 5);
+        assert_eq!(state.ptt_tracker.lock().unwrap().session_id, None);
+    }
+
+    #[test]
+    fn start_session_reserves_capacity_for_initial_recording_window() {
+        let mut state = SharedAudioState::new();
+        state.configure_stream(16_000, false);
+        state.start_session(1, 0);
+        let session = state.sessions.get(&1).expect("session must exist");
+        let expected = 16_000usize * INITIAL_RECORDING_SECONDS;
+        assert!(
+            session.samples.capacity() >= expected,
+            "capacity {} should cover at least {expected} samples up front",
+            session.samples.capacity(),
+        );
+    }
+
+    #[test]
+    fn start_session_does_not_allocate_unbounded_capacity() {
+        // Sanity bound so a future change can't accidentally balloon this
+        // into a many-minute up-front allocation.
+        let mut state = SharedAudioState::new();
+        state.configure_stream(48_000, false);
+        state.start_session(1, 500);
+        let session = state.sessions.get(&1).unwrap();
+        assert!(session.samples.capacity() < 48_000 * 60);
+    }
+
+    #[test]
+    fn set_stream_frames_wires_resampler_onto_active_session_retroactively() {
+        // The hot path arms with `stream_frames: false` (mode not resolved
+        // yet); JS re-arms with the resolved value right after adopting an
+        // already-active session. That must wire live frame streaming on
+        // immediately rather than waiting for a `start_session` that will
+        // never come for an adopted session.
+        let mut state = SharedAudioState::new();
+        state.configure_stream(16_000, false);
+        state.start_session(1, 0);
+        assert!(state.frame_resampler.is_none());
+        state.set_stream_frames(true);
+        assert!(state.frame_resampler.is_some());
+    }
+
+    #[test]
+    fn set_stream_frames_disabling_clears_resampler() {
+        let mut state = SharedAudioState::new();
+        state.configure_stream(16_000, true);
+        state.start_session(1, 0);
+        assert!(state.frame_resampler.is_some());
+        state.set_stream_frames(false);
+        assert!(state.frame_resampler.is_none());
+    }
+
+    #[test]
+    fn classify_stream_error_distinguishes_device_loss() {
+        assert_eq!(
+            classify_stream_error(&cpal::StreamError::DeviceNotAvailable),
+            "device_lost"
+        );
+        let backend = cpal::StreamError::BackendSpecific {
+            err: cpal::BackendSpecificError { description: "boom".to_string() },
+        };
+        assert_eq!(classify_stream_error(&backend), "stream_error");
+    }
+
+    #[test]
+    fn sanitize_stream_error_message_is_fixed_for_device_loss() {
+        let msg = sanitize_stream_error_message(&cpal::StreamError::DeviceNotAvailable);
+        assert_eq!(msg, "The input device is no longer available.");
+    }
+
+    #[test]
+    fn sanitize_stream_error_message_truncates_long_backend_text() {
+        let long_description = "x".repeat(500);
+        let err = cpal::StreamError::BackendSpecific {
+            err: cpal::BackendSpecificError { description: long_description },
+        };
+        let msg = sanitize_stream_error_message(&err);
+        assert!(msg.chars().count() <= MAX_ERROR_MESSAGE_LEN + 1); // +1 for the "…" marker
     }
 }

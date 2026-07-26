@@ -172,7 +172,11 @@ export async function installHotkeyListeners(): Promise<UnlistenFn> {
     activeKind = null;
   };
 
-  async function startFlow(pressedAt: number, myGen: number): Promise<void> {
+  async function startFlow(
+    pressedAt: number,
+    myGen: number,
+    nativeSessionId?: number,
+  ): Promise<void> {
     // precondition: recState === 'starting', activeKind set, gen === myGen.
     let resolved: Awaited<ReturnType<typeof resolveModeAtPress>>;
     try {
@@ -198,7 +202,7 @@ export async function installHotkeyListeners(): Promise<UnlistenFn> {
     }
     preloadWhisperIfNeeded(mode);
     try {
-      await startRecording(mode.name, mode.id, pressedAt);
+      await startRecording(mode.name, mode.id, pressedAt, nativeSessionId);
     } catch (e) {
       // Only tear down if we're still the active session. A superseded start
       // (cancel or a newer press bumped `gen`) must NOT reset newer state or
@@ -242,31 +246,42 @@ export async function installHotkeyListeners(): Promise<UnlistenFn> {
     }
   }
 
-  const offDown = await listen("hotkey:down", () => {
-    if (isHotkeyPaused()) return;
-    if (!isOnboardingComplete()) return;
-    const pressedAt = Date.now();
-    if (recState === "idle") {
-      // Fresh session — choose hold vs toggle from the *current* config.
-      const kind = usesHoldToTalk(loadHotkeyConfig()) ? "hold" : "toggle";
-      gen += 1;
-      recState = "starting";
-      activeKind = kind;
-      pendingStop = false;
-      void startFlow(pressedAt, gen);
-      return;
-    }
-    // A session is active/in-flight — act on ITS kind, not current config.
-    if (activeKind === "toggle") {
-      if (recState === "recording") {
-        void stopFlow(gen); // toggle-off
-      } else if (recState === "starting") {
-        pendingStop = !pendingStop; // converge to the latest toggle intent
+  const offDown = await listen<{ sessionId?: number; nativeStarted?: boolean }>(
+    "hotkey:down",
+    (event) => {
+      if (isHotkeyPaused()) return;
+      if (!isOnboardingComplete()) return;
+      const pressedAt = Date.now();
+      if (recState === "idle") {
+        // Fresh session — choose hold vs toggle from the *current* config.
+        const kind = usesHoldToTalk(loadHotkeyConfig()) ? "hold" : "toggle";
+        gen += 1;
+        recState = "starting";
+        activeKind = kind;
+        pendingStop = false;
+        // Issue #53: Rust's push-to-talk hot path may have already started
+        // native capture before this event even fired — adopt that session
+        // instead of starting a second one. `undefined` when the hot path
+        // didn't apply (Standard mode, not armed, etc.), preserving the
+        // existing JS-orchestrated start exactly as before.
+        const nativeSessionId = event?.payload?.nativeStarted
+          ? event.payload.sessionId
+          : undefined;
+        void startFlow(pressedAt, gen, nativeSessionId);
+        return;
       }
-      // stopping: already tearing down — ignore.
-    }
-    // activeKind === "hold": extra downs (auto-repeat / re-press) are ignored.
-  });
+      // A session is active/in-flight — act on ITS kind, not current config.
+      if (activeKind === "toggle") {
+        if (recState === "recording") {
+          void stopFlow(gen); // toggle-off
+        } else if (recState === "starting") {
+          pendingStop = !pendingStop; // converge to the latest toggle intent
+        }
+        // stopping: already tearing down — ignore.
+      }
+      // activeKind === "hold": extra downs (auto-repeat / re-press) are ignored.
+    },
+  );
 
   const offUp = await listen("hotkey:up", () => {
     if (isHotkeyPaused()) return;

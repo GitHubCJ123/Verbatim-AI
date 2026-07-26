@@ -34,6 +34,7 @@ import { isSupabaseConfigured } from "../lib/supabase";
 import { toast } from "../components/ui/Toast";
 import { confirmDialog } from "../components/ui/confirmDialog";
 import { copyCleanedText, pasteCleanedText } from "../lib/output";
+import { notifyAccessibilityRequired } from "../components/settings/accessibility";
 import { osKind } from "../lib/os";
 import { pasteMethodUsesClipboard } from "../lib/pasteMethod";
 import { getOutputBehavior, getPasteMethod, isAiImproveDisabled } from "../lib/preferences";
@@ -231,18 +232,34 @@ function HistoryRow({
   };
 
   const handlePaste = async () => {
-    const pasted = await pasteCleanedText(cleaned);
+    const outcome = await pasteCleanedText(cleaned);
+    if (outcome === "permission-required") {
+      notifyAccessibilityRequired();
+      return;
+    }
     const behavior = getOutputBehavior();
     const method = behavior === "insert-only" ? "direct" : getPasteMethod();
     const usedClipboard = pasteMethodUsesClipboard(method, osKind());
-    toast.success(
-      pasted
-        ? "Pasted"
-        : !usedClipboard
-          ? "No target window; clipboard unchanged"
+    if (outcome === "pasted") {
+      toast.success("Pasted");
+      return;
+    }
+    if (outcome === "activation-failed") {
+      toast.success(
+        !usedClipboard
+          ? "Couldn't switch to the target app"
           : behavior === "restore"
-            ? "No target window; clipboard restored"
-            : "Copied (no target window)",
+            ? "Couldn't switch to the target app; clipboard restored"
+            : "Couldn't switch to the target app; text copied",
+      );
+      return;
+    }
+    toast.success(
+      !usedClipboard
+        ? "No target window; clipboard unchanged"
+        : behavior === "restore"
+          ? "No target window; clipboard restored"
+          : "Copied (no target window)",
     );
   };
 

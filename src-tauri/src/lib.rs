@@ -2,6 +2,10 @@ mod commands;
 mod tray;
 
 use commands::{
+    accessibility::{
+        check_accessibility_permission, open_accessibility_settings,
+        request_accessibility_permission,
+    },
     active_window::get_active_window,
     cancel_hotkey::{disable_cancel_shortcut, enable_cancel_shortcut, CancelHotkeyState},
     devtools::{open_devtools, open_main_devtools},
@@ -143,6 +147,9 @@ pub fn run() {
             start_hotkey_capture,
             stop_hotkey_capture,
             request_input_monitoring,
+            check_accessibility_permission,
+            request_accessibility_permission,
+            open_accessibility_settings,
             update_install_environment,
             ensure_engine_ready,
             unload_engine,

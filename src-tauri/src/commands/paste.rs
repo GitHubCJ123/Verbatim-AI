@@ -121,7 +121,24 @@ mod imp {
 
 #[tauri::command]
 pub fn capture_target_window(state: State<'_, TargetWindowState>) -> Option<CapturedTarget> {
+    // Clear any previously captured target up front so a rejected capture
+    // (self-target, or no foreground app) can't leave a stale external
+    // target armed for the next paste.
+    if let Ok(mut g) = state.0.lock() {
+        *g = None;
+    }
     let hwnd = imp::current_foreground()?;
+    #[cfg(target_os = "macos")]
+    {
+        // Never capture our own process as the paste target. macOS verifies
+        // the target by PID, and the focused review overlay shares this
+        // process's PID — so pasting "back" would self-paste ⌘V into our own
+        // review textarea. Dictating into Verbatim AI's own UI is not a
+        // supported target, so drop it here.
+        if hwnd == std::process::id() as isize {
+            return None;
+        }
+    }
     *state.0.lock().ok()? = Some(hwnd);
     Some(CapturedTarget { hwnd: hwnd.to_string() })
 }
@@ -187,26 +204,26 @@ pub fn paste_to_target(
     let Some(hwnd) = hwnd else {
         return Ok(false);
     };
+    // macOS: posting the synthetic paste keystroke requires Accessibility.
+    // Preflight silently and return a guiding sentinel instead of letting
+    // enigo pop the raw system prompt on every paste (and instead of a
+    // false "success" or a mystery review-panel fallback).
+    super::accessibility::ensure_accessibility()?;
     let method = effective_paste_method(method.unwrap_or_default());
 
-    // Best-effort focus restore. SetForegroundWindow can be denied by
-    // Windows when the calling process isn't the active one. We accept
-    // that and try the keystroke anyway — if focus didn't move we'll
-    // just paste into our own window (clipboard still has the value).
-    let focus_restored = imp::restore_foreground(hwnd);
+    // Restore focus to the captured target and confirm it actually became
+    // frontmost before sending input — otherwise a synthetic ⌘V could land
+    // in our own overlay/review window (which may now hold focus) and
+    // falsely report success.
+    if !restore_and_confirm_target(hwnd) {
+        return Err(TARGET_ACTIVATION_FAILED.to_string());
+    }
 
-    // Small wait so the focus change actually propagates before we
-    // send synthetic input.
-    std::thread::sleep(std::time::Duration::from_millis(60));
-
-    let mut enigo = Enigo::new(&Settings::default()).map_err(|e| e.to_string())?;
+    let mut enigo = new_enigo()?;
     match method {
         PasteMethod::CtrlV => send_ctrl_v(&mut enigo)?,
         PasteMethod::ShiftInsert => send_shift_insert(&mut enigo)?,
         PasteMethod::Direct => {
-            if !focus_restored {
-                return Ok(false);
-            }
             let Some(text) = text else {
                 return Err("Direct paste requires text.".into());
             };
@@ -216,6 +233,47 @@ pub fn paste_to_target(
     }
 
     Ok(true)
+}
+
+/// Sentinel returned when the captured target window could not be brought
+/// to the foreground, so we refuse to send input (avoids pasting into our
+/// own overlay/review window). The frontend maps this to a recovery UI.
+pub const TARGET_ACTIVATION_FAILED: &str =
+    "target-activation-failed: couldn't switch back to the target app to paste.";
+
+/// Re-activate the captured target and wait until it is actually the
+/// frontmost app, replacing the old blind sleep with a verified wait. On
+/// the common push-to-talk path the target never lost focus (the overlay
+/// is created `focus: false`), so this returns almost immediately.
+fn restore_and_confirm_target(hwnd: isize) -> bool {
+    imp::restore_foreground(hwnd);
+    let start = std::time::Instant::now();
+    loop {
+        if imp::current_foreground() == Some(hwnd) {
+            // Brief settle so the target finishes taking focus before input.
+            std::thread::sleep(std::time::Duration::from_millis(40));
+            return true;
+        }
+        if start.elapsed() >= std::time::Duration::from_millis(300) {
+            return false;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(15));
+    }
+}
+
+/// Build an `Enigo` with the system permission prompt **disabled** — this
+/// app owns all permission UX (we preflight with `AXIsProcessTrusted`), so
+/// enigo must never pop its own macOS prompt. A race-time `NoPermission`
+/// maps back to our Accessibility sentinel.
+fn new_enigo() -> Result<Enigo, String> {
+    let settings = Settings {
+        open_prompt_to_get_permissions: false,
+        ..Settings::default()
+    };
+    Enigo::new(&settings).map_err(|e| match e {
+        enigo::NewConError::NoPermission => super::accessibility::NEEDS_ACCESSIBILITY.to_string(),
+        other => other.to_string(),
+    })
 }
 
 /// Restore focus to the captured target window and type text directly,
@@ -229,13 +287,14 @@ pub fn insert_text_to_target(
     let Some(hwnd) = hwnd else {
         return Ok(false);
     };
+    // See `paste_to_target`: direct typing also needs Accessibility.
+    super::accessibility::ensure_accessibility()?;
 
-    if !imp::restore_foreground(hwnd) {
-        return Ok(false);
+    if !restore_and_confirm_target(hwnd) {
+        return Err(TARGET_ACTIVATION_FAILED.to_string());
     }
-    std::thread::sleep(std::time::Duration::from_millis(60));
 
-    let mut enigo = Enigo::new(&Settings::default()).map_err(|e| e.to_string())?;
+    let mut enigo = new_enigo()?;
     enigo.text(&text).map_err(|e| e.to_string())?;
 
     Ok(true)

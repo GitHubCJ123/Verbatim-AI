@@ -1,3 +1,4 @@
+pub mod accessibility;
 pub mod active_window;
 pub mod cancel_hotkey;
 pub mod devtools;

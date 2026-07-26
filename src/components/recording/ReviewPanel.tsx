@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
-import { ClipboardCopy, X, RotateCw, Send } from "lucide-react";
+import { ClipboardCopy, X, RotateCw, Send, AlertTriangle } from "lucide-react";
 import { cn } from "../../lib/utils";
 
 interface ReviewPanelProps {
@@ -9,6 +9,10 @@ interface ReviewPanelProps {
   /** Streamed updates while polishing. */
   streamingText?: string;
   isPolishing: boolean;
+  /** Optional banner explaining why the panel appeared (e.g. paste failed). */
+  notice?: string | null;
+  /** When provided, renders an "Open Settings" action in the notice banner. */
+  onOpenSettings?: () => void;
   onPaste: (text: string) => void;
   onCopy: (text: string) => void;
   onDiscard: () => void;
@@ -20,6 +24,8 @@ export function ReviewPanel({
   initialText,
   streamingText,
   isPolishing,
+  notice,
+  onOpenSettings,
   onPaste,
   onCopy,
   onDiscard,
@@ -73,6 +79,22 @@ export function ReviewPanel({
           <span className="text-[10px] text-text-muted">Polishing…</span>
         )}
       </div>
+
+      {notice && (
+        <div className="flex items-start gap-2 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-[11px] leading-snug text-text-secondary">
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-warning" />
+          <span className="flex-1">{notice}</span>
+          {onOpenSettings && (
+            <button
+              type="button"
+              onClick={onOpenSettings}
+              className="flex-shrink-0 rounded border border-border-subtle bg-bg-elevated px-2 py-0.5 text-[10px] font-medium text-text-primary transition-colors hover:border-border-strong"
+            >
+              Open Settings
+            </button>
+          )}
+        </div>
+      )}
 
       <textarea
         ref={textareaRef}

@@ -499,7 +499,9 @@ const PHASE_FALLBACK_ROLES = {
   "spec-review": ["architect", "adversarialReviewer"],
   "adversarial-review": ["adversarialReviewer", "architect"],
   implementation: ["implementer"],
-  verification: ["verifier"],
+  // Verification recovery re-runs the IMPLEMENTER to repair failures; the
+  // authoritative verifier itself is deterministic code, not an agent.
+  verification: ["implementer"],
 };
 
 function fallbackRoster(config, phaseId) {

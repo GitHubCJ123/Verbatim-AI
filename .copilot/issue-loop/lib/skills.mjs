@@ -11,12 +11,9 @@ const AUTOMATION_ROOT = path.resolve(HERE, "..");
 // Map each agent role to the vendored skill whose guidance best fits its phase.
 // These names match skills/<name>/SKILL.md in the submodule.
 export const DEFAULT_ROLE_SKILLS = {
-  requirements: "interview-me",
   requirementsCritic: "interview-me",
   architect: "spec-driven-development",
-  planner: "planning-and-task-breakdown",
   implementer: "incremental-implementation",
-  verifier: "test-driven-development",
   adversarialReviewer: "code-review-and-quality",
   agentPrReviewer: "code-review-and-quality",
 };

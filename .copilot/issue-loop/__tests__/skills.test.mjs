@@ -17,7 +17,7 @@ describe("vendored skills loader", () => {
   });
 
   it("maps each pipeline role to a skill", () => {
-    for (const role of ["requirements", "architect", "implementer", "verifier", "adversarialReviewer", "agentPrReviewer"]) {
+    for (const role of ["requirementsCritic", "architect", "implementer", "adversarialReviewer", "agentPrReviewer"]) {
       expect(DEFAULT_ROLE_SKILLS[role]).toBeTruthy();
       expect(skillForRole({}, role)).toBe(DEFAULT_ROLE_SKILLS[role]);
     }

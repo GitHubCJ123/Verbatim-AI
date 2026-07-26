@@ -358,8 +358,10 @@ describe("roster diversity", () => {
   });
 
   it("falls back to config.agents models when no roster is configured", () => {
+    // Verification recovery re-runs the implementer (the authoritative verifier is
+    // deterministic code, not an agent), so the fallback roster is the implementer.
     const roster = buildRoster(DEFAULT_CONFIG, "verification", {});
-    expect(roster).toEqual([DEFAULT_CONFIG.agents.verifier.model]);
+    expect(roster).toEqual([DEFAULT_CONFIG.agents.implementer.model]);
   });
 
   it("nextDiverseModel prefers a different family, then falls back to untried", () => {

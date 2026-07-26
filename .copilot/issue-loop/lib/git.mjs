@@ -106,11 +106,45 @@ export async function ensureAutomationWorktree({ repoCwd, config, issue, branch,
   const name = safeWorktreeName(issue, runId);
   const worktreePath = assertPathInside(root, path.join(root, name));
   await git(["fetch", "origin", baseBranch, "--quiet"], repoCwd);
+  // An interrupted run can leave a worktree still holding this branch, which makes
+  // `worktree add -B <branch>` hard-fail and abort the whole tick. Reclaim any such
+  // stale worktree first. Uncommitted agent work is never a valid checkpoint, so the
+  // directory is destroyed and recreated at a known base rather than reused in place.
+  await reclaimWorktreesForBranch({ repoCwd, config, branch, keepPath: worktreePath });
   await git(
     ["worktree", "add", "-B", branch, worktreePath, `origin/${baseBranch}`],
     repoCwd,
   );
   return { path: worktreePath, branch };
+}
+
+// Remove any automation worktree currently bound to `branch` (other than keepPath),
+// confined to the automation worktree root so we can never touch the main checkout.
+export async function reclaimWorktreesForBranch({ repoCwd, config, branch, keepPath = null }) {
+  const root = worktreeRoot(repoCwd, config);
+  let byBranch;
+  try {
+    ({ byBranch } = await listActiveWorktreeBranches(repoCwd));
+  } catch {
+    return { reclaimed: 0 };
+  }
+  const entryPath = byBranch?.get(branch);
+  let reclaimed = 0;
+  if (entryPath && !(keepPath && path.resolve(entryPath) === path.resolve(keepPath))) {
+    // Only ever remove paths inside the automation worktree root.
+    const resolved = path.resolve(entryPath);
+    const resolvedRoot = path.resolve(root);
+    if (resolved !== resolvedRoot && resolved.startsWith(resolvedRoot + path.sep)) {
+      try {
+        await git(["worktree", "remove", "--force", resolved], repoCwd);
+        reclaimed += 1;
+      } catch {
+        // best effort; prune below clears administrative leftovers
+      }
+    }
+  }
+  await git(["worktree", "prune"], repoCwd).catch(() => {});
+  return { reclaimed };
 }
 
 async function pathExists(target) {

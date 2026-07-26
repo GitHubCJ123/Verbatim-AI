@@ -55,6 +55,15 @@ import {
   setDurablePhaseStatus,
 } from "./lib/artifacts.mjs";
 import { readDashboardApproval, readDashboardRerun } from "./lib/dashboard.mjs";
+import { reconcileIssue, RESUME_ACTIONS } from "./lib/resume.mjs";
+import {
+  SPEC_GATE_PHASE,
+  SPEC_GATE_EVIDENCE_PHASE,
+  buildGateRecord,
+  computeSpecGateFingerprint,
+  securityVeto,
+  specGateIsFresh,
+} from "./lib/spec-gate.mjs";
 import { evaluateSpecReview } from "./lib/spec-review.mjs";
 import { evaluateEligibility } from "./lib/eligibility.mjs";
 import { createBudget, emptyRecoveryState } from "./lib/recovery.mjs";
@@ -165,6 +174,25 @@ async function tick(config, args) {
       await maybeProcessRequirementsOnly(config, issue);
     }
     if (selected.length >= config.maxIssuesPerTick) break;
+    // Reconcile BEFORE eligibility: an interrupted run owns its own branch/PR/claim,
+    // which makes it ineligible to START. Without this, the automation's own draft PR
+    // permanently stranded the issue and the pipeline could only finish inside one tick.
+    const summary = await readIssueAutomationSummary(ROOT, issue);
+    const labels = (issue.labels ?? []).map((label) => label?.name ?? label);
+    const stopReason = await stopRequested(config, ROOT, labels);
+    const decision = reconcileIssue({
+      summary,
+      stopReason,
+      enrolled: (config.requiredLabels ?? []).every((label) => labels.includes(label)),
+      labels,
+      excludedLabels: config.excludedLabels ?? [],
+    });
+    if (decision.action === RESUME_ACTIONS.RESUME) {
+      console.log(`Issue #${issue.number}: resuming interrupted run (${decision.reason})`);
+      selected.push(issue);
+      continue;
+    }
+    if (decision.action === RESUME_ACTIONS.SKIP) continue;
     if (await isEligible(config, issue, prs)) selected.push(issue);
   }
 
@@ -360,7 +388,32 @@ async function processIssue(config, issue, args) {
   //   - Approve & continue -> advance using the EXISTING spec+review (no re-draft).
   const reviewPathAbs = path.join(specDir, "adversarial-review.md");
   const priorSummary = await readIssueAutomationSummary(ROOT, issue);
-  const specStageNeedsHuman = SPEC_STAGE_PHASES.some(
+
+  // IDEMPOTENCY: if a previously PASSED spec gate still matches the current inputs
+  // (issue text + spec + review + gate policy), do NOT re-draft. Re-drafting every
+  // tick is what produced 7-8 churned SPEC/ADV pairs per issue and meant the spec
+  // never stabilized. Resume straight at implementation instead.
+  const freshFp = await computeSpecGateFingerprint({
+    issueInputSha: critique.issueInputSha,
+    specPath,
+    reviewPath: reviewPathAbs,
+  });
+  const gateIsFresh = specGateIsFresh(priorSummary, freshFp.fingerprint);
+
+  // A hard security veto is monotonic and must not be cleared by an ordinary Continue.
+  // FAIL CLOSED: if the fingerprint cannot be computed (a missing/unreadable spec or
+  // review file), we cannot prove the inputs changed, so the veto still holds.
+  const veto = securityVeto(priorSummary);
+  if (veto.active && !config.gates?.allowHumanSecurityOverride) {
+    const provenDifferent =
+      freshFp.fingerprint !== null && veto.fingerprint !== null && veto.fingerprint !== freshFp.fingerprint;
+    if (!provenDifferent) {
+      console.log(`Issue #${issue.number}: spec gate held by security veto; requires an explicit human security override.`);
+      return;
+    }
+  }
+
+  const specStageNeedsHuman = !gateIsFresh && SPEC_STAGE_PHASES.some(
     (phaseId) => priorSummary.phaseStatuses?.[phaseId]?.status === "needs-human",
   );
   const humanRerun = specStageNeedsHuman ? await consumeHumanRerun(issue, critique.issueInputSha) : null;
@@ -383,7 +436,11 @@ async function processIssue(config, issue, args) {
   }
 
   let review;
-  if (specStageNeedsHuman && specApproval && !humanRerun) {
+  if (gateIsFresh) {
+    // Cached pass: reuse the reviewed spec verbatim, skip both agent calls.
+    console.log(`Issue #${issue.number}: spec gate already passed for these inputs; skipping re-draft.`);
+    review = await fs.readFile(reviewPathAbs, "utf8").catch(() => "");
+  } else if (specStageNeedsHuman && specApproval && !humanRerun) {
     // Approve & continue: advance using the spec+review the maintainer reviewed.
     review = await fs.readFile(reviewPathAbs, "utf8").catch(() => "");
   } else {
@@ -397,6 +454,38 @@ async function processIssue(config, issue, args) {
   if (review && config.gates.requireHumanOnSpecReviewQuestions !== false && specReviewNeedsHuman(review)) {
     const proceed = await maybeRecoverSpecReview(config, issue, specPath, review, runId);
     if (!proceed) return;
+  }
+
+  // Record the gate PASS with the fingerprint of the exact inputs that produced it,
+  // so later ticks reuse it instead of re-drafting.
+  if (!gateIsFresh) {
+    const passedFp = await computeSpecGateFingerprint({
+      issueInputSha: critique.issueInputSha,
+      specPath,
+      reviewPath: reviewPathAbs,
+    });
+    // Never record a pass we cannot bind to concrete inputs, and never let a pass
+    // silently erase a recorded security veto (setDurablePhaseStatus replaces details).
+    const priorVeto = securityVeto(await readIssueAutomationSummary(ROOT, issue));
+    if (passedFp.fingerprint && !(priorVeto.active && !config.gates?.allowHumanSecurityOverride)) {
+      await setDurablePhaseStatus(ROOT, issue, SPEC_GATE_PHASE, "approved", await preserveRerunTracking(issue, {
+        reason: "Spec gate passed; implementation may proceed.",
+        gate: buildGateRecord({
+          passed: true,
+          fingerprint: passedFp.fingerprint,
+          specSha: passedFp.specSha,
+          reviewSha: passedFp.reviewSha,
+          decision: "proceed",
+          reason: "Spec review cleared this spec for implementation.",
+        }),
+      }));
+      await setDurablePhaseStatus(ROOT, issue, SPEC_GATE_EVIDENCE_PHASE, "complete", {
+        reason: "Adversarial review completed; see the spec gate for the authoritative decision.",
+      });
+    } else if (priorVeto.active) {
+      console.log(`Issue #${issue.number}: refusing to record a spec-gate pass over an active security veto.`);
+      return;
+    }
   }
 
   await setDurablePhaseStatus(ROOT, issue, "implementation", "ready", {
@@ -642,6 +731,17 @@ async function appendHumanGuidance(specPath, note) {
 }
 
 async function maybeRecoverSpecReview(config, issue, specPath, review, runId) {
+  // A recorded hard security veto is monotonic: an ordinary "Continue" must not
+  // clear it (previously Continue was consumed first and silently bypassed the
+  // veto). Releasing it requires an explicit security override or changed inputs.
+  const priorSummary = await readIssueAutomationSummary(ROOT, issue);
+  const veto = securityVeto(priorSummary);
+  if (veto.active && !config.gates?.allowHumanSecurityOverride) {
+    await setDurablePhaseStatus(ROOT, issue, "implementation", "blocked", {
+      reason: `Held by security veto: ${truncateForComment(veto.reason, 300)}`,
+    });
+    return false;
+  }
   // Human "Continue" from the dashboard overrides the gate: if the maintainer
   // submitted feedback for the blocked spec/review/implementation phase, thread
   // the note to the implementer and proceed to implementation.
@@ -692,9 +792,27 @@ async function maybeRecoverSpecReview(config, issue, specPath, review, runId) {
   }
   if (!decision?.proceed) {
     if (decision) {
-      await setDurablePhaseStatus(ROOT, issue, "spec-review", "needs-human", await preserveRerunTracking(issue, {
+      // Persist a typed, monotonic veto record when the block is security-driven,
+      // so it survives later status writes and cannot be cleared by a plain Continue.
+      const isSecurityVeto = /security|secret|credential|auth|veto/i.test(String(decision.reason ?? ""));
+      const fp = await computeSpecGateFingerprint({
+        issueInputSha: issueInputSha(issue),
+        specPath,
+        reviewPath: path.join(path.dirname(specPath), "adversarial-review.md"),
+      });
+      await setDurablePhaseStatus(ROOT, issue, SPEC_GATE_PHASE, "needs-human", await preserveRerunTracking(issue, {
         reason: decision.reason,
         recovery: decision.recovery,
+        gate: buildGateRecord({
+          passed: false,
+          fingerprint: fp.fingerprint,
+          specSha: fp.specSha,
+          reviewSha: fp.reviewSha,
+          decision: "needs-human",
+          reason: decision.reason,
+          securityVeto: isSecurityVeto,
+          vetoReason: isSecurityVeto ? decision.reason : "",
+        }),
       }));
     }
     return blockAsBefore();

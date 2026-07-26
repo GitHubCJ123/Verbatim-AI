@@ -38,11 +38,14 @@ export const DEFAULT_CONFIG = {
     file: ".copilot-issue-loop/STOP",
     labels: ["automation-stop", "blocked"],
   },
+  // Only roles that are actually invoked as agents belong here. Verification and
+  // finalization are deterministic code (lint/test/build, PR metadata), not agents,
+  // and self-reflection runs as a dashboard text agent — none take a model here.
   agents: {
     requirementsCritic: { persona: "requirements critic", model: "gpt-5.5" },
     architect: { persona: "experienced software architect", model: "gpt-5.5" },
     adversarialReviewer: {
-      persona: "skeptical senior reviewer",
+      persona: "pragmatic senior spec reviewer (blocks only on genuinely blocking problems)",
       model: "claude-opus-4.8",
       mustDifferFrom: "architect",
     },
@@ -51,9 +54,6 @@ export const DEFAULT_CONFIG = {
       persona: "skeptical PR reviewer focused on correctness, security, tests, and UX regressions",
       model: "gpt-5.5",
     },
-    verifier: { model: "gpt-5.5" },
-    finalizer: { model: "gpt-5.5" },
-    selfReflector: { model: "claude-opus-4.8" },
   },
   gates: {
     requireHumanOnSpecReviewQuestions: true,
@@ -102,13 +102,13 @@ export const DEFAULT_CONFIG = {
     enabled: true,
     dir: "vendor/agent-skills",
     maxChars: 8000,
+    // Only real, invoked agent roles. (Verification/finalization are deterministic
+    // code, so they take no skill; there is no separate planner role — task
+    // breakdown is part of the architect's spec.)
     roleSkills: {
-      requirements: "interview-me",
       requirementsCritic: "interview-me",
       architect: "spec-driven-development",
-      planner: "planning-and-task-breakdown",
       implementer: "incremental-implementation",
-      verifier: "test-driven-development",
       adversarialReviewer: "code-review-and-quality",
       agentPrReviewer: "code-review-and-quality",
     },

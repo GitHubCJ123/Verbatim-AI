@@ -58,6 +58,7 @@ import { applyInlinePostProcessing } from "../lib/postProcess";
 import { getPrivacyStatus, type DataLocality } from "../lib/privacyStatus";
 import {
   classifyRecordingError,
+  ACCESSIBILITY_PERMISSION_PRESENTATION,
   type RecordingErrorPresentation,
 } from "../lib/recordingErrors";
 import type { Mode } from "../types/mode";
@@ -80,6 +81,17 @@ function shouldShowReviewWhenPasteMisses(): boolean {
   return !pasteMethodUsesClipboard(method, osKind()) || behavior === "restore";
 }
 
+// Notices shown in the review editor when it appears as a paste-recovery
+// surface rather than a deliberate review Mode. They explain *why* it
+// popped up so it never feels broken/mysterious.
+const REVIEW_PERMISSION_NOTICE =
+  "Couldn't paste — Verbatim AI needs Accessibility. Grant it in System Settings → " +
+  "Privacy & Security → Accessibility, then relaunch. Use Copy to grab your text meanwhile.";
+const REVIEW_ACTIVATION_NOTICE =
+  "Couldn't switch back to your app to paste. Use Copy, then paste it where you want.";
+const REVIEW_NO_TARGET_NOTICE =
+  "No target to paste into. Use Copy, then paste it where you want.";
+
 type View = "pill" | "review";
 
 export default function Overlay() {
@@ -94,8 +106,18 @@ export default function Overlay() {
   const [errorPresentation, setErrorPresentation] = useState<RecordingErrorPresentation | null>(
     null,
   );
+  // When the review editor appears as a paste-recovery surface, this
+  // explains why; `reviewNeedsAccessibility` adds an Open Settings action.
+  const [reviewNotice, setReviewNotice] = useState<string | null>(null);
+  const [reviewNeedsAccessibility, setReviewNeedsAccessibility] = useState(false);
 
   const controllerRef = useRef<AudioController | null>(null);
+  // Show the macOS Accessibility system prompt at most once per overlay
+  // lifetime. The prompt both asks for the grant AND registers the app in
+  // the Accessibility list — without it a clean TCC state leaves nothing to
+  // enable, since our preflight uses the *silent* AXIsProcessTrusted check
+  // and enigo's own prompt is disabled.
+  const axPromptedRef = useRef(false);
   const autoStopRef = useRef<AutoStopDetector | null>(null);
   const partialSegmenterRef = useRef<PartialSegmenter | null>(null);
   const partialCoordinatorRef = useRef<
@@ -139,9 +161,63 @@ export default function Overlay() {
     partialTextRef.current = "";
     setError(null);
     setErrorPresentation(null);
+    setReviewNotice(null);
+    setReviewNeedsAccessibility(false);
     await resizeOverlayToPill();
     await clearCapturedTarget();
     await hideAfter(0);
+  };
+
+  /** Open the macOS Accessibility settings pane (best-effort). */
+  const openAccessibilitySettings = () => {
+    void invoke("open_accessibility_settings").catch(() => {});
+  };
+
+  /**
+   * Show the macOS Accessibility prompt once. This registers the app in the
+   * Accessibility list (so there's an entry to enable) and asks for the
+   * grant. Deduped so repeated dictations while unpermitted don't re-prompt.
+   */
+  const promptAccessibilityOnce = () => {
+    if (axPromptedRef.current) return;
+    axPromptedRef.current = true;
+    void invoke("request_accessibility_permission").catch(() => {});
+  };
+
+  /**
+   * Switch the overlay into the review editor. Unlike the recording pill,
+   * the review panel is interactive (editable textarea + Cmd+Enter / Esc),
+   * so it must take keyboard focus — the overlay window is created
+   * `focus: false`, so without this the textarea can't be typed into and
+   * the panel feels broken.
+   */
+  const enterReview = async () => {
+    await resizeOverlayToReview();
+    setView("review");
+    try {
+      await getCurrentWindow().setFocus();
+    } catch {
+      /* best-effort — panel is still usable via mouse */
+    }
+  };
+
+  /**
+   * Surface the "grant Accessibility + relaunch" prompt when a paste fails
+   * for a clipboard behavior (the cleaned text is already on the clipboard,
+   * so no recovery editor is needed). Common right after an update on the
+   * unsigned build. Opens the settings pane at most once per overlay
+   * lifetime so repeated dictations don't spam System Settings.
+   */
+  const showAccessibilityPrompt = async () => {
+    setErrorPresentation(ACCESSIBILITY_PERMISSION_PRESENTATION);
+    setError(ACCESSIBILITY_PERMISSION_PRESENTATION.message);
+    setState("error");
+    cancelPendingHide();
+    promptAccessibilityOnce();
+    await invoke("relay_event", {
+      name: "recording:error",
+      payload: ACCESSIBILITY_PERMISSION_PRESENTATION,
+    }).catch(() => {});
   };
 
   /**
@@ -447,8 +523,7 @@ export default function Overlay() {
       // Branch on output style BEFORE polishing so review users see
       // tokens stream into the editor in real time.
       if (activeMode.outputStyle === "review") {
-        await resizeOverlayToReview();
-        setView("review");
+        await enterReview();
       }
 
       let cleaned: string;
@@ -483,11 +558,30 @@ export default function Overlay() {
       };
 
       if (activeMode.outputStyle === "paste") {
-        const pasted = await pasteCleanedText(cleaned);
-        if (!pasted && shouldShowReviewWhenPasteMisses()) {
+        const outcome = await pasteCleanedText(cleaned);
+        if (outcome === "pasted") {
+          await invoke("relay_event", { name: "recording:result", payload });
+          setState("success");
+          setTimeout(() => void reset(), 900);
+          return;
+        }
+
+        const permissionIssue = outcome === "permission-required";
+        if (shouldShowReviewWhenPasteMisses()) {
+          // Under these output behaviors the text is NOT on the clipboard,
+          // so open the recovery editor with a notice explaining why it
+          // appeared (so it never feels like a mystery/broken pop-up).
+          setReviewNotice(
+            outcome === "permission-required"
+              ? REVIEW_PERMISSION_NOTICE
+              : outcome === "activation-failed"
+                ? REVIEW_ACTIVATION_NOTICE
+                : REVIEW_NO_TARGET_NOTICE,
+          );
+          setReviewNeedsAccessibility(permissionIssue);
+          if (permissionIssue) promptAccessibilityOnce();
           console.info(noPasteTargetMessage());
-          await resizeOverlayToReview();
-          setView("review");
+          await enterReview();
           await invoke("relay_event", {
             name: "recording:result",
             payload: { ...payload, outputStyle: "review" },
@@ -495,10 +589,21 @@ export default function Overlay() {
           setState("idle");
           return;
         }
-        await invoke("relay_event", { name: "recording:result", payload });
-        if (!pasted) {
-          console.info(noPasteTargetMessage());
+
+        // Clipboard behaviors: the cleaned text is already on the clipboard.
+        if (permissionIssue) {
+          // Guide the user; don't mark success or persist a false "pasted".
+          await showAccessibilityPrompt();
+          return;
         }
+        // Genuine miss (or activation failure) with the text on the
+        // clipboard — record it as "copied" (not "pasted") since it never
+        // reached the target app.
+        await invoke("relay_event", {
+          name: "recording:result",
+          payload: { ...payload, outputAction: "copied" as const },
+        });
+        console.info(noPasteTargetMessage());
         setState("success");
         setTimeout(() => void reset(), 900);
       } else {
@@ -577,14 +682,28 @@ export default function Overlay() {
   // Review panel actions
 
   const handleReviewPaste = async (text: string) => {
-    const ok = await pasteCleanedText(text);
-    if (!ok && shouldShowReviewWhenPasteMisses()) {
+    const outcome = await pasteCleanedText(text);
+    if (outcome === "permission-required") {
+      // Keep the panel open so the user can still Copy the text; update the
+      // notice and expose an Open Settings action instead of resolving.
+      setReviewNotice(REVIEW_PERMISSION_NOTICE);
+      setReviewNeedsAccessibility(true);
+      promptAccessibilityOnce();
+      return;
+    }
+    if (outcome === "activation-failed") {
+      setReviewNotice(REVIEW_ACTIVATION_NOTICE);
+      setReviewNeedsAccessibility(false);
+      return;
+    }
+    if (outcome !== "pasted" && shouldShowReviewWhenPasteMisses()) {
+      setReviewNotice(REVIEW_NO_TARGET_NOTICE);
       console.info(noPasteTargetMessage());
       return;
     }
     const payload = {
       emitId: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      action: ok ? ("pasted" as const) : ("copied" as const),
+      action: outcome === "pasted" ? ("pasted" as const) : ("copied" as const),
       cleaned: text,
       modeId: modeRef.current?.id ?? null,
     };
@@ -709,6 +828,8 @@ export default function Overlay() {
           initialText={streamingCleaned}
           streamingText={streamingCleaned}
           isPolishing={state === "polishing"}
+          notice={reviewNotice}
+          onOpenSettings={reviewNeedsAccessibility ? openAccessibilitySettings : undefined}
           onPaste={handleReviewPaste}
           onCopy={handleReviewCopy}
           onDiscard={handleReviewDiscard}

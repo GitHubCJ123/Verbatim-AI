@@ -1,5 +1,6 @@
 export type RecordingErrorKind =
   | "missing-local-model"
+  | "accessibility"
   | "transcription"
   | "cleanup"
   | "recording"
@@ -22,6 +23,22 @@ const MISSING_LOCAL_MODEL_PRESENTATION: RecordingErrorPresentation = {
   message: "Open Settings -> AI model to download a local transcription model.",
   actionLabel: "Open Settings",
   actionTarget: "settings-ai-model",
+  persistent: true,
+};
+
+/**
+ * Shown when a paste fails because macOS Accessibility isn't granted.
+ * Persistent because the user must act (grant + relaunch) — it can't be
+ * fixed by simply recording again. Updates reset the grant on the
+ * unsigned build, which is why this recurs after an upgrade.
+ */
+export const ACCESSIBILITY_PERMISSION_PRESENTATION: RecordingErrorPresentation = {
+  kind: "accessibility",
+  title: "Accessibility permission needed",
+  message:
+    "Enable Verbatim AI in System Settings -> Privacy & Security -> " +
+    "Accessibility, then relaunch the app. Updates can reset this until " +
+    "the app is code-signed.",
   persistent: true,
 };
 

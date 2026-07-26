@@ -63,6 +63,8 @@ interface PendingResult {
   modeName: string;
   modeId: string | null;
   outputStyle: "paste" | "review";
+  /** For auto-paste results, the action actually taken (default "pasted"). */
+  outputAction?: OutputAction;
   saveHistory: boolean;
 }
 let pending: PendingResult | null = null;
@@ -118,10 +120,10 @@ void listen<PendingResult>("recording:result", async (e) => {
     description: e.payload.cleaned.slice(0, 240),
     duration: 6000,
   });
-  // For auto-paste, persist immediately with action 'pasted' (review
-  // mode waits for the user to commit).
+  // For auto-paste, persist immediately with the action taken — "pasted"
+  // by default, but "copied" when it only reached the clipboard (no target).
   if (e.payload.outputStyle === "paste") {
-    await persist(e.payload, "pasted");
+    await persist(e.payload, e.payload.outputAction ?? "pasted");
     pending = null;
   }
 });

@@ -1,0 +1,458 @@
+{
+  "version": 1,
+  "issue": {
+    "number": 73,
+    "title": "Warn on global-hotkey conflicts where detectable (Windows) / reserved shortcuts (macOS)",
+    "folder": "issue-0073-warn-on-global-hotkey-conflicts-where-detectable"
+  },
+  "updatedAt": "2026-07-25T11:34:47.321Z",
+  "artifacts": [
+    {
+      "id": "issue-0073-issue-0073-f41cab33-b5f9-45da-9bc3-e389cf9b1b87-PRD-001",
+      "displayId": "PRD-001",
+      "phase": "requirements",
+      "prefix": "PRD",
+      "title": "Requirements critique",
+      "summary": "Requirements are clear enough to draft a spec without a human requirements gate.",
+      "agent": "requirements-critic",
+      "runId": "issue-0073-f41cab33-b5f9-45da-9bc3-e389cf9b1b87",
+      "status": "complete",
+      "decision": "clear",
+      "path": "docs/automation/specs/issue-0073-warn-on-global-hotkey-conflicts-where-detectable/artifacts/PRD-001.md",
+      "sha256": "6a56770b383105724c2faef9e9c7ab53d7531c71b9dfa4cbbe0774b232e39237",
+      "createdAt": "2026-07-24T06:47:31.222Z",
+      "metadata": {
+        "issueInputSha": "cafc0a29e42a1110dd2e0a1db4b9374e347a6c2bb576d88020ae702363c0ce88",
+        "status": "clear",
+        "questions": [],
+        "findings": [
+          "Issue is well-structured (problem/approach/acceptance context present).",
+          "Issue includes concrete diagnostic evidence."
+        ]
+      }
+    },
+    {
+      "id": "issue-0073-issue-0073-f41cab33-b5f9-45da-9bc3-e389cf9b1b87-SPEC-001",
+      "displayId": "SPEC-001",
+      "phase": "spec",
+      "prefix": "SPEC",
+      "title": "Architect spec",
+      "summary": "Spec",
+      "agent": "architect",
+      "runId": "issue-0073-f41cab33-b5f9-45da-9bc3-e389cf9b1b87",
+      "status": "complete",
+      "decision": "proceed",
+      "path": "docs/automation/specs/issue-0073-warn-on-global-hotkey-conflicts-where-detectable/artifacts/SPEC-001.md",
+      "sha256": "10ada15b6a77abc91bb236b1544e73efb10d5833c36ea015638d50d288c1128c",
+      "createdAt": "2026-07-24T06:48:14.053Z",
+      "metadata": {
+        "specPath": "docs/automation/specs/issue-0073-warn-on-global-hotkey-conflicts-where-detectable/spec.md",
+        "specSha": "a6af754843650c73f12788597cd93afb1b57455465f00661543e7325e1630387"
+      }
+    },
+    {
+      "id": "issue-0073-issue-0073-f41cab33-b5f9-45da-9bc3-e389cf9b1b87-ADV-001",
+      "displayId": "ADV-001",
+      "phase": "adversarial-review",
+      "prefix": "ADV",
+      "title": "Adversarial review",
+      "summary": "Explicit SPEC_REVIEW_DECISION: proceed.",
+      "agent": "adversarial-reviewer",
+      "runId": "issue-0073-f41cab33-b5f9-45da-9bc3-e389cf9b1b87",
+      "status": "complete",
+      "decision": "proceed",
+      "path": "docs/automation/specs/issue-0073-warn-on-global-hotkey-conflicts-where-detectable/artifacts/ADV-001.md",
+      "sha256": "a16cb499a685658f00155bc14b92b41d5ad4a848401a273f71ab5a241dc31887",
+      "createdAt": "2026-07-24T06:49:57.025Z",
+      "metadata": {
+        "reviewPath": "docs/automation/specs/issue-0073-warn-on-global-hotkey-conflicts-where-detectable/adversarial-review.md",
+        "reviewSha": "1d37646f5046227b6ecab172ca1e21169f56823d7397263faf58a8b7943c7010",
+        "specPath": "docs/automation/specs/issue-0073-warn-on-global-hotkey-conflicts-where-detectable/spec.md",
+        "specSha": "a6af754843650c73f12788597cd93afb1b57455465f00661543e7325e1630387"
+      }
+    },
+    {
+      "id": "issue-0073-issue-0073-93aefca5-aaca-44df-8d36-a861979e02ea-SPEC-002",
+      "displayId": "SPEC-002",
+      "phase": "spec",
+      "prefix": "SPEC",
+      "title": "Architect spec",
+      "summary": "Spec",
+      "agent": "architect",
+      "runId": "issue-0073-93aefca5-aaca-44df-8d36-a861979e02ea",
+      "status": "complete",
+      "decision": "proceed",
+      "path": "docs/automation/specs/issue-0073-warn-on-global-hotkey-conflicts-where-detectable/artifacts/SPEC-002.md",
+      "sha256": "12644baf3114c79934a2f083d5a8b6a111cbbb42c696c7a8a433a4ffeef1c6f2",
+      "createdAt": "2026-07-24T10:53:23.425Z",
+      "metadata": {
+        "specPath": "docs/automation/specs/issue-0073-warn-on-global-hotkey-conflicts-where-detectable/spec.md",
+        "specSha": "4e609c1de5fcdc6ca9996147d03cee8627c83d8e086f8ae129e1e7ed960d0bdd"
+      }
+    },
+    {
+      "id": "issue-0073-issue-0073-93aefca5-aaca-44df-8d36-a861979e02ea-ADV-002",
+      "displayId": "ADV-002",
+      "phase": "adversarial-review",
+      "prefix": "ADV",
+      "title": "Adversarial review",
+      "summary": "Explicit SPEC_REVIEW_DECISION: proceed.",
+      "agent": "adversarial-reviewer",
+      "runId": "issue-0073-93aefca5-aaca-44df-8d36-a861979e02ea",
+      "status": "complete",
+      "decision": "proceed",
+      "path": "docs/automation/specs/issue-0073-warn-on-global-hotkey-conflicts-where-detectable/artifacts/ADV-002.md",
+      "sha256": "227eab360421ef2298fda9f83309d7c1722cdf75ee90fcdb23275e72fc09db39",
+      "createdAt": "2026-07-24T10:54:58.876Z",
+      "metadata": {
+        "reviewPath": "docs/automation/specs/issue-0073-warn-on-global-hotkey-conflicts-where-detectable/adversarial-review.md",
+        "reviewSha": "12a135b1ed32b4f0685078aa21b91b9f46ce0c5ff67b36fdc7b79cd45e0d8679",
+        "specPath": "docs/automation/specs/issue-0073-warn-on-global-hotkey-conflicts-where-detectable/spec.md",
+        "specSha": "4e609c1de5fcdc6ca9996147d03cee8627c83d8e086f8ae129e1e7ed960d0bdd"
+      }
+    },
+    {
+      "id": "issue-0073-issue-0073-26ee9233-69e6-422a-91ec-58e164dd5859-SPEC-003",
+      "displayId": "SPEC-003",
+      "phase": "spec",
+      "prefix": "SPEC",
+      "title": "Architect spec",
+      "summary": "Spec",
+      "agent": "architect",
+      "runId": "issue-0073-26ee9233-69e6-422a-91ec-58e164dd5859",
+      "status": "complete",
+      "decision": "proceed",
+      "path": "docs/automation/specs/issue-0073-warn-on-global-hotkey-conflicts-where-detectable/artifacts/SPEC-003.md",
+      "sha256": "5c8f533c6b76c54474b07be61aeec4d8553013a7e896f73721a80b638aafdedf",
+      "createdAt": "2026-07-24T14:58:30.858Z",
+      "metadata": {
+        "specPath": "docs/automation/specs/issue-0073-warn-on-global-hotkey-conflicts-where-detectable/spec.md",
+        "specSha": "e7d7e2d59e4d73750168fda5c253a8016c26e82455b06b5e581fdfd25a122118"
+      }
+    },
+    {
+      "id": "issue-0073-issue-0073-26ee9233-69e6-422a-91ec-58e164dd5859-ADV-003",
+      "displayId": "ADV-003",
+      "phase": "adversarial-review",
+      "prefix": "ADV",
+      "title": "Adversarial review",
+      "summary": "Explicit SPEC_REVIEW_DECISION: proceed.",
+      "agent": "adversarial-reviewer",
+      "runId": "issue-0073-26ee9233-69e6-422a-91ec-58e164dd5859",
+      "status": "complete",
+      "decision": "proceed",
+      "path": "docs/automation/specs/issue-0073-warn-on-global-hotkey-conflicts-where-detectable/artifacts/ADV-003.md",
+      "sha256": "468e5155e22a4d13b9d416baa51ee32387ed743e8206980a42a8c92c8f4a6221",
+      "createdAt": "2026-07-24T15:00:07.178Z",
+      "metadata": {
+        "reviewPath": "docs/automation/specs/issue-0073-warn-on-global-hotkey-conflicts-where-detectable/adversarial-review.md",
+        "reviewSha": "a6453b217970a29a8b0d6e788cad4d15bdeeecdb394cd0e61dd61541c255c4f1",
+        "specPath": "docs/automation/specs/issue-0073-warn-on-global-hotkey-conflicts-where-detectable/spec.md",
+        "specSha": "e7d7e2d59e4d73750168fda5c253a8016c26e82455b06b5e581fdfd25a122118"
+      }
+    },
+    {
+      "id": "issue-0073-issue-0073-54a3b0f0-68c2-4a24-8efb-4db55243167e-SPEC-004",
+      "displayId": "SPEC-004",
+      "phase": "spec",
+      "prefix": "SPEC",
+      "title": "Architect spec",
+      "summary": "Spec",
+      "agent": "architect",
+      "runId": "issue-0073-54a3b0f0-68c2-4a24-8efb-4db55243167e",
+      "status": "complete",
+      "decision": "proceed",
+      "path": "docs/automation/specs/issue-0073-warn-on-global-hotkey-conflicts-where-detectable/artifacts/SPEC-004.md",
+      "sha256": "2d0b8d14a1babc10d343983fb39d446c9789e370cf0b110d93bfdbad2fed2f63",
+      "createdAt": "2026-07-24T19:02:55.358Z",
+      "metadata": {
+        "specPath": "docs/automation/specs/issue-0073-warn-on-global-hotkey-conflicts-where-detectable/spec.md",
+        "specSha": "169c90c628eb37be92ba8ddd0f952e6c2f7f3c12882510d811cd5eebdcb00361"
+      }
+    },
+    {
+      "id": "issue-0073-issue-0073-54a3b0f0-68c2-4a24-8efb-4db55243167e-ADV-004",
+      "displayId": "ADV-004",
+      "phase": "adversarial-review",
+      "prefix": "ADV",
+      "title": "Adversarial review",
+      "summary": "Explicit SPEC_REVIEW_DECISION: proceed.",
+      "agent": "adversarial-reviewer",
+      "runId": "issue-0073-54a3b0f0-68c2-4a24-8efb-4db55243167e",
+      "status": "complete",
+      "decision": "proceed",
+      "path": "docs/automation/specs/issue-0073-warn-on-global-hotkey-conflicts-where-detectable/artifacts/ADV-004.md",
+      "sha256": "519de7bf9f9afc5528f4256b10c902bc388d22acd3b277242e0954bfdec56fa9",
+      "createdAt": "2026-07-24T19:04:40.158Z",
+      "metadata": {
+        "reviewPath": "docs/automation/specs/issue-0073-warn-on-global-hotkey-conflicts-where-detectable/adversarial-review.md",
+        "reviewSha": "86a21a24d17bb35597abd77e47e369030987a082f89214cdd7eea9874e324e8c",
+        "specPath": "docs/automation/specs/issue-0073-warn-on-global-hotkey-conflicts-where-detectable/spec.md",
+        "specSha": "169c90c628eb37be92ba8ddd0f952e6c2f7f3c12882510d811cd5eebdcb00361"
+      }
+    },
+    {
+      "id": "issue-0073-issue-0073-c6d86f5c-3f3e-4831-a683-8caed921184d-SPEC-005",
+      "displayId": "SPEC-005",
+      "phase": "spec",
+      "prefix": "SPEC",
+      "title": "Architect spec",
+      "summary": "Spec",
+      "agent": "architect",
+      "runId": "issue-0073-c6d86f5c-3f3e-4831-a683-8caed921184d",
+      "status": "complete",
+      "decision": "proceed",
+      "path": "docs/automation/specs/issue-0073-warn-on-global-hotkey-conflicts-where-detectable/artifacts/SPEC-005.md",
+      "sha256": "55c0a8a9c2b6fa2e2aef6ef77d2410cfe3686a55f3c4c03c043bccdca99fa16a",
+      "createdAt": "2026-07-24T23:05:33.491Z",
+      "metadata": {
+        "specPath": "docs/automation/specs/issue-0073-warn-on-global-hotkey-conflicts-where-detectable/spec.md",
+        "specSha": "572264a8a53864b344dff4301db0a097778f4418168b060487c943d9379a4015"
+      }
+    },
+    {
+      "id": "issue-0073-issue-0073-c6d86f5c-3f3e-4831-a683-8caed921184d-ADV-005",
+      "displayId": "ADV-005",
+      "phase": "adversarial-review",
+      "prefix": "ADV",
+      "title": "Adversarial review",
+      "summary": "Explicit SPEC_REVIEW_DECISION: proceed.",
+      "agent": "adversarial-reviewer",
+      "runId": "issue-0073-c6d86f5c-3f3e-4831-a683-8caed921184d",
+      "status": "complete",
+      "decision": "proceed",
+      "path": "docs/automation/specs/issue-0073-warn-on-global-hotkey-conflicts-where-detectable/artifacts/ADV-005.md",
+      "sha256": "16cfeed8be66b0dd5dc6b8e457fa8045e40a62d4dc4256c3ebfb047a5f1d2c0b",
+      "createdAt": "2026-07-24T23:06:45.378Z",
+      "metadata": {
+        "reviewPath": "docs/automation/specs/issue-0073-warn-on-global-hotkey-conflicts-where-detectable/adversarial-review.md",
+        "reviewSha": "d54a5f1f00c0eb06202104a3aca7da5be215e58131a015b9cb72b2997f45ce6b",
+        "specPath": "docs/automation/specs/issue-0073-warn-on-global-hotkey-conflicts-where-detectable/spec.md",
+        "specSha": "572264a8a53864b344dff4301db0a097778f4418168b060487c943d9379a4015"
+      }
+    },
+    {
+      "id": "issue-0073-issue-0073-85c212d3-9e14-4300-9c6b-532399d7e970-SPEC-006",
+      "displayId": "SPEC-006",
+      "phase": "spec",
+      "prefix": "SPEC",
+      "title": "Architect spec",
+      "summary": "Spec",
+      "agent": "architect",
+      "runId": "issue-0073-85c212d3-9e14-4300-9c6b-532399d7e970",
+      "status": "complete",
+      "decision": "proceed",
+      "path": "docs/automation/specs/issue-0073-warn-on-global-hotkey-conflicts-where-detectable/artifacts/SPEC-006.md",
+      "sha256": "77f8b53635159e5b3e9d9a1a73c517d5625882eab03699f03e89f89ce6a4471e",
+      "createdAt": "2026-07-25T03:22:32.281Z",
+      "metadata": {
+        "specPath": "docs/automation/specs/issue-0073-warn-on-global-hotkey-conflicts-where-detectable/spec.md",
+        "specSha": "fb3853183ab00d31c58809c3991c4418b822fdc62d18fad4fc982a927bd8ffc4"
+      }
+    },
+    {
+      "id": "issue-0073-issue-0073-85c212d3-9e14-4300-9c6b-532399d7e970-ADV-006",
+      "displayId": "ADV-006",
+      "phase": "adversarial-review",
+      "prefix": "ADV",
+      "title": "Adversarial review",
+      "summary": "Explicit SPEC_REVIEW_DECISION: proceed.",
+      "agent": "adversarial-reviewer",
+      "runId": "issue-0073-85c212d3-9e14-4300-9c6b-532399d7e970",
+      "status": "complete",
+      "decision": "proceed",
+      "path": "docs/automation/specs/issue-0073-warn-on-global-hotkey-conflicts-where-detectable/artifacts/ADV-006.md",
+      "sha256": "4625ce42e3a15ce981cd6110be3d864157da9b57de8b3aec3a08c5f6f34853a6",
+      "createdAt": "2026-07-25T03:24:27.740Z",
+      "metadata": {
+        "reviewPath": "docs/automation/specs/issue-0073-warn-on-global-hotkey-conflicts-where-detectable/adversarial-review.md",
+        "reviewSha": "5b075183029d5dd9ecf15b7ecede86f7754bb946e4c16d67cf295ebea367d8ef",
+        "specPath": "docs/automation/specs/issue-0073-warn-on-global-hotkey-conflicts-where-detectable/spec.md",
+        "specSha": "fb3853183ab00d31c58809c3991c4418b822fdc62d18fad4fc982a927bd8ffc4"
+      }
+    },
+    {
+      "id": "issue-0073-issue-0073-27cbdc85-80da-4659-a422-a319ed0705c5-SPEC-007",
+      "displayId": "SPEC-007",
+      "phase": "spec",
+      "prefix": "SPEC",
+      "title": "Architect spec",
+      "summary": "Spec",
+      "agent": "architect",
+      "runId": "issue-0073-27cbdc85-80da-4659-a422-a319ed0705c5",
+      "status": "complete",
+      "decision": "proceed",
+      "path": "docs/automation/specs/issue-0073-warn-on-global-hotkey-conflicts-where-detectable/artifacts/SPEC-007.md",
+      "sha256": "a6ad8e21969981183625fcfd01a8a2a50979d59f765257c0cc3d7bc3a77b3c6a",
+      "createdAt": "2026-07-25T07:28:49.782Z",
+      "metadata": {
+        "specPath": "docs/automation/specs/issue-0073-warn-on-global-hotkey-conflicts-where-detectable/spec.md",
+        "specSha": "1caf132e03c92e9bb5a8cc069763f1a9accd70e1debda595832ce39339d602ab"
+      }
+    },
+    {
+      "id": "issue-0073-issue-0073-27cbdc85-80da-4659-a422-a319ed0705c5-ADV-007",
+      "displayId": "ADV-007",
+      "phase": "adversarial-review",
+      "prefix": "ADV",
+      "title": "Adversarial review",
+      "summary": "Explicit SPEC_REVIEW_DECISION: proceed.",
+      "agent": "adversarial-reviewer",
+      "runId": "issue-0073-27cbdc85-80da-4659-a422-a319ed0705c5",
+      "status": "complete",
+      "decision": "proceed",
+      "path": "docs/automation/specs/issue-0073-warn-on-global-hotkey-conflicts-where-detectable/artifacts/ADV-007.md",
+      "sha256": "de5b88319dd39b23091d069b4cf91e7e55e746e083383ebf2b4668151aeb5716",
+      "createdAt": "2026-07-25T07:31:34.303Z",
+      "metadata": {
+        "reviewPath": "docs/automation/specs/issue-0073-warn-on-global-hotkey-conflicts-where-detectable/adversarial-review.md",
+        "reviewSha": "08e0fbc24cbe895a3a16debb04edea0cfba60fd5b9220bd97cdd02664178585a",
+        "specPath": "docs/automation/specs/issue-0073-warn-on-global-hotkey-conflicts-where-detectable/spec.md",
+        "specSha": "1caf132e03c92e9bb5a8cc069763f1a9accd70e1debda595832ce39339d602ab"
+      }
+    },
+    {
+      "id": "issue-0073-issue-0073-0119f6ea-9536-48ab-ad60-8e08332be8fc-SPEC-008",
+      "displayId": "SPEC-008",
+      "phase": "spec",
+      "prefix": "SPEC",
+      "title": "Architect spec",
+      "summary": "Spec",
+      "agent": "architect",
+      "runId": "issue-0073-0119f6ea-9536-48ab-ad60-8e08332be8fc",
+      "status": "complete",
+      "decision": "proceed",
+      "path": "docs/automation/specs/issue-0073-warn-on-global-hotkey-conflicts-where-detectable/artifacts/SPEC-008.md",
+      "sha256": "ab84235b46eaf186c2ccfc2e08b10fb72c25c2c2036f97102371df529649f243",
+      "createdAt": "2026-07-25T11:33:16.286Z",
+      "metadata": {
+        "specPath": "docs/automation/specs/issue-0073-warn-on-global-hotkey-conflicts-where-detectable/spec.md",
+        "specSha": "8292265f35ccb80195d4742d441c41b936a121e9c740dd38b14e2adc380ebd9a"
+      }
+    },
+    {
+      "id": "issue-0073-issue-0073-0119f6ea-9536-48ab-ad60-8e08332be8fc-ADV-008",
+      "displayId": "ADV-008",
+      "phase": "adversarial-review",
+      "prefix": "ADV",
+      "title": "Adversarial review",
+      "summary": "Explicit SPEC_REVIEW_DECISION: proceed.",
+      "agent": "adversarial-reviewer",
+      "runId": "issue-0073-0119f6ea-9536-48ab-ad60-8e08332be8fc",
+      "status": "complete",
+      "decision": "proceed",
+      "path": "docs/automation/specs/issue-0073-warn-on-global-hotkey-conflicts-where-detectable/artifacts/ADV-008.md",
+      "sha256": "5a5f89f861963a1baf59ca9b08831f6cfed0882193f9b34e79de13176edbdf32",
+      "createdAt": "2026-07-25T11:34:46.254Z",
+      "metadata": {
+        "reviewPath": "docs/automation/specs/issue-0073-warn-on-global-hotkey-conflicts-where-detectable/adversarial-review.md",
+        "reviewSha": "852886cacc745e3e01d7f1a61eed910c13ec871a353cdb111a013ff4fa06c06a",
+        "specPath": "docs/automation/specs/issue-0073-warn-on-global-hotkey-conflicts-where-detectable/spec.md",
+        "specSha": "8292265f35ccb80195d4742d441c41b936a121e9c740dd38b14e2adc380ebd9a"
+      }
+    }
+  ],
+  "latestArtifacts": {
+    "requirements": {
+      "id": "issue-0073-issue-0073-f41cab33-b5f9-45da-9bc3-e389cf9b1b87-PRD-001",
+      "displayId": "PRD-001",
+      "phase": "requirements",
+      "prefix": "PRD",
+      "title": "Requirements critique",
+      "summary": "Requirements are clear enough to draft a spec without a human requirements gate.",
+      "agent": "requirements-critic",
+      "runId": "issue-0073-f41cab33-b5f9-45da-9bc3-e389cf9b1b87",
+      "status": "complete",
+      "decision": "clear",
+      "path": "docs/automation/specs/issue-0073-warn-on-global-hotkey-conflicts-where-detectable/artifacts/PRD-001.md",
+      "sha256": "6a56770b383105724c2faef9e9c7ab53d7531c71b9dfa4cbbe0774b232e39237",
+      "createdAt": "2026-07-24T06:47:31.222Z",
+      "metadata": {
+        "issueInputSha": "cafc0a29e42a1110dd2e0a1db4b9374e347a6c2bb576d88020ae702363c0ce88",
+        "status": "clear",
+        "questions": [],
+        "findings": [
+          "Issue is well-structured (problem/approach/acceptance context present).",
+          "Issue includes concrete diagnostic evidence."
+        ]
+      }
+    },
+    "spec": {
+      "id": "issue-0073-issue-0073-0119f6ea-9536-48ab-ad60-8e08332be8fc-SPEC-008",
+      "displayId": "SPEC-008",
+      "phase": "spec",
+      "prefix": "SPEC",
+      "title": "Architect spec",
+      "summary": "Spec",
+      "agent": "architect",
+      "runId": "issue-0073-0119f6ea-9536-48ab-ad60-8e08332be8fc",
+      "status": "complete",
+      "decision": "proceed",
+      "path": "docs/automation/specs/issue-0073-warn-on-global-hotkey-conflicts-where-detectable/artifacts/SPEC-008.md",
+      "sha256": "ab84235b46eaf186c2ccfc2e08b10fb72c25c2c2036f97102371df529649f243",
+      "createdAt": "2026-07-25T11:33:16.286Z",
+      "metadata": {
+        "specPath": "docs/automation/specs/issue-0073-warn-on-global-hotkey-conflicts-where-detectable/spec.md",
+        "specSha": "8292265f35ccb80195d4742d441c41b936a121e9c740dd38b14e2adc380ebd9a"
+      }
+    },
+    "adversarial-review": {
+      "id": "issue-0073-issue-0073-0119f6ea-9536-48ab-ad60-8e08332be8fc-ADV-008",
+      "displayId": "ADV-008",
+      "phase": "adversarial-review",
+      "prefix": "ADV",
+      "title": "Adversarial review",
+      "summary": "Explicit SPEC_REVIEW_DECISION: proceed.",
+      "agent": "adversarial-reviewer",
+      "runId": "issue-0073-0119f6ea-9536-48ab-ad60-8e08332be8fc",
+      "status": "complete",
+      "decision": "proceed",
+      "path": "docs/automation/specs/issue-0073-warn-on-global-hotkey-conflicts-where-detectable/artifacts/ADV-008.md",
+      "sha256": "5a5f89f861963a1baf59ca9b08831f6cfed0882193f9b34e79de13176edbdf32",
+      "createdAt": "2026-07-25T11:34:46.254Z",
+      "metadata": {
+        "reviewPath": "docs/automation/specs/issue-0073-warn-on-global-hotkey-conflicts-where-detectable/adversarial-review.md",
+        "reviewSha": "852886cacc745e3e01d7f1a61eed910c13ec871a353cdb111a013ff4fa06c06a",
+        "specPath": "docs/automation/specs/issue-0073-warn-on-global-hotkey-conflicts-where-detectable/spec.md",
+        "specSha": "8292265f35ccb80195d4742d441c41b936a121e9c740dd38b14e2adc380ebd9a"
+      }
+    }
+  },
+  "phaseStatuses": {
+    "requirements": {
+      "status": "complete",
+      "decision": "clear",
+      "latestArtifactId": "issue-0073-issue-0073-f41cab33-b5f9-45da-9bc3-e389cf9b1b87-PRD-001",
+      "latestDisplayId": "PRD-001",
+      "count": 1,
+      "updatedAt": "2026-07-25T11:32:31.316Z",
+      "details": {
+        "issueInputSha": "cafc0a29e42a1110dd2e0a1db4b9374e347a6c2bb576d88020ae702363c0ce88",
+        "reason": "Requirements are clear enough to draft a spec without a human requirements gate."
+      }
+    },
+    "spec": {
+      "status": "complete",
+      "decision": "proceed",
+      "latestArtifactId": "issue-0073-issue-0073-0119f6ea-9536-48ab-ad60-8e08332be8fc-SPEC-008",
+      "latestDisplayId": "SPEC-008",
+      "count": 8,
+      "updatedAt": "2026-07-25T11:33:16.286Z"
+    },
+    "adversarial-review": {
+      "status": "complete",
+      "decision": "proceed",
+      "latestArtifactId": "issue-0073-issue-0073-0119f6ea-9536-48ab-ad60-8e08332be8fc-ADV-008",
+      "latestDisplayId": "ADV-008",
+      "count": 8,
+      "updatedAt": "2026-07-25T11:34:46.254Z"
+    },
+    "implementation": {
+      "status": "blocked",
+      "updatedAt": "2026-07-25T11:34:47.321Z",
+      "details": {
+        "reason": "Unhandled error: git worktree add -B copilot/issue-73-warn-on-global-hotkey-conflicts-wher [REDACTED_REPOSITORY]/.copilot-issue-loop/worktrees/issue-73-warn-on-global-hotkey-conflicts-wher-issue-0073-0119f6ea-9536-48ab-ad origin/main failed:\nfatal: 'copilot/issue-73-warn-on-global-hotkey-conflicts-wher' is already used by worktree at '[REDACTED_REPOSITORY]/.copilot-issue-loop/worktrees/issue-73-warn-on-global-hotkey-conflicts-wher-issue-0073-f41cab33-b5f9-45da-9b'\n"
+      }
+    }
+  }
+}

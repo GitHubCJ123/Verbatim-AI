@@ -1,0 +1,69 @@
+# Requirements review for issue #22
+
+Status: clear
+Issue input SHA: 802e235713d903dc5648b8e31295c71a158b7667049e5f943a791803efa1c17f
+
+## Summary
+
+Requirements are clear enough to draft a spec without a human requirements gate.
+
+## Findings
+
+- Issue is well-structured (problem/approach/acceptance context present).
+
+## Questions / blockers
+
+- None.
+
+## Next action
+
+Proceed to spec drafting. Implementation still requires spec review and approval.
+
+## Original issue
+
+## Summary
+
+Reintroduce Verbatim AI's **cloud features** — cloud AI models (Azure Whisper transcription + Azure GPT cleanup) and optional cloud account/sync — **gated behind a subscription/entitlement model**. This is the planned follow-up to #21, which disables all cloud features in the UI while keeping the code intact.
+
+## Context
+
+In #21 we hide every cloud surface behind a single `CLOUD_FEATURES_ENABLED` flag and ship a fully local-only app. The underlying code (`SupabaseAIProvider`, `useAuth`, `Account`, `AuthGate`, `MigrationPicker`, Supabase Edge Functions) is preserved. This issue covers turning cloud back on **the right way**, with billing and entitlement enforcement, so we don't expose paid inference for free.
+
+## Goals
+
+- Re-enable cloud AI transcription/cleanup and account sync only for entitled (subscribed) users.
+- Enforce entitlement both in the client UI (what's offered) and server-side in the Edge Functions (who can actually call Azure).
+- Provide a clean upgrade path from the local-only experience: local stays free; cloud is the paid tier.
+
+## Design questions to resolve first
+
+1. **Billing provider** — Stripe vs. RevenueCat vs. app-store billing (given this is a desktop Tauri app, likely Stripe Checkout + customer portal).
+2. **Entitlement source of truth** — Supabase table (`subscriptions`/`entitlements`) synced from billing webhooks; client reads a signed/short-lived entitlement.
+3. **Server-side enforcement** — Edge Functions (`transcribe`, `cleanup`) must verify the caller's entitlement (not just the anon key) before proxying to Azure. Today they are deployed `--no-verify-jwt`; revisit for the paid path.
+4. **Tiers** — free (local-only) vs. paid (cloud + sync). Any usage caps/metering per tier? Per-minute transcription or per-token cleanup metering?
+5. **Trials & grace** — free trial handling, expiry, offline grace period, and graceful downgrade back to local engines when a subscription lapses.
+6. **Anonymous vs. account** — cloud requires an account; confirm the account/sync flow (AuthGate, ModePicker "Create account", MigrationPicker) is the entry point for the paid tier.
+7. **Failure UX** — clear messaging when a user without entitlement selects a cloud option, and when an entitled call is rejected server-side.
+
+## Implementation outline (high level)
+
+- Flip `CLOUD_FEATURES_ENABLED` behind an entitlement check rather than a hard-coded `false`.
+- Add an entitlement store/hook (client) that reflects subscription status.
+- Add billing integration + webhook → entitlement persistence.
+- Harden `supabase/functions/transcribe` and `supabase/functions/cleanup` to require and verify entitlement.
+- Re-surface the cloud provider options in Settings, onboarding, and per-Mode overrides **only** when entitled; keep local defaults for everyone else.
+- Restore Account/AuthGate/MigrationPicker routes as the paid-tier entry points.
+- Reconcile the "privacy indicator" copy for cloud vs. local when both are available.
+
+## Acceptance criteria
+
+- Users without an active subscription see the same local-only experience as after #21 (no cloud options, no dead ends).
+- Subscribed users can select and use cloud transcription/cleanup and account sync.
+- Cloud Edge Function calls are rejected server-side for unentitled callers (verified with a test).
+- Subscription lifecycle (subscribe, renew, lapse, cancel) correctly toggles access and downgrades to local without data loss.
+- Billing and entitlement flows are documented.
+
+## Dependencies
+
+- Blocked by #21 (disable cloud features first).
+

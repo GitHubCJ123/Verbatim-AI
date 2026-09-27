@@ -1,0 +1,329 @@
+{
+  "version": 1,
+  "issue": {
+    "number": 53,
+    "title": "Fully Rust-first push-to-talk hot path (start capture in the tap callback, before JS)",
+    "folder": "issue-0053-fully-rust-first-push-to-talk-hot-path-start-cap"
+  },
+  "updatedAt": "2026-07-26T17:12:07.757Z",
+  "artifacts": [
+    {
+      "id": "issue-0053-issue-0053-bee38386-e3cb-4b96-a131-b2e00b62bb4a-PRD-001",
+      "displayId": "PRD-001",
+      "phase": "requirements",
+      "prefix": "PRD",
+      "title": "Requirements critique",
+      "summary": "Requirements are clear enough to draft a spec without a human requirements gate.",
+      "agent": "requirements-critic",
+      "runId": "issue-0053-bee38386-e3cb-4b96-a131-b2e00b62bb4a",
+      "status": "complete",
+      "decision": "clear",
+      "path": "docs/automation/specs/issue-0053-fully-rust-first-push-to-talk-hot-path-start-cap/artifacts/PRD-001.md",
+      "sha256": "cf2678d0f86ed0799bc01716c3818cd5146b4269117a6ac8216e1aea4eb2f01d",
+      "createdAt": "2026-07-26T02:36:39.323Z",
+      "metadata": {
+        "issueInputSha": "c065d5f430bcba40f604e8be31bc4401f3346d2478244741b333594ecc461af8",
+        "status": "clear",
+        "questions": [],
+        "findings": [
+          "Issue is well-structured (problem/approach/acceptance context present).",
+          "Issue includes concrete diagnostic evidence."
+        ]
+      }
+    },
+    {
+      "id": "issue-0053-issue-0053-bee38386-e3cb-4b96-a131-b2e00b62bb4a-SPEC-001",
+      "displayId": "SPEC-001",
+      "phase": "spec",
+      "prefix": "SPEC",
+      "title": "Architect spec",
+      "summary": "Spec",
+      "agent": "architect",
+      "runId": "issue-0053-bee38386-e3cb-4b96-a131-b2e00b62bb4a",
+      "status": "complete",
+      "decision": "proceed",
+      "path": "docs/automation/specs/issue-0053-fully-rust-first-push-to-talk-hot-path-start-cap/artifacts/SPEC-001.md",
+      "sha256": "9ef950de5f1ea566f56ad3cb70af1a1369c0f31a61177b47acb1d96586aba31e",
+      "createdAt": "2026-07-26T02:38:35.620Z",
+      "metadata": {
+        "specPath": "docs/automation/specs/issue-0053-fully-rust-first-push-to-talk-hot-path-start-cap/spec.md",
+        "specSha": "bfa44a2d18ab8e28a8ef756c55d4e1b700b3728794ef8f7c9782e0aea4f7a7b8"
+      }
+    },
+    {
+      "id": "issue-0053-issue-0053-bee38386-e3cb-4b96-a131-b2e00b62bb4a-ADV-001",
+      "displayId": "ADV-001",
+      "phase": "adversarial-review",
+      "prefix": "ADV",
+      "title": "Adversarial review",
+      "summary": "Explicit SPEC_REVIEW_DECISION: proceed.",
+      "agent": "adversarial-reviewer",
+      "runId": "issue-0053-bee38386-e3cb-4b96-a131-b2e00b62bb4a",
+      "status": "complete",
+      "decision": "proceed",
+      "path": "docs/automation/specs/issue-0053-fully-rust-first-push-to-talk-hot-path-start-cap/artifacts/ADV-001.md",
+      "sha256": "d2672460fc098a6870678d586f74763aa9b9e8f6de4b1606f30cdba2624bf969",
+      "createdAt": "2026-07-26T02:41:51.317Z",
+      "metadata": {
+        "reviewPath": "docs/automation/specs/issue-0053-fully-rust-first-push-to-talk-hot-path-start-cap/adversarial-review.md",
+        "reviewSha": "ff79b85732bc7ec0e3ad4e48332c2e83833ecabc95232d736c07d9089a0fc73a",
+        "specPath": "docs/automation/specs/issue-0053-fully-rust-first-push-to-talk-hot-path-start-cap/spec.md",
+        "specSha": "bfa44a2d18ab8e28a8ef756c55d4e1b700b3728794ef8f7c9782e0aea4f7a7b8"
+      }
+    },
+    {
+      "id": "issue-0053-issue-0053-e86c09fe-7d47-4bf8-a42b-6fb69a617225-IMPL-001",
+      "displayId": "IMPL-001",
+      "phase": "implementation",
+      "prefix": "IMPL",
+      "title": "Draft PR #87",
+      "summary": "Opened draft PR #87 from copilot/issue-53-fully-rust-first-push-to-talk-hot-pa.",
+      "agent": "implementer",
+      "runId": "issue-0053-e86c09fe-7d47-4bf8-a42b-6fb69a617225",
+      "status": "complete",
+      "decision": "proceed",
+      "path": "docs/automation/specs/issue-0053-fully-rust-first-push-to-talk-hot-path-start-cap/artifacts/IMPL-001.md",
+      "sha256": "938ee16c1addae894a3d5cc9b7a0928804995160e673bd1b8cda9efa7d9676a8",
+      "createdAt": "2026-07-26T15:45:35.846Z",
+      "metadata": {
+        "prNumber": 87,
+        "prUrl": "https://github.com/GitHubCJ123/Verbatim-AI/pull/87",
+        "branch": "copilot/issue-53-fully-rust-first-push-to-talk-hot-pa",
+        "headSha": "55e3ccf0c53de639d38c69eff494c4435c5ad061",
+        "worktreePath": "[REDACTED_REPOSITORY]/.copilot-issue-loop/worktrees/issue-53-fully-rust-first-push-to-talk-hot-pa-issue-0053-e86c09fe-7d47-4bf8-a4",
+        "changedFiles": [
+          "docs/proposals/warm-ptt-capture.md",
+          "src-tauri/src/commands/fn_hotkey.rs",
+          "src-tauri/src/commands/hotkey.rs",
+          "src-tauri/src/commands/native_audio.rs",
+          "src-tauri/src/lib.rs",
+          "src/lib/audio.ts",
+          "src/lib/hotkey.test.ts",
+          "src/lib/hotkey.ts",
+          "src/lib/nativeAudio.test.ts",
+          "src/lib/nativeAudio.ts",
+          "src/lib/recording-bridge.test.ts",
+          "src/lib/recording-bridge.ts",
+          "src/overlay/Overlay.tsx"
+        ]
+      }
+    },
+    {
+      "id": "issue-0053-issue-0053-e86c09fe-7d47-4bf8-a42b-6fb69a617225-REVIEW-001",
+      "displayId": "REVIEW-001",
+      "phase": "agent-pr-review",
+      "prefix": "REVIEW",
+      "title": "Agent PR review requested changes",
+      "summary": "Agent PR review found blockers on attempt 1.",
+      "agent": "agent-pr-reviewer",
+      "runId": "issue-0053-e86c09fe-7d47-4bf8-a42b-6fb69a617225",
+      "status": "needs-redo",
+      "decision": "needs-changes",
+      "path": "docs/automation/specs/issue-0053-fully-rust-first-push-to-talk-hot-path-start-cap/artifacts/REVIEW-001.md",
+      "sha256": "a142292aaf9f4af8530a170908070c21782c734db36e8a6871762b72310623d6",
+      "createdAt": "2026-07-26T15:45:51.953Z",
+      "metadata": {
+        "prNumber": 87,
+        "headSha": "55e3ccf0c53de639d38c69eff494c4435c5ad061",
+        "attempt": 1
+      }
+    }
+  ],
+  "latestArtifacts": {
+    "requirements": {
+      "id": "issue-0053-issue-0053-bee38386-e3cb-4b96-a131-b2e00b62bb4a-PRD-001",
+      "displayId": "PRD-001",
+      "phase": "requirements",
+      "prefix": "PRD",
+      "title": "Requirements critique",
+      "summary": "Requirements are clear enough to draft a spec without a human requirements gate.",
+      "agent": "requirements-critic",
+      "runId": "issue-0053-bee38386-e3cb-4b96-a131-b2e00b62bb4a",
+      "status": "complete",
+      "decision": "clear",
+      "path": "docs/automation/specs/issue-0053-fully-rust-first-push-to-talk-hot-path-start-cap/artifacts/PRD-001.md",
+      "sha256": "cf2678d0f86ed0799bc01716c3818cd5146b4269117a6ac8216e1aea4eb2f01d",
+      "createdAt": "2026-07-26T02:36:39.323Z",
+      "metadata": {
+        "issueInputSha": "c065d5f430bcba40f604e8be31bc4401f3346d2478244741b333594ecc461af8",
+        "status": "clear",
+        "questions": [],
+        "findings": [
+          "Issue is well-structured (problem/approach/acceptance context present).",
+          "Issue includes concrete diagnostic evidence."
+        ]
+      }
+    },
+    "spec": {
+      "id": "issue-0053-issue-0053-bee38386-e3cb-4b96-a131-b2e00b62bb4a-SPEC-001",
+      "displayId": "SPEC-001",
+      "phase": "spec",
+      "prefix": "SPEC",
+      "title": "Architect spec",
+      "summary": "Spec",
+      "agent": "architect",
+      "runId": "issue-0053-bee38386-e3cb-4b96-a131-b2e00b62bb4a",
+      "status": "complete",
+      "decision": "proceed",
+      "path": "docs/automation/specs/issue-0053-fully-rust-first-push-to-talk-hot-path-start-cap/artifacts/SPEC-001.md",
+      "sha256": "9ef950de5f1ea566f56ad3cb70af1a1369c0f31a61177b47acb1d96586aba31e",
+      "createdAt": "2026-07-26T02:38:35.620Z",
+      "metadata": {
+        "specPath": "docs/automation/specs/issue-0053-fully-rust-first-push-to-talk-hot-path-start-cap/spec.md",
+        "specSha": "bfa44a2d18ab8e28a8ef756c55d4e1b700b3728794ef8f7c9782e0aea4f7a7b8"
+      }
+    },
+    "adversarial-review": {
+      "id": "issue-0053-issue-0053-bee38386-e3cb-4b96-a131-b2e00b62bb4a-ADV-001",
+      "displayId": "ADV-001",
+      "phase": "adversarial-review",
+      "prefix": "ADV",
+      "title": "Adversarial review",
+      "summary": "Explicit SPEC_REVIEW_DECISION: proceed.",
+      "agent": "adversarial-reviewer",
+      "runId": "issue-0053-bee38386-e3cb-4b96-a131-b2e00b62bb4a",
+      "status": "complete",
+      "decision": "proceed",
+      "path": "docs/automation/specs/issue-0053-fully-rust-first-push-to-talk-hot-path-start-cap/artifacts/ADV-001.md",
+      "sha256": "d2672460fc098a6870678d586f74763aa9b9e8f6de4b1606f30cdba2624bf969",
+      "createdAt": "2026-07-26T02:41:51.317Z",
+      "metadata": {
+        "reviewPath": "docs/automation/specs/issue-0053-fully-rust-first-push-to-talk-hot-path-start-cap/adversarial-review.md",
+        "reviewSha": "ff79b85732bc7ec0e3ad4e48332c2e83833ecabc95232d736c07d9089a0fc73a",
+        "specPath": "docs/automation/specs/issue-0053-fully-rust-first-push-to-talk-hot-path-start-cap/spec.md",
+        "specSha": "bfa44a2d18ab8e28a8ef756c55d4e1b700b3728794ef8f7c9782e0aea4f7a7b8"
+      }
+    },
+    "implementation": {
+      "id": "issue-0053-issue-0053-e86c09fe-7d47-4bf8-a42b-6fb69a617225-IMPL-001",
+      "displayId": "IMPL-001",
+      "phase": "implementation",
+      "prefix": "IMPL",
+      "title": "Draft PR #87",
+      "summary": "Opened draft PR #87 from copilot/issue-53-fully-rust-first-push-to-talk-hot-pa.",
+      "agent": "implementer",
+      "runId": "issue-0053-e86c09fe-7d47-4bf8-a42b-6fb69a617225",
+      "status": "complete",
+      "decision": "proceed",
+      "path": "docs/automation/specs/issue-0053-fully-rust-first-push-to-talk-hot-path-start-cap/artifacts/IMPL-001.md",
+      "sha256": "938ee16c1addae894a3d5cc9b7a0928804995160e673bd1b8cda9efa7d9676a8",
+      "createdAt": "2026-07-26T15:45:35.846Z",
+      "metadata": {
+        "prNumber": 87,
+        "prUrl": "https://github.com/GitHubCJ123/Verbatim-AI/pull/87",
+        "branch": "copilot/issue-53-fully-rust-first-push-to-talk-hot-pa",
+        "headSha": "55e3ccf0c53de639d38c69eff494c4435c5ad061",
+        "worktreePath": "[REDACTED_REPOSITORY]/.copilot-issue-loop/worktrees/issue-53-fully-rust-first-push-to-talk-hot-pa-issue-0053-e86c09fe-7d47-4bf8-a4",
+        "changedFiles": [
+          "docs/proposals/warm-ptt-capture.md",
+          "src-tauri/src/commands/fn_hotkey.rs",
+          "src-tauri/src/commands/hotkey.rs",
+          "src-tauri/src/commands/native_audio.rs",
+          "src-tauri/src/lib.rs",
+          "src/lib/audio.ts",
+          "src/lib/hotkey.test.ts",
+          "src/lib/hotkey.ts",
+          "src/lib/nativeAudio.test.ts",
+          "src/lib/nativeAudio.ts",
+          "src/lib/recording-bridge.test.ts",
+          "src/lib/recording-bridge.ts",
+          "src/overlay/Overlay.tsx"
+        ]
+      }
+    },
+    "agent-pr-review": {
+      "id": "issue-0053-issue-0053-e86c09fe-7d47-4bf8-a42b-6fb69a617225-REVIEW-001",
+      "displayId": "REVIEW-001",
+      "phase": "agent-pr-review",
+      "prefix": "REVIEW",
+      "title": "Agent PR review requested changes",
+      "summary": "Agent PR review found blockers on attempt 1.",
+      "agent": "agent-pr-reviewer",
+      "runId": "issue-0053-e86c09fe-7d47-4bf8-a42b-6fb69a617225",
+      "status": "needs-redo",
+      "decision": "needs-changes",
+      "path": "docs/automation/specs/issue-0053-fully-rust-first-push-to-talk-hot-path-start-cap/artifacts/REVIEW-001.md",
+      "sha256": "a142292aaf9f4af8530a170908070c21782c734db36e8a6871762b72310623d6",
+      "createdAt": "2026-07-26T15:45:51.953Z",
+      "metadata": {
+        "prNumber": 87,
+        "headSha": "55e3ccf0c53de639d38c69eff494c4435c5ad061",
+        "attempt": 1
+      }
+    }
+  },
+  "phaseStatuses": {
+    "requirements": {
+      "status": "complete",
+      "decision": "clear",
+      "latestArtifactId": "issue-0053-issue-0053-bee38386-e3cb-4b96-a131-b2e00b62bb4a-PRD-001",
+      "latestDisplayId": "PRD-001",
+      "count": 1,
+      "updatedAt": "2026-07-26T15:04:19.726Z",
+      "details": {
+        "issueInputSha": "c065d5f430bcba40f604e8be31bc4401f3346d2478244741b333594ecc461af8",
+        "reason": "Requirements are clear enough to draft a spec without a human requirements gate."
+      }
+    },
+    "spec": {
+      "status": "complete",
+      "decision": "proceed",
+      "latestArtifactId": "issue-0053-issue-0053-bee38386-e3cb-4b96-a131-b2e00b62bb4a-SPEC-001",
+      "latestDisplayId": "SPEC-001",
+      "count": 1,
+      "updatedAt": "2026-07-26T02:38:35.620Z"
+    },
+    "adversarial-review": {
+      "status": "complete",
+      "decision": "proceed",
+      "latestArtifactId": "issue-0053-issue-0053-bee38386-e3cb-4b96-a131-b2e00b62bb4a-ADV-001",
+      "latestDisplayId": "ADV-001",
+      "count": 1,
+      "updatedAt": "2026-07-26T02:41:52.912Z",
+      "details": {
+        "reason": "Adversarial review completed; see the spec gate for the authoritative decision."
+      }
+    },
+    "spec-review": {
+      "status": "approved",
+      "updatedAt": "2026-07-26T02:41:52.910Z",
+      "details": {
+        "reason": "Spec gate passed; implementation may proceed.",
+        "gate": {
+          "passed": true,
+          "fingerprint": "1e49c6e75f89b16fb6a9cfbf8a39aeeffcc41efd5964c5fa615f69f45540eca9",
+          "specSha": "bfa44a2d18ab8e28a8ef756c55d4e1b700b3728794ef8f7c9782e0aea4f7a7b8",
+          "reviewSha": "ff79b85732bc7ec0e3ad4e48332c2e83833ecabc95232d736c07d9089a0fc73a",
+          "decision": "proceed",
+          "reason": "Spec review cleared this spec for implementation.",
+          "securityVeto": false,
+          "vetoReason": "",
+          "policyVersion": "2",
+          "at": "2026-07-26T02:41:52.909Z"
+        }
+      }
+    },
+    "implementation": {
+      "status": "blocked",
+      "decision": "proceed",
+      "latestArtifactId": "issue-0053-issue-0053-e86c09fe-7d47-4bf8-a42b-6fb69a617225-IMPL-001",
+      "latestDisplayId": "IMPL-001",
+      "count": 1,
+      "updatedAt": "2026-07-26T17:12:07.757Z",
+      "details": {
+        "reason": "\nExiting…\n\n\nChanges    +0 -0\nAI Credits 0 (0s)\nResume     copilot --resume=[REDACTED_SESSION]\n\n[timed out after 2700000ms]",
+        "prNumber": 87,
+        "branch": "copilot/issue-53-fully-rust-first-push-to-talk-hot-pa",
+        "worktreePath": "[REDACTED_REPOSITORY]/.copilot-issue-loop/worktrees/issue-53-fully-rust-first-push-to-talk-hot-pa-issue-0053-e86c09fe-7d47-4bf8-a4"
+      }
+    },
+    "agent-pr-review": {
+      "status": "needs-redo",
+      "decision": "needs-changes",
+      "latestArtifactId": "issue-0053-issue-0053-e86c09fe-7d47-4bf8-a42b-6fb69a617225-REVIEW-001",
+      "latestDisplayId": "REVIEW-001",
+      "count": 1,
+      "updatedAt": "2026-07-26T15:45:51.953Z"
+    }
+  }
+}

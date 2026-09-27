@@ -1,0 +1,67 @@
+{
+  "version": 1,
+  "issue": {
+    "number": 2,
+    "title": "Keyboard: support single-key (function-key) hotkeys + add \"insert only, don't copy to clipboard\" option",
+    "folder": "issue-0002-keyboard-support-single-key-function-key-hotkeys"
+  },
+  "updatedAt": "2026-07-21T14:09:09.320Z",
+  "artifacts": [
+    {
+      "id": "issue-0002-issue-0002-5f7cec65-afb8-47ae-afe3-f189240fc220-CLEAN-001",
+      "displayId": "CLEAN-001",
+      "phase": "cleanup",
+      "prefix": "CLEAN",
+      "title": "Cleanup complete for PR #10",
+      "summary": "Removed automation worktree/branch for merged PR #10 (copilot/issue-2).",
+      "agent": "cleanup",
+      "runId": "issue-0002-5f7cec65-afb8-47ae-afe3-f189240fc220",
+      "status": "complete",
+      "decision": "done",
+      "path": "docs/automation/specs/issue-0002-keyboard-support-single-key-function-key-hotkeys/artifacts/CLEAN-001.md",
+      "sha256": "c273137d9edc1ecdd08dc00ef838485a2ab517d4fb7299c7c5b89a5a3d339cb3",
+      "createdAt": "2026-07-21T14:09:09.320Z",
+      "metadata": {
+        "prNumber": 10,
+        "branch": "copilot/issue-2",
+        "actions": [
+          "remote-branch"
+        ]
+      }
+    }
+  ],
+  "latestArtifacts": {
+    "cleanup": {
+      "id": "issue-0002-issue-0002-5f7cec65-afb8-47ae-afe3-f189240fc220-CLEAN-001",
+      "displayId": "CLEAN-001",
+      "phase": "cleanup",
+      "prefix": "CLEAN",
+      "title": "Cleanup complete for PR #10",
+      "summary": "Removed automation worktree/branch for merged PR #10 (copilot/issue-2).",
+      "agent": "cleanup",
+      "runId": "issue-0002-5f7cec65-afb8-47ae-afe3-f189240fc220",
+      "status": "complete",
+      "decision": "done",
+      "path": "docs/automation/specs/issue-0002-keyboard-support-single-key-function-key-hotkeys/artifacts/CLEAN-001.md",
+      "sha256": "c273137d9edc1ecdd08dc00ef838485a2ab517d4fb7299c7c5b89a5a3d339cb3",
+      "createdAt": "2026-07-21T14:09:09.320Z",
+      "metadata": {
+        "prNumber": 10,
+        "branch": "copilot/issue-2",
+        "actions": [
+          "remote-branch"
+        ]
+      }
+    }
+  },
+  "phaseStatuses": {
+    "cleanup": {
+      "status": "complete",
+      "decision": "done",
+      "latestArtifactId": "issue-0002-issue-0002-5f7cec65-afb8-47ae-afe3-f189240fc220-CLEAN-001",
+      "latestDisplayId": "CLEAN-001",
+      "count": 1,
+      "updatedAt": "2026-07-21T14:09:09.320Z"
+    }
+  }
+}

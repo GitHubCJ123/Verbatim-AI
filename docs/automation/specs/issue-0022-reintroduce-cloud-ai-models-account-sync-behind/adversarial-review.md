@@ -1,0 +1,76 @@
+# Adversarial review
+
+I'll review this spec. Let me first read the actual spec file and ground my review in the real codebase.
+
+● Read spec.md
+  │ docs/automation/specs/issue-0022-reintroduce-cloud-ai-models-account-sync-behind/spec.md
+  └ 321 lines read
+
+● Read spec file and check git history (shell)
+  │ cd [REDACTED_REPOSITORY] && echo "=== git log recent ===" && git --no-pager log
+  │ --oneline -10 && echo "=== issue #21 refs ===" && git --no-pager log --oneline --all | grep -i
+  │ "21\|cloud" | head -20
+  └ 27 lines…
+
+The spec file wraps the content in a "Proposed content for..." preamble + code fence. Let me verify the spec's repo facts against the actual codebase to ground my review.
+
+● List AI, functions, store dirs (shell)
+  │ cd [REDACTED_REPOSITORY] && echo "=== ai dir ===" && ls -la src/lib/ai/
+  │ 2>/dev/null && echo "=== supabase functions ===" && ls -la supabase/functions/ 2>/dev/null &&
+  │ echo "=== store dir ===" && ls -la src/lib/store/ 2>/dev/null
+  └ 34 lines…
+
+● Verify CLOUD_FEATURES_ENABLED and appMode (shell)
+  │ cd [REDACTED_REPOSITORY] && echo "=== CLOUD_FEATURES_ENABLED refs ===" && grep
+  │ -rn "CLOUD_FEATURES_ENABLED" src/ --include=*.ts --include=*.tsx | head -20 && echo "===
+  │ appMode.ts ===" && cat src/lib/appMode.ts 2>/dev/null | head -40
+  └ 37 lines…
+
+The central mechanism references `CLOUD_FEATURES_ENABLED` but grep found nothing in `src/`. Let me verify whether #21's flag actually exists in this checkout, since the spec's plan hinges on it.
+
+● Find how cloud is currently gated (shell)
+  │ cd [REDACTED_REPOSITORY] && echo "=== how cloud is gated now ===" && grep -rln
+  │ "cloud" src/ --include=*.ts --include=*.tsx | head && echo "=== features/flags files ===" &&
+  │ grep -rln "enabled\|Flag\|flag" src/lib/ --include=*.ts | head && echo "=== index.ts head
+  │ (providers) ===" && sed -n '1,40p' src/lib/ai/index.ts
+  └ 56 lines…
+
+● Search entire repo for cloud flag and branch state (shell)
+  │ cd [REDACTED_REPOSITORY] && echo "=== flag anywhere ===" && grep -rn
+  │ "CLOUD_FEATURES_ENABLED\|cloudFeaturesEnabled\|cloud_features" . --include=*.ts
+  │ --include=*.tsx --include=*.rs --include=*.json 2>/dev/null | grep -v node_modules | head -20
+  │ && echo "=== current branch & merge base ===" && git --no-pager branch --show-current && git
+  │ --no-pager log --oneline -3 && echo "=== is #21 merge in current HEAD? ===" && git --no-pager …
+  └ 39 lines…
+
+I've grounded the review in the codebase. Key confirmations:
+
+- `CLOUD_FEATURES_ENABLED` (#21) is real — it lives in `src/lib/features.ts` as `export const CLOUD_FEATURES_ENABLED: boolean = false;` and is referenced across `App.tsx`, `main.tsx`, `Sidebar.tsx`, `localWhisper.ts`, plus a test asserting it's `false`. There's a dedicated `copilot/issue-22-...` branch, and #21 merged via PR #24.
+- Provider structure (`src/lib/ai/index.ts`, `getActiveProvider`), `appMode.ts`, Zustand stores, and `supabase/functions/{transcribe,cleanup}` all exist as the spec describes.
+
+The spec accurately reads the issue's intent and grounds itself in real files.
+
+## Findings
+
+**1. [NON-BLOCKING] "Flip the flag" is more than one line.** `CLOUD_FEATURES_ENABLED` is a compile-time `const`, used in many static `if` checks and asserted `false` in `cloudGating.test.ts`. Making it entitlement-driven means converting it to a runtime value and updating that test. Implementer-resolvable, but call it out.
+
+**2. [NON-BLOCKING] File is a spec-about-a-spec.** The committed `spec.md` wraps the real spec in a "Proposed content for…" preamble + a ```markdown fence. Content is complete and readable; recommend unwrapping to the raw spec so downstream tooling doesn't parse the fence. Cosmetic.
+
+**3. [NON-BLOCKING] Deferred business decisions handled correctly.** Pricing, tier names, trials, usage caps, `past_due` grace, and AI-vs-sync bundling are unresolved but correctly placed under Open Questions / "Ask First" with safe defaults (Stripe, simple subscription, bundled). None block building the architecture. Maintainer confirms pricing/go-live at the human merge gate.
+
+**4. [NON-BLOCKING] Server-enforcement fork is routine.** Open Question #7 (full JWT verify vs. in-function entitlement check, given today's `--no-verify-jwt`) is real but recoverable; the spec already pins 401/403/429 + "anon key must never authorize Azure." Coordinate with issue #13 (harden edge functions) so they don't diverge.
+
+**5. [NON-BLOCKING] Residual anon→Azure path.** `appMode.ts` documents local mode calling Edge Functions with the anon key. Post-#21 the app is local-only, so that path should already be gone; the spec's JWT+entitlement requirement is consistent. Implementer should confirm no anon→Azure call survives — it's central to the server-side-rejection AC.
+
+**6. [NON-BLOCKING] Sizing.** Large multi-surface feature. Prefer stacking (server enforcement + tables → client gating → billing UI) over one mega-PR.
+
+## Assessment against blocking criteria
+- **Intent:** correctly captured (entitlement-gated cloud, server enforcement, free local tier, downgrade without data loss). ✓
+- **Completeness:** clear objective, 10 acceptance criteria mapped to the issue, and named components/files. ✓
+- **Self-contradiction:** none. ✓
+- **High-blast-radius/irreversible:** the spec makes no destructive/irreversible or pricing/go-live decision — all money/policy knobs are explicitly deferred to "Ask First" + the human merge gate. Security posture (webhook signature + idempotency, RLS, no secrets to frontend, no data deletion on downgrade, no sensitive logging) is conservative. This is routine security-relevant implementation, which should proceed.
+
+No genuinely blocking problem requires a human before code is written. Concerns are recoverable during implementation and at the required PR/merge review.
+
+SPEC_REVIEW_DECISION: proceed
+

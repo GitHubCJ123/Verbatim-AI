@@ -1,0 +1,78 @@
+# Adversarial review
+
+I'll start by reading the actual spec file to review it against the repository.
+
+● Read spec.md
+  │ docs/automation/specs/issue-0040-full-multi-architecture-model-catalogue-gguf-eng/spec.md
+  └ 393 lines read
+
+Now let me verify the spec's "Current Repo Facts" against the actual repository to ensure it isn't fundamentally misreading the codebase.
+
+● Verify key files referenced in spec exist (shell)
+  │ cd [REDACTED_REPOSITORY] && echo "=== AI providers ===" && ls -1 src/lib/ai/
+  │ 2>/dev/null; echo "=== Rust commands ===" && ls -1 src-tauri/src/commands/ 2>/dev/null; echo
+  │ "=== recording-bridge & overlay ===" && ls -1 src/lib/recording-bridge.ts
+  │ src/overlay/Overlay.tsx 2>/dev/null
+  └ 28 lines…
+
+● Find existing data-driven catalogue from prior work (shell)
+  │ cd [REDACTED_REPOSITORY] && echo "=== catalogue-related files (issue #31
+  │ data-driven catalogue) ===" && grep -rIl --include=*.ts --include=*.tsx -e "catalogue" -e
+  │ "catalog" src/ 2>/dev/null | head -30; echo "=== model registry/catalogue files ==="; find src
+  │ -iname "*catalog*" -o -iname "*model*registry*" 2>/dev/null | head -20
+  └ 3 lines…
+
+Interesting — there's already a `llamaCpp.ts`/`llama_cpp.rs` sidecar (GGUF-adjacent). Let me check the existing model definitions and the "data-driven catalogue" claim more carefully.
+
+● Check git history and sibling specs (shell)
+  │ cd [REDACTED_REPOSITORY] && echo "=== git log recent (catalogue #31?) ===" &&
+  │ git --no-pager log --oneline -15 2>/dev/null; echo; echo "=== other specs present ===" && ls -1
+  │ docs/automation/specs/ 2>/dev/null | head -40
+  └ 30 lines…
+
+● Locate existing model catalogue/registry definitions (shell)
+  │ cd [REDACTED_REPOSITORY] && echo "=== model-ish files ===" && find src
+  │ src-tauri -iname "*model*" 2>/dev/null | grep -v node_modules | head -30; echo; echo "===
+  │ where are downloadable models defined? grep sha256/downloadUrl ===" && grep -rIl
+  │ --include=*.ts -e "sha256" -e "downloadUrl" -e "modelFormat" src/ 2>/dev/null | head; echo;
+  │ echo "=== engine/provider type defs ===" && grep -rn …
+  └ 8 lines…
+
+Catalogue searches came up empty. Let me check how models are actually defined today in the whisper/parakeet providers to assess the spec's "extend the existing catalogue" premise.
+
+● Inspect provider interface and sizes (shell)
+  │ cd [REDACTED_REPOSITORY] && wc -l src/lib/ai/localWhisper.ts
+  │ src/lib/ai/parakeet.ts src/lib/ai/llamaCpp.ts src/lib/ai/AIProvider.ts src/lib/ai/index.ts
+  │ 2>/dev/null; echo "=== AIProvider.ts head ==="; sed -n '1,80p' src/lib/ai/AIProvider.ts
+  │ 2>/dev/null
+  └ 65 lines…
+
+● Find how model lists are defined today (shell)
+  │ cd [REDACTED_REPOSITORY] && echo "=== files defining model lists / downloads
+  │ ===" && grep -rIln --include=*.ts --include=*.tsx -e "huggingface" -e "\.bin" -e "\.gguf" -e
+  │ "ggml-" -e "models = " -e "MODELS" src/ 2>/dev/null | head; echo; echo "=== grep for a models
+  │ catalog array ===" && grep -rIn --include=*.ts -e
+  │ "id:.*displayName\|displayName:\|sizeBytes\|quantized\|BYO\|bring.your.own\|discovery" src/lib…
+  └ 29 lines…
+
+I verified the spec against the repo. Findings below.
+
+## Verification
+- All referenced files exist: `AIProvider.ts`, `index.ts`, `localWhisper.ts`, `parakeet.ts`, `ollama.ts`, and Rust `local_whisper.rs`, `parakeet.rs`.
+- The `AIProvider` contract (`transcribe`/`cleanup`/`health`) is real, so adding a `GgufAsrProvider` implementing it is grounded.
+- The spec faithfully implements issue #40's intent: GGUF multi-arch engine **as a sidecar** (no in-process linking), Whisper+Parakeet remain defaults, opt-in, checksum-verified, per-platform packaging. Objective, acceptance criteria, and changed components are all present → passes the completeness bar.
+
+## Findings
+
+**NON-BLOCKING (advisory):**
+1. **File-wrapping artifact.** The whole spec is nested inside a ```markdown fence under a "Proposed content for…" preamble. Strip the wrapper so the file *is* the spec.
+2. **Unverified "#31 data-driven catalogue" premise.** I found no distinct catalogue module; today's model lists come from Rust `list_*` commands returning `size_bytes`. The implementer may need to *create* the catalogue abstraction, not "extend" an existing one — confirm current shape first.
+3. **Existing GGUF sidecar not referenced.** The repo already has `llamaCpp.ts` + `llama_cpp.rs` (llama.cpp sidecar for cleanup). Reuse its download/checksum/spawn/lifecycle patterns for `gguf_asr.rs` rather than duplicating, and disambiguate naming. (It also proves the sidecar approach is already viable in-repo.)
+4. **Scope breadth vs. change sizing.** "Handy-parity (~65 models/~13 archs)" is large. Land the engine path + 1–2 proof architectures behind the experimental flag first; treat full breadth as follow-up (vertical split). Open Questions already gesture at this — make it explicit.
+5. **CI/integration tests.** "Transcribe a real fixture with an installed runtime" implies binary/model downloads. Clarify these are manual/gated or use a tiny cached fixture to avoid flaky CI.
+6. **`AsrArchitecture` closed union.** Probing may surface archs outside the fixed union; ensure `unknown` absorbs them or validate against a known set to keep the type boundary honest.
+
+None of these prevent safe implementation. Security-relevant download/exec is handled well (HTTPS, SHA-256 fail-closed, structured argv, no untrusted-metadata execution), maintainer-sensitive items (default-on, release pipeline, BYO scope) are correctly gated as "Ask first," and defaults are preserved. Remaining unknowns are recoverable at PR review.
+
+SPEC_REVIEW_DECISION: proceed
+

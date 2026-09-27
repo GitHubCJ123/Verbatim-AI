@@ -1,0 +1,40 @@
+# Requirements review for issue #73
+
+Status: clear
+Issue input SHA: cafc0a29e42a1110dd2e0a1db4b9374e347a6c2bb576d88020ae702363c0ce88
+
+## Summary
+
+Requirements are clear enough to draft a spec without a human requirements gate.
+
+## Findings
+
+- Issue is well-structured (problem/approach/acceptance context present).
+- Issue includes concrete diagnostic evidence.
+
+## Questions / blockers
+
+- None.
+
+## Next action
+
+Proceed to spec drafting. Implementation still requires spec review and approval.
+
+## Original issue
+
+## Summary
+The app doesn't warn when a chosen global hotkey is already used by another app. Original request: detect a conflict and confirm before **overriding**. Research shows the OS makes "override" impossible, and reliable detection is Windows-only.
+
+## Feasibility (researched)
+- **Windows**: `RegisterHotKey` *"typically fails if the keystrokes ... have already been registered for another hot key"* ([MS docs](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-registerhotkey)). So a conflict **is detectable** (`global-hotkey`'s `register()` errors). But you **cannot override** another app's hotkey — the first registrant owns it; `RegisterHotKey` just fails. Realistic UX: *"already used by another app — pick a different shortcut."*
+- **macOS**: `RegisterEventHotKey` (global-hotkey on macOS) does **not** reliably fail on cross-app conflicts (multiple apps can register the same combo; no "already taken" error). General detection isn't feasible via the API — only a **curated blocklist** of well-known system shortcuts (⌘Space Spotlight, etc.) can warn. The fn/right-⌘ path is a CGEventTap (no registration concept).
+
+## Current code
+- `set_hotkey` registers via the plugin and **swallows** the `"already registered"` error to handle stale same-app registration — `src-tauri/src/commands/hotkey.rs:103-117`. Frontend shows a generic "Couldn't register that shortcut" otherwise (`src/routes/Settings.tsx:698-708`). No conflict / reserved-shortcut detection today.
+- Versions: `tauri-plugin-global-shortcut 2.3.1` / `global-hotkey 0.7.0`.
+
+## Proposal (realistic scope)
+- **Windows**: distinguish a genuine "taken by another app" `register()` failure from the stale same-app case, and show a clear "already in use — choose another shortcut" message.
+- **macOS**: add a small curated reserved-shortcut warning list (best-effort); arbitrary cross-app detection isn't possible.
+- Reframe: this becomes **warn + pick-another**, not "override" (which no OS allows).
+

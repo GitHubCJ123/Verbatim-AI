@@ -17,6 +17,18 @@ const DENIED_TOKENS = [
   "printenv",
 ];
 
+// Verifier command allowlist (deny-by-default). Defaults cover this repo's
+// JS/Rust tooling; a spun-off project can extend it via
+// config.verification.allowedCommandPrefixes (e.g. "poetry ", "go ", "make ").
+// DENIED_TOKENS are always enforced regardless of the allowlist.
+export const DEFAULT_ALLOWED_COMMAND_PREFIXES = [
+  "corepack ",
+  "pnpm ",
+  "npm ",
+  "cargo ",
+  "git diff --check",
+];
+
 export async function runVerification(config, cwd) {
   const env = await credentialFreeEnv(cwd);
   const baseRef = `origin/${config.baseBranch ?? "main"}`;
@@ -56,7 +68,7 @@ export async function runVerification(config, cwd) {
 
   const results = [];
   for (const command of commands) {
-    assertAllowedCommand(command);
+    assertAllowedCommand(command, config.verification.allowedCommandPrefixes);
     const [bin, ...args] = parseCommand(command);
     const result = await spawnFile(bin, args, { cwd, env });
     results.push({
@@ -145,14 +157,21 @@ export function verificationComment({ pr, issue, head, status, report }) {
   return `${marker}\n\n## Automation verification: ${status}\n\n${redactSecrets(report)}`;
 }
 
-export function assertAllowedCommand(command) {
+export function assertAllowedCommand(command, allowedPrefixes = DEFAULT_ALLOWED_COMMAND_PREFIXES) {
   const normalized = command.trim();
   for (const denied of DENIED_TOKENS) {
     if (normalized.includes(denied)) {
       throw new Error(`Denied verification command: ${command}`);
     }
   }
-  if (!/^(corepack |pnpm |npm |cargo |git diff --check)/.test(normalized)) {
+  const prefixes =
+    Array.isArray(allowedPrefixes) && allowedPrefixes.length
+      ? allowedPrefixes
+      : DEFAULT_ALLOWED_COMMAND_PREFIXES;
+  const allowed = prefixes.some(
+    (prefix) => typeof prefix === "string" && prefix.length > 0 && normalized.startsWith(prefix),
+  );
+  if (!allowed) {
     throw new Error(`Command is not in the verifier allowlist: ${command}`);
   }
 }

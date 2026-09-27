@@ -1,0 +1,416 @@
+{
+  "version": 1,
+  "issue": {
+    "number": 22,
+    "title": "Reintroduce cloud AI models + account sync behind a subscription model",
+    "folder": "issue-0022-reintroduce-cloud-ai-models-account-sync-behind"
+  },
+  "updatedAt": "2026-07-25T09:38:36.236Z",
+  "artifacts": [
+    {
+      "id": "issue-0022-issue-0022-92836259-8519-477d-99ff-b79ed70d4be3-PRD-001",
+      "displayId": "PRD-001",
+      "phase": "requirements",
+      "prefix": "PRD",
+      "title": "Requirements critique",
+      "summary": "Requirements are clear enough to draft a spec without a human requirements gate.",
+      "agent": "requirements-critic",
+      "runId": "issue-0022-92836259-8519-477d-99ff-b79ed70d4be3",
+      "status": "complete",
+      "decision": "clear",
+      "path": "docs/automation/specs/issue-0022-reintroduce-cloud-ai-models-account-sync-behind/artifacts/PRD-001.md",
+      "sha256": "3656d6970b56efd1a0ac245cf13609f8f7036943bc679469829d17a88ddab577",
+      "createdAt": "2026-07-24T09:02:00.835Z",
+      "metadata": {
+        "issueInputSha": "802e235713d903dc5648b8e31295c71a158b7667049e5f943a791803efa1c17f",
+        "status": "clear",
+        "questions": [],
+        "findings": [
+          "Issue is well-structured (problem/approach/acceptance context present)."
+        ]
+      }
+    },
+    {
+      "id": "issue-0022-issue-0022-92836259-8519-477d-99ff-b79ed70d4be3-SPEC-001",
+      "displayId": "SPEC-001",
+      "phase": "spec",
+      "prefix": "SPEC",
+      "title": "Architect spec",
+      "summary": "Spec",
+      "agent": "architect",
+      "runId": "issue-0022-92836259-8519-477d-99ff-b79ed70d4be3",
+      "status": "complete",
+      "decision": "proceed",
+      "path": "docs/automation/specs/issue-0022-reintroduce-cloud-ai-models-account-sync-behind/artifacts/SPEC-001.md",
+      "sha256": "befcdf9a25ada3eda5a72b46998a5bbfbd6454d87da579dbc09af5b4303d861b",
+      "createdAt": "2026-07-24T09:03:05.727Z",
+      "metadata": {
+        "specPath": "docs/automation/specs/issue-0022-reintroduce-cloud-ai-models-account-sync-behind/spec.md",
+        "specSha": "034d4308aa8f032740299e97dd39d59c3c069f349eb2cdce29f56bc27d686627"
+      }
+    },
+    {
+      "id": "issue-0022-issue-0022-92836259-8519-477d-99ff-b79ed70d4be3-ADV-001",
+      "displayId": "ADV-001",
+      "phase": "adversarial-review",
+      "prefix": "ADV",
+      "title": "Adversarial review",
+      "summary": "Explicit SPEC_REVIEW_DECISION: proceed.",
+      "agent": "adversarial-reviewer",
+      "runId": "issue-0022-92836259-8519-477d-99ff-b79ed70d4be3",
+      "status": "complete",
+      "decision": "proceed",
+      "path": "docs/automation/specs/issue-0022-reintroduce-cloud-ai-models-account-sync-behind/artifacts/ADV-001.md",
+      "sha256": "44e0620088a75763fdcea257d20a7a81750bd16e79592e7b08002edcd2f1970d",
+      "createdAt": "2026-07-24T09:05:03.473Z",
+      "metadata": {
+        "reviewPath": "docs/automation/specs/issue-0022-reintroduce-cloud-ai-models-account-sync-behind/adversarial-review.md",
+        "reviewSha": "e5416c713717ad141661d483c8916c34f3c153a953764ebd80b0e01a30850508",
+        "specPath": "docs/automation/specs/issue-0022-reintroduce-cloud-ai-models-account-sync-behind/spec.md",
+        "specSha": "034d4308aa8f032740299e97dd39d59c3c069f349eb2cdce29f56bc27d686627"
+      }
+    },
+    {
+      "id": "issue-0022-issue-0022-56a83768-22a2-4612-8a39-39fa0ee6d3a8-SPEC-002",
+      "displayId": "SPEC-002",
+      "phase": "spec",
+      "prefix": "SPEC",
+      "title": "Architect spec",
+      "summary": "Spec",
+      "agent": "architect",
+      "runId": "issue-0022-56a83768-22a2-4612-8a39-39fa0ee6d3a8",
+      "status": "complete",
+      "decision": "proceed",
+      "path": "docs/automation/specs/issue-0022-reintroduce-cloud-ai-models-account-sync-behind/artifacts/SPEC-002.md",
+      "sha256": "19ba20d842c6fec761f34c5d27cfa66657aa3d23c8642b2c6ca84026f5ffbb8a",
+      "createdAt": "2026-07-24T13:08:05.393Z",
+      "metadata": {
+        "specPath": "docs/automation/specs/issue-0022-reintroduce-cloud-ai-models-account-sync-behind/spec.md",
+        "specSha": "27ed646aa0a8573634f7f93963eeafd280258bdf1d46016bdb0b7b7344268401"
+      }
+    },
+    {
+      "id": "issue-0022-issue-0022-56a83768-22a2-4612-8a39-39fa0ee6d3a8-ADV-002",
+      "displayId": "ADV-002",
+      "phase": "adversarial-review",
+      "prefix": "ADV",
+      "title": "Adversarial review",
+      "summary": "Explicit SPEC_REVIEW_DECISION: proceed.",
+      "agent": "adversarial-reviewer",
+      "runId": "issue-0022-56a83768-22a2-4612-8a39-39fa0ee6d3a8",
+      "status": "complete",
+      "decision": "proceed",
+      "path": "docs/automation/specs/issue-0022-reintroduce-cloud-ai-models-account-sync-behind/artifacts/ADV-002.md",
+      "sha256": "32e86cc5ece9350390a0c5dfcf370b9c80052f57ee18765677c28028eea33107",
+      "createdAt": "2026-07-24T13:09:37.580Z",
+      "metadata": {
+        "reviewPath": "docs/automation/specs/issue-0022-reintroduce-cloud-ai-models-account-sync-behind/adversarial-review.md",
+        "reviewSha": "c9301c38b9f1c53c64aa0cee7254b410c45e2923be5c0009c5b19f099aa251f5",
+        "specPath": "docs/automation/specs/issue-0022-reintroduce-cloud-ai-models-account-sync-behind/spec.md",
+        "specSha": "27ed646aa0a8573634f7f93963eeafd280258bdf1d46016bdb0b7b7344268401"
+      }
+    },
+    {
+      "id": "issue-0022-issue-0022-5b592166-ab44-4dcb-8ef8-ad8bb7f610a3-SPEC-003",
+      "displayId": "SPEC-003",
+      "phase": "spec",
+      "prefix": "SPEC",
+      "title": "Architect spec",
+      "summary": "Spec",
+      "agent": "architect",
+      "runId": "issue-0022-5b592166-ab44-4dcb-8ef8-ad8bb7f610a3",
+      "status": "complete",
+      "decision": "proceed",
+      "path": "docs/automation/specs/issue-0022-reintroduce-cloud-ai-models-account-sync-behind/artifacts/SPEC-003.md",
+      "sha256": "f8895d613efceeabca2dc9e294adcf916f7871cdf4ac83e36050c74b07fb18e1",
+      "createdAt": "2026-07-24T17:13:15.041Z",
+      "metadata": {
+        "specPath": "docs/automation/specs/issue-0022-reintroduce-cloud-ai-models-account-sync-behind/spec.md",
+        "specSha": "79e2ce681111e892c99e1245a6ade83a81032eaad41610993fdfda43ba6735f6"
+      }
+    },
+    {
+      "id": "issue-0022-issue-0022-5b592166-ab44-4dcb-8ef8-ad8bb7f610a3-ADV-003",
+      "displayId": "ADV-003",
+      "phase": "adversarial-review",
+      "prefix": "ADV",
+      "title": "Adversarial review",
+      "summary": "Explicit SPEC_REVIEW_DECISION: proceed.",
+      "agent": "adversarial-reviewer",
+      "runId": "issue-0022-5b592166-ab44-4dcb-8ef8-ad8bb7f610a3",
+      "status": "complete",
+      "decision": "proceed",
+      "path": "docs/automation/specs/issue-0022-reintroduce-cloud-ai-models-account-sync-behind/artifacts/ADV-003.md",
+      "sha256": "3c90c4c3606ed7edf1e1c2f30ae488381c71d9a38886548104f8cf725b012dc7",
+      "createdAt": "2026-07-24T17:14:38.270Z",
+      "metadata": {
+        "reviewPath": "docs/automation/specs/issue-0022-reintroduce-cloud-ai-models-account-sync-behind/adversarial-review.md",
+        "reviewSha": "c2355765adb4775f04f8dfffe44dc47b796752b9ca997bbf5a0017e2ebf55377",
+        "specPath": "docs/automation/specs/issue-0022-reintroduce-cloud-ai-models-account-sync-behind/spec.md",
+        "specSha": "79e2ce681111e892c99e1245a6ade83a81032eaad41610993fdfda43ba6735f6"
+      }
+    },
+    {
+      "id": "issue-0022-issue-0022-a26d1e0c-f56d-4594-a8b5-1a1223740260-SPEC-004",
+      "displayId": "SPEC-004",
+      "phase": "spec",
+      "prefix": "SPEC",
+      "title": "Architect spec",
+      "summary": "Spec",
+      "agent": "architect",
+      "runId": "issue-0022-a26d1e0c-f56d-4594-a8b5-1a1223740260",
+      "status": "complete",
+      "decision": "proceed",
+      "path": "docs/automation/specs/issue-0022-reintroduce-cloud-ai-models-account-sync-behind/artifacts/SPEC-004.md",
+      "sha256": "bd92d11285edbfd871df8940121ed976903b91772778f819708d4ea13cbc7926",
+      "createdAt": "2026-07-24T21:19:29.456Z",
+      "metadata": {
+        "specPath": "docs/automation/specs/issue-0022-reintroduce-cloud-ai-models-account-sync-behind/spec.md",
+        "specSha": "366ea44cc441a7a92f2a900bdccf37c147a7c35590f1c7791cc113ac3b2c1c70"
+      }
+    },
+    {
+      "id": "issue-0022-issue-0022-a26d1e0c-f56d-4594-a8b5-1a1223740260-ADV-004",
+      "displayId": "ADV-004",
+      "phase": "adversarial-review",
+      "prefix": "ADV",
+      "title": "Adversarial review",
+      "summary": "Explicit SPEC_REVIEW_DECISION: proceed.",
+      "agent": "adversarial-reviewer",
+      "runId": "issue-0022-a26d1e0c-f56d-4594-a8b5-1a1223740260",
+      "status": "complete",
+      "decision": "proceed",
+      "path": "docs/automation/specs/issue-0022-reintroduce-cloud-ai-models-account-sync-behind/artifacts/ADV-004.md",
+      "sha256": "9b2180bac69b0ad9e7f0670c450068bc452596d90be34ff3e71d2f1cd3f442ac",
+      "createdAt": "2026-07-24T21:21:48.969Z",
+      "metadata": {
+        "reviewPath": "docs/automation/specs/issue-0022-reintroduce-cloud-ai-models-account-sync-behind/adversarial-review.md",
+        "reviewSha": "81f384f6fe7f150bd5b7e0f208c03dd4cca0619a70737b951df7f9410c0eaf91",
+        "specPath": "docs/automation/specs/issue-0022-reintroduce-cloud-ai-models-account-sync-behind/spec.md",
+        "specSha": "366ea44cc441a7a92f2a900bdccf37c147a7c35590f1c7791cc113ac3b2c1c70"
+      }
+    },
+    {
+      "id": "issue-0022-issue-0022-639d2d9e-ec45-49e2-a657-fb59a338fd93-SPEC-005",
+      "displayId": "SPEC-005",
+      "phase": "spec",
+      "prefix": "SPEC",
+      "title": "Architect spec",
+      "summary": "Spec",
+      "agent": "architect",
+      "runId": "issue-0022-639d2d9e-ec45-49e2-a657-fb59a338fd93",
+      "status": "complete",
+      "decision": "proceed",
+      "path": "docs/automation/specs/issue-0022-reintroduce-cloud-ai-models-account-sync-behind/artifacts/SPEC-005.md",
+      "sha256": "486b2705706e3a3e3de24b679423e89afd841d4ed4b6b4dfa851492fb0d9612b",
+      "createdAt": "2026-07-25T01:26:40.586Z",
+      "metadata": {
+        "specPath": "docs/automation/specs/issue-0022-reintroduce-cloud-ai-models-account-sync-behind/spec.md",
+        "specSha": "b49a58ea58e977c408970ac0f047e4970c1ecd9cd090d4c033e09afd2c288062"
+      }
+    },
+    {
+      "id": "issue-0022-issue-0022-639d2d9e-ec45-49e2-a657-fb59a338fd93-ADV-005",
+      "displayId": "ADV-005",
+      "phase": "adversarial-review",
+      "prefix": "ADV",
+      "title": "Adversarial review",
+      "summary": "Explicit SPEC_REVIEW_DECISION: proceed.",
+      "agent": "adversarial-reviewer",
+      "runId": "issue-0022-639d2d9e-ec45-49e2-a657-fb59a338fd93",
+      "status": "complete",
+      "decision": "proceed",
+      "path": "docs/automation/specs/issue-0022-reintroduce-cloud-ai-models-account-sync-behind/artifacts/ADV-005.md",
+      "sha256": "b9ab00c688256373f5c5aa30af94c1c38d428f3bd2bcb0eceabe5175ebe49e02",
+      "createdAt": "2026-07-25T01:28:02.385Z",
+      "metadata": {
+        "reviewPath": "docs/automation/specs/issue-0022-reintroduce-cloud-ai-models-account-sync-behind/adversarial-review.md",
+        "reviewSha": "537c04bc0b2e23bb8ee941b76d4e48df710e6001acf6e8e9bf6a6dfea09f2e56",
+        "specPath": "docs/automation/specs/issue-0022-reintroduce-cloud-ai-models-account-sync-behind/spec.md",
+        "specSha": "b49a58ea58e977c408970ac0f047e4970c1ecd9cd090d4c033e09afd2c288062"
+      }
+    },
+    {
+      "id": "issue-0022-issue-0022-1a4713e3-99bc-4a34-be50-d1c282653634-SPEC-006",
+      "displayId": "SPEC-006",
+      "phase": "spec",
+      "prefix": "SPEC",
+      "title": "Architect spec",
+      "summary": "Spec",
+      "agent": "architect",
+      "runId": "issue-0022-1a4713e3-99bc-4a34-be50-d1c282653634",
+      "status": "complete",
+      "decision": "proceed",
+      "path": "docs/automation/specs/issue-0022-reintroduce-cloud-ai-models-account-sync-behind/artifacts/SPEC-006.md",
+      "sha256": "272585afbe3644b441aaaab9a5db05b2ac63326ae2053669cbf367ed80743090",
+      "createdAt": "2026-07-25T05:30:00.256Z",
+      "metadata": {
+        "specPath": "docs/automation/specs/issue-0022-reintroduce-cloud-ai-models-account-sync-behind/spec.md",
+        "specSha": "58bb3080fcc2e32de36c8b767356608f4f0b96b9af834f753e030eca7eee65dc"
+      }
+    },
+    {
+      "id": "issue-0022-issue-0022-1a4713e3-99bc-4a34-be50-d1c282653634-ADV-006",
+      "displayId": "ADV-006",
+      "phase": "adversarial-review",
+      "prefix": "ADV",
+      "title": "Adversarial review",
+      "summary": "Explicit SPEC_REVIEW_DECISION: proceed.",
+      "agent": "adversarial-reviewer",
+      "runId": "issue-0022-1a4713e3-99bc-4a34-be50-d1c282653634",
+      "status": "complete",
+      "decision": "proceed",
+      "path": "docs/automation/specs/issue-0022-reintroduce-cloud-ai-models-account-sync-behind/artifacts/ADV-006.md",
+      "sha256": "2e12f728fd2922a23246948b20f26732c64ca74a7979e4c0a141d6bd99c29770",
+      "createdAt": "2026-07-25T05:31:22.652Z",
+      "metadata": {
+        "reviewPath": "docs/automation/specs/issue-0022-reintroduce-cloud-ai-models-account-sync-behind/adversarial-review.md",
+        "reviewSha": "9d55e23a8e599a6175b49351b7d5585a9fe0cb5c9053cccbfdd47827be199197",
+        "specPath": "docs/automation/specs/issue-0022-reintroduce-cloud-ai-models-account-sync-behind/spec.md",
+        "specSha": "58bb3080fcc2e32de36c8b767356608f4f0b96b9af834f753e030eca7eee65dc"
+      }
+    },
+    {
+      "id": "issue-0022-issue-0022-8a29d7e0-999b-43d2-ba17-347d6c9fbee7-SPEC-007",
+      "displayId": "SPEC-007",
+      "phase": "spec",
+      "prefix": "SPEC",
+      "title": "Architect spec",
+      "summary": "Spec",
+      "agent": "architect",
+      "runId": "issue-0022-8a29d7e0-999b-43d2-ba17-347d6c9fbee7",
+      "status": "complete",
+      "decision": "proceed",
+      "path": "docs/automation/specs/issue-0022-reintroduce-cloud-ai-models-account-sync-behind/artifacts/SPEC-007.md",
+      "sha256": "acbff7a3264520d1c9c2511453779bfe517a97db87c2ba9ad1b60f0d0918423e",
+      "createdAt": "2026-07-25T09:36:06.139Z",
+      "metadata": {
+        "specPath": "docs/automation/specs/issue-0022-reintroduce-cloud-ai-models-account-sync-behind/spec.md",
+        "specSha": "79ca1e558930274e890f934de7702820c85467d749082363b3cb56d9efb349d0"
+      }
+    },
+    {
+      "id": "issue-0022-issue-0022-8a29d7e0-999b-43d2-ba17-347d6c9fbee7-ADV-007",
+      "displayId": "ADV-007",
+      "phase": "adversarial-review",
+      "prefix": "ADV",
+      "title": "Adversarial review",
+      "summary": "Explicit SPEC_REVIEW_DECISION: proceed.",
+      "agent": "adversarial-reviewer",
+      "runId": "issue-0022-8a29d7e0-999b-43d2-ba17-347d6c9fbee7",
+      "status": "complete",
+      "decision": "proceed",
+      "path": "docs/automation/specs/issue-0022-reintroduce-cloud-ai-models-account-sync-behind/artifacts/ADV-007.md",
+      "sha256": "8ed328d08cb43a9191adca127b51c70c1b89373a07a614fec9c7eff36b241722",
+      "createdAt": "2026-07-25T09:38:35.335Z",
+      "metadata": {
+        "reviewPath": "docs/automation/specs/issue-0022-reintroduce-cloud-ai-models-account-sync-behind/adversarial-review.md",
+        "reviewSha": "9a5d56aadde80b3b1ee55dc884bbff36177ec3e7759841e32f4b208177fd674f",
+        "specPath": "docs/automation/specs/issue-0022-reintroduce-cloud-ai-models-account-sync-behind/spec.md",
+        "specSha": "79ca1e558930274e890f934de7702820c85467d749082363b3cb56d9efb349d0"
+      }
+    }
+  ],
+  "latestArtifacts": {
+    "requirements": {
+      "id": "issue-0022-issue-0022-92836259-8519-477d-99ff-b79ed70d4be3-PRD-001",
+      "displayId": "PRD-001",
+      "phase": "requirements",
+      "prefix": "PRD",
+      "title": "Requirements critique",
+      "summary": "Requirements are clear enough to draft a spec without a human requirements gate.",
+      "agent": "requirements-critic",
+      "runId": "issue-0022-92836259-8519-477d-99ff-b79ed70d4be3",
+      "status": "complete",
+      "decision": "clear",
+      "path": "docs/automation/specs/issue-0022-reintroduce-cloud-ai-models-account-sync-behind/artifacts/PRD-001.md",
+      "sha256": "3656d6970b56efd1a0ac245cf13609f8f7036943bc679469829d17a88ddab577",
+      "createdAt": "2026-07-24T09:02:00.835Z",
+      "metadata": {
+        "issueInputSha": "802e235713d903dc5648b8e31295c71a158b7667049e5f943a791803efa1c17f",
+        "status": "clear",
+        "questions": [],
+        "findings": [
+          "Issue is well-structured (problem/approach/acceptance context present)."
+        ]
+      }
+    },
+    "spec": {
+      "id": "issue-0022-issue-0022-8a29d7e0-999b-43d2-ba17-347d6c9fbee7-SPEC-007",
+      "displayId": "SPEC-007",
+      "phase": "spec",
+      "prefix": "SPEC",
+      "title": "Architect spec",
+      "summary": "Spec",
+      "agent": "architect",
+      "runId": "issue-0022-8a29d7e0-999b-43d2-ba17-347d6c9fbee7",
+      "status": "complete",
+      "decision": "proceed",
+      "path": "docs/automation/specs/issue-0022-reintroduce-cloud-ai-models-account-sync-behind/artifacts/SPEC-007.md",
+      "sha256": "acbff7a3264520d1c9c2511453779bfe517a97db87c2ba9ad1b60f0d0918423e",
+      "createdAt": "2026-07-25T09:36:06.139Z",
+      "metadata": {
+        "specPath": "docs/automation/specs/issue-0022-reintroduce-cloud-ai-models-account-sync-behind/spec.md",
+        "specSha": "79ca1e558930274e890f934de7702820c85467d749082363b3cb56d9efb349d0"
+      }
+    },
+    "adversarial-review": {
+      "id": "issue-0022-issue-0022-8a29d7e0-999b-43d2-ba17-347d6c9fbee7-ADV-007",
+      "displayId": "ADV-007",
+      "phase": "adversarial-review",
+      "prefix": "ADV",
+      "title": "Adversarial review",
+      "summary": "Explicit SPEC_REVIEW_DECISION: proceed.",
+      "agent": "adversarial-reviewer",
+      "runId": "issue-0022-8a29d7e0-999b-43d2-ba17-347d6c9fbee7",
+      "status": "complete",
+      "decision": "proceed",
+      "path": "docs/automation/specs/issue-0022-reintroduce-cloud-ai-models-account-sync-behind/artifacts/ADV-007.md",
+      "sha256": "8ed328d08cb43a9191adca127b51c70c1b89373a07a614fec9c7eff36b241722",
+      "createdAt": "2026-07-25T09:38:35.335Z",
+      "metadata": {
+        "reviewPath": "docs/automation/specs/issue-0022-reintroduce-cloud-ai-models-account-sync-behind/adversarial-review.md",
+        "reviewSha": "9a5d56aadde80b3b1ee55dc884bbff36177ec3e7759841e32f4b208177fd674f",
+        "specPath": "docs/automation/specs/issue-0022-reintroduce-cloud-ai-models-account-sync-behind/spec.md",
+        "specSha": "79ca1e558930274e890f934de7702820c85467d749082363b3cb56d9efb349d0"
+      }
+    }
+  },
+  "phaseStatuses": {
+    "requirements": {
+      "status": "complete",
+      "decision": "clear",
+      "latestArtifactId": "issue-0022-issue-0022-92836259-8519-477d-99ff-b79ed70d4be3-PRD-001",
+      "latestDisplayId": "PRD-001",
+      "count": 1,
+      "updatedAt": "2026-07-25T09:35:25.956Z",
+      "details": {
+        "issueInputSha": "802e235713d903dc5648b8e31295c71a158b7667049e5f943a791803efa1c17f",
+        "reason": "Requirements are clear enough to draft a spec without a human requirements gate."
+      }
+    },
+    "spec": {
+      "status": "complete",
+      "decision": "proceed",
+      "latestArtifactId": "issue-0022-issue-0022-8a29d7e0-999b-43d2-ba17-347d6c9fbee7-SPEC-007",
+      "latestDisplayId": "SPEC-007",
+      "count": 7,
+      "updatedAt": "2026-07-25T09:36:06.139Z"
+    },
+    "adversarial-review": {
+      "status": "complete",
+      "decision": "proceed",
+      "latestArtifactId": "issue-0022-issue-0022-8a29d7e0-999b-43d2-ba17-347d6c9fbee7-ADV-007",
+      "latestDisplayId": "ADV-007",
+      "count": 7,
+      "updatedAt": "2026-07-25T09:38:35.335Z"
+    },
+    "implementation": {
+      "status": "blocked",
+      "updatedAt": "2026-07-25T09:38:36.236Z",
+      "details": {
+        "reason": "Unhandled error: git worktree add -B copilot/issue-22-reintroduce-cloud-ai-models-account [REDACTED_REPOSITORY]/.copilot-issue-loop/worktrees/issue-22-reintroduce-cloud-ai-models-account-issue-0022-8a29d7e0-999b-43d2-ba origin/main failed:\nfatal: 'copilot/issue-22-reintroduce-cloud-ai-models-account' is already used by worktree at '[REDACTED_REPOSITORY]/.copilot-issue-loop/worktrees/issue-22-reintroduce-cloud-ai-models-account-issue-0022-92836259-8519-477d-99'\n"
+      }
+    }
+  }
+}

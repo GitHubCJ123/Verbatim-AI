@@ -1,0 +1,418 @@
+{
+  "version": 1,
+  "issue": {
+    "number": 13,
+    "title": "Harden Edge Functions: baked-in anon key alone can consume Azure quota",
+    "folder": "issue-0013-harden-edge-functions-baked-in-anon-key-alone-ca"
+  },
+  "updatedAt": "2026-07-25T10:11:41.080Z",
+  "artifacts": [
+    {
+      "id": "issue-0013-issue-0013-0e8497d0-fa96-4e1c-b927-e021dd52ac29-PRD-001",
+      "displayId": "PRD-001",
+      "phase": "requirements",
+      "prefix": "PRD",
+      "title": "Requirements critique",
+      "summary": "Requirements are clear enough to draft a spec without a human requirements gate.",
+      "agent": "requirements-critic",
+      "runId": "issue-0013-0e8497d0-fa96-4e1c-b927-e021dd52ac29",
+      "status": "complete",
+      "decision": "clear",
+      "path": "docs/automation/specs/issue-0013-harden-edge-functions-baked-in-anon-key-alone-ca/artifacts/PRD-001.md",
+      "sha256": "2f14438616de20c011e4d0ac8646b9ff5d39c096256df86b1cb1da9e6570519f",
+      "createdAt": "2026-07-24T09:40:09.944Z",
+      "metadata": {
+        "issueInputSha": "e91f1df6081001c80d1f5f6a272b8c6ae35be1828bc6fda0a59166398e02414f",
+        "status": "clear",
+        "questions": [],
+        "findings": [
+          "Issue is well-structured (problem/approach/acceptance context present).",
+          "Issue includes concrete diagnostic evidence."
+        ]
+      }
+    },
+    {
+      "id": "issue-0013-issue-0013-0e8497d0-fa96-4e1c-b927-e021dd52ac29-SPEC-001",
+      "displayId": "SPEC-001",
+      "phase": "spec",
+      "prefix": "SPEC",
+      "title": "Architect spec",
+      "summary": "Spec",
+      "agent": "architect",
+      "runId": "issue-0013-0e8497d0-fa96-4e1c-b927-e021dd52ac29",
+      "status": "complete",
+      "decision": "proceed",
+      "path": "docs/automation/specs/issue-0013-harden-edge-functions-baked-in-anon-key-alone-ca/artifacts/SPEC-001.md",
+      "sha256": "2525ae7f67ce7a983bfd16d8764256ce276ade3b65673c1269415edabd49a86e",
+      "createdAt": "2026-07-24T09:41:58.274Z",
+      "metadata": {
+        "specPath": "docs/automation/specs/issue-0013-harden-edge-functions-baked-in-anon-key-alone-ca/spec.md",
+        "specSha": "66016459c49f82671ab1d5a81a3f893097b27d7c8dd7b6406e1737851929d868"
+      }
+    },
+    {
+      "id": "issue-0013-issue-0013-0e8497d0-fa96-4e1c-b927-e021dd52ac29-ADV-001",
+      "displayId": "ADV-001",
+      "phase": "adversarial-review",
+      "prefix": "ADV",
+      "title": "Adversarial review",
+      "summary": "Explicit SPEC_REVIEW_DECISION: proceed.",
+      "agent": "adversarial-reviewer",
+      "runId": "issue-0013-0e8497d0-fa96-4e1c-b927-e021dd52ac29",
+      "status": "complete",
+      "decision": "proceed",
+      "path": "docs/automation/specs/issue-0013-harden-edge-functions-baked-in-anon-key-alone-ca/artifacts/ADV-001.md",
+      "sha256": "09a3b5a1b4784229d0de73e8d3e5131a98653f11fc44900924bb2029f91329b4",
+      "createdAt": "2026-07-24T09:43:57.164Z",
+      "metadata": {
+        "reviewPath": "docs/automation/specs/issue-0013-harden-edge-functions-baked-in-anon-key-alone-ca/adversarial-review.md",
+        "reviewSha": "47fdab80cba5ce29a8431a597613f46f54756dfd1773689527bb31bbe62e703b",
+        "specPath": "docs/automation/specs/issue-0013-harden-edge-functions-baked-in-anon-key-alone-ca/spec.md",
+        "specSha": "66016459c49f82671ab1d5a81a3f893097b27d7c8dd7b6406e1737851929d868"
+      }
+    },
+    {
+      "id": "issue-0013-issue-0013-c7b3a145-6332-4943-9904-9941784254fd-SPEC-002",
+      "displayId": "SPEC-002",
+      "phase": "spec",
+      "prefix": "SPEC",
+      "title": "Architect spec",
+      "summary": "Spec",
+      "agent": "architect",
+      "runId": "issue-0013-c7b3a145-6332-4943-9904-9941784254fd",
+      "status": "complete",
+      "decision": "proceed",
+      "path": "docs/automation/specs/issue-0013-harden-edge-functions-baked-in-anon-key-alone-ca/artifacts/SPEC-002.md",
+      "sha256": "3d4db8fa83b7df52b6f10175245804a478a4eb570b0c09cded43c55c7f43ae5b",
+      "createdAt": "2026-07-24T13:45:32.068Z",
+      "metadata": {
+        "specPath": "docs/automation/specs/issue-0013-harden-edge-functions-baked-in-anon-key-alone-ca/spec.md",
+        "specSha": "7c69a7db101264dc2eba5defb9fbf96cc49d060380c38461650bae0435f2424b"
+      }
+    },
+    {
+      "id": "issue-0013-issue-0013-c7b3a145-6332-4943-9904-9941784254fd-ADV-002",
+      "displayId": "ADV-002",
+      "phase": "adversarial-review",
+      "prefix": "ADV",
+      "title": "Adversarial review",
+      "summary": "Explicit SPEC_REVIEW_DECISION: proceed.",
+      "agent": "adversarial-reviewer",
+      "runId": "issue-0013-c7b3a145-6332-4943-9904-9941784254fd",
+      "status": "complete",
+      "decision": "proceed",
+      "path": "docs/automation/specs/issue-0013-harden-edge-functions-baked-in-anon-key-alone-ca/artifacts/ADV-002.md",
+      "sha256": "ab3bdf5a70b1c62826108c4def6f971df450d7a66157a23b840bfa783b6915ce",
+      "createdAt": "2026-07-24T13:47:11.894Z",
+      "metadata": {
+        "reviewPath": "docs/automation/specs/issue-0013-harden-edge-functions-baked-in-anon-key-alone-ca/adversarial-review.md",
+        "reviewSha": "5c1ddb21cda957eaea8b8e5ad893b070957f5fde6ec9d3fe02556c172ab23d24",
+        "specPath": "docs/automation/specs/issue-0013-harden-edge-functions-baked-in-anon-key-alone-ca/spec.md",
+        "specSha": "7c69a7db101264dc2eba5defb9fbf96cc49d060380c38461650bae0435f2424b"
+      }
+    },
+    {
+      "id": "issue-0013-issue-0013-67ea41ba-4688-431f-b8bd-a620f03da490-SPEC-003",
+      "displayId": "SPEC-003",
+      "phase": "spec",
+      "prefix": "SPEC",
+      "title": "Architect spec",
+      "summary": "Spec",
+      "agent": "architect",
+      "runId": "issue-0013-67ea41ba-4688-431f-b8bd-a620f03da490",
+      "status": "complete",
+      "decision": "proceed",
+      "path": "docs/automation/specs/issue-0013-harden-edge-functions-baked-in-anon-key-alone-ca/artifacts/SPEC-003.md",
+      "sha256": "10c7baffee205c6ea5dcf684981ab93ff8e700c1681c304fcf4a85cfb075b96c",
+      "createdAt": "2026-07-24T17:50:30.532Z",
+      "metadata": {
+        "specPath": "docs/automation/specs/issue-0013-harden-edge-functions-baked-in-anon-key-alone-ca/spec.md",
+        "specSha": "ebdcdd37ecfa8fcf1d9c8019ee5675c908504819034619c71c81b4fb8d116807"
+      }
+    },
+    {
+      "id": "issue-0013-issue-0013-67ea41ba-4688-431f-b8bd-a620f03da490-ADV-003",
+      "displayId": "ADV-003",
+      "phase": "adversarial-review",
+      "prefix": "ADV",
+      "title": "Adversarial review",
+      "summary": "Explicit SPEC_REVIEW_DECISION: proceed.",
+      "agent": "adversarial-reviewer",
+      "runId": "issue-0013-67ea41ba-4688-431f-b8bd-a620f03da490",
+      "status": "complete",
+      "decision": "proceed",
+      "path": "docs/automation/specs/issue-0013-harden-edge-functions-baked-in-anon-key-alone-ca/artifacts/ADV-003.md",
+      "sha256": "005b1da64646a539f8ab08bc5347f04c5d3887b75b107c8b1c17c726e535d154",
+      "createdAt": "2026-07-24T17:51:40.782Z",
+      "metadata": {
+        "reviewPath": "docs/automation/specs/issue-0013-harden-edge-functions-baked-in-anon-key-alone-ca/adversarial-review.md",
+        "reviewSha": "2692077e6a4e7d05242e5ebd0aa7c247077c4286632c1809411ff3a1ee5919bb",
+        "specPath": "docs/automation/specs/issue-0013-harden-edge-functions-baked-in-anon-key-alone-ca/spec.md",
+        "specSha": "ebdcdd37ecfa8fcf1d9c8019ee5675c908504819034619c71c81b4fb8d116807"
+      }
+    },
+    {
+      "id": "issue-0013-issue-0013-4cf7bdcc-f9e5-4fb8-ba65-c29422e4c369-SPEC-004",
+      "displayId": "SPEC-004",
+      "phase": "spec",
+      "prefix": "SPEC",
+      "title": "Architect spec",
+      "summary": "Spec",
+      "agent": "architect",
+      "runId": "issue-0013-4cf7bdcc-f9e5-4fb8-ba65-c29422e4c369",
+      "status": "complete",
+      "decision": "proceed",
+      "path": "docs/automation/specs/issue-0013-harden-edge-functions-baked-in-anon-key-alone-ca/artifacts/SPEC-004.md",
+      "sha256": "7fa968252fd70bb1c6d38fa14e72ed0f318e9561fa1a18188fae9beb19673a01",
+      "createdAt": "2026-07-24T21:52:44.018Z",
+      "metadata": {
+        "specPath": "docs/automation/specs/issue-0013-harden-edge-functions-baked-in-anon-key-alone-ca/spec.md",
+        "specSha": "4d7931d5054cbb317b3ca2fd0e468649d5ac8e5b4ac8486534365e6d8386cb47"
+      }
+    },
+    {
+      "id": "issue-0013-issue-0013-4cf7bdcc-f9e5-4fb8-ba65-c29422e4c369-ADV-004",
+      "displayId": "ADV-004",
+      "phase": "adversarial-review",
+      "prefix": "ADV",
+      "title": "Adversarial review",
+      "summary": "Explicit SPEC_REVIEW_DECISION: proceed.",
+      "agent": "adversarial-reviewer",
+      "runId": "issue-0013-4cf7bdcc-f9e5-4fb8-ba65-c29422e4c369",
+      "status": "complete",
+      "decision": "proceed",
+      "path": "docs/automation/specs/issue-0013-harden-edge-functions-baked-in-anon-key-alone-ca/artifacts/ADV-004.md",
+      "sha256": "e89309f6c18088a9398c23c4f275960c5137cc020ea939e8480e7de75c8f69fd",
+      "createdAt": "2026-07-24T21:54:03.448Z",
+      "metadata": {
+        "reviewPath": "docs/automation/specs/issue-0013-harden-edge-functions-baked-in-anon-key-alone-ca/adversarial-review.md",
+        "reviewSha": "0e9f10821392c6f79e4d7a50991ce12cf6bc016fef8e9da7ecdf558368fe7da1",
+        "specPath": "docs/automation/specs/issue-0013-harden-edge-functions-baked-in-anon-key-alone-ca/spec.md",
+        "specSha": "4d7931d5054cbb317b3ca2fd0e468649d5ac8e5b4ac8486534365e6d8386cb47"
+      }
+    },
+    {
+      "id": "issue-0013-issue-0013-6bae8d27-58eb-43de-b942-ef48db0ead2a-SPEC-005",
+      "displayId": "SPEC-005",
+      "phase": "spec",
+      "prefix": "SPEC",
+      "title": "Architect spec",
+      "summary": "Spec",
+      "agent": "architect",
+      "runId": "issue-0013-6bae8d27-58eb-43de-b942-ef48db0ead2a",
+      "status": "complete",
+      "decision": "proceed",
+      "path": "docs/automation/specs/issue-0013-harden-edge-functions-baked-in-anon-key-alone-ca/artifacts/SPEC-005.md",
+      "sha256": "f880313ebc0e3872fc392c020f66e8d2d4c83ab0cf3de8088336bb5309b81b5b",
+      "createdAt": "2026-07-25T01:59:01.399Z",
+      "metadata": {
+        "specPath": "docs/automation/specs/issue-0013-harden-edge-functions-baked-in-anon-key-alone-ca/spec.md",
+        "specSha": "f0b1799f0fd6ea4c026e335538b43ca8a2d98a5787c7af3386bfd5184c2c517e"
+      }
+    },
+    {
+      "id": "issue-0013-issue-0013-6bae8d27-58eb-43de-b942-ef48db0ead2a-ADV-005",
+      "displayId": "ADV-005",
+      "phase": "adversarial-review",
+      "prefix": "ADV",
+      "title": "Adversarial review",
+      "summary": "Explicit SPEC_REVIEW_DECISION: proceed.",
+      "agent": "adversarial-reviewer",
+      "runId": "issue-0013-6bae8d27-58eb-43de-b942-ef48db0ead2a",
+      "status": "complete",
+      "decision": "proceed",
+      "path": "docs/automation/specs/issue-0013-harden-edge-functions-baked-in-anon-key-alone-ca/artifacts/ADV-005.md",
+      "sha256": "9048654c5f1289e5eb128a34d67ea1521c2bc7172102e63176e4b5ba41de7ff2",
+      "createdAt": "2026-07-25T02:00:40.880Z",
+      "metadata": {
+        "reviewPath": "docs/automation/specs/issue-0013-harden-edge-functions-baked-in-anon-key-alone-ca/adversarial-review.md",
+        "reviewSha": "69948b0a12587b240b3e05e1e2740f2277d6373c55b639e5195977828e5cca87",
+        "specPath": "docs/automation/specs/issue-0013-harden-edge-functions-baked-in-anon-key-alone-ca/spec.md",
+        "specSha": "f0b1799f0fd6ea4c026e335538b43ca8a2d98a5787c7af3386bfd5184c2c517e"
+      }
+    },
+    {
+      "id": "issue-0013-issue-0013-5265d708-b1dc-444e-b289-c0f4d32a5621-SPEC-006",
+      "displayId": "SPEC-006",
+      "phase": "spec",
+      "prefix": "SPEC",
+      "title": "Architect spec",
+      "summary": "Spec",
+      "agent": "architect",
+      "runId": "issue-0013-5265d708-b1dc-444e-b289-c0f4d32a5621",
+      "status": "complete",
+      "decision": "proceed",
+      "path": "docs/automation/specs/issue-0013-harden-edge-functions-baked-in-anon-key-alone-ca/artifacts/SPEC-006.md",
+      "sha256": "da9c5bb540b4ac438d1d917fb39421b459b20af7984dae6af0ca88e953c32545",
+      "createdAt": "2026-07-25T06:02:35.563Z",
+      "metadata": {
+        "specPath": "docs/automation/specs/issue-0013-harden-edge-functions-baked-in-anon-key-alone-ca/spec.md",
+        "specSha": "04a02a4ad523d1f1c3979db29a5aa26fb24222dab7e6d35ec348eff05511cb23"
+      }
+    },
+    {
+      "id": "issue-0013-issue-0013-5265d708-b1dc-444e-b289-c0f4d32a5621-ADV-006",
+      "displayId": "ADV-006",
+      "phase": "adversarial-review",
+      "prefix": "ADV",
+      "title": "Adversarial review",
+      "summary": "Explicit SPEC_REVIEW_DECISION: proceed.",
+      "agent": "adversarial-reviewer",
+      "runId": "issue-0013-5265d708-b1dc-444e-b289-c0f4d32a5621",
+      "status": "complete",
+      "decision": "proceed",
+      "path": "docs/automation/specs/issue-0013-harden-edge-functions-baked-in-anon-key-alone-ca/artifacts/ADV-006.md",
+      "sha256": "a2f9a2467927ac544dd50c9e205c6e10f543476de5d40d28862c42cec68e2ba9",
+      "createdAt": "2026-07-25T06:04:22.197Z",
+      "metadata": {
+        "reviewPath": "docs/automation/specs/issue-0013-harden-edge-functions-baked-in-anon-key-alone-ca/adversarial-review.md",
+        "reviewSha": "9d624f2b2d02e584f292b9aaa2c519607b79ec4a21335d7516bac6ea6dc9bdfb",
+        "specPath": "docs/automation/specs/issue-0013-harden-edge-functions-baked-in-anon-key-alone-ca/spec.md",
+        "specSha": "04a02a4ad523d1f1c3979db29a5aa26fb24222dab7e6d35ec348eff05511cb23"
+      }
+    },
+    {
+      "id": "issue-0013-issue-0013-12a72512-4876-4e52-b3d9-dc49744cccd6-SPEC-007",
+      "displayId": "SPEC-007",
+      "phase": "spec",
+      "prefix": "SPEC",
+      "title": "Architect spec",
+      "summary": "Spec",
+      "agent": "architect",
+      "runId": "issue-0013-12a72512-4876-4e52-b3d9-dc49744cccd6",
+      "status": "complete",
+      "decision": "proceed",
+      "path": "docs/automation/specs/issue-0013-harden-edge-functions-baked-in-anon-key-alone-ca/artifacts/SPEC-007.md",
+      "sha256": "6a5bb5403e07564ea2a1e76e0b41773f2295b78db4fd2854702c4c60bae1d54b",
+      "createdAt": "2026-07-25T10:09:36.158Z",
+      "metadata": {
+        "specPath": "docs/automation/specs/issue-0013-harden-edge-functions-baked-in-anon-key-alone-ca/spec.md",
+        "specSha": "66b444dedd756d0bbae5b017429a15fe6ecb25313718adb498814fb12449afd9"
+      }
+    },
+    {
+      "id": "issue-0013-issue-0013-12a72512-4876-4e52-b3d9-dc49744cccd6-ADV-007",
+      "displayId": "ADV-007",
+      "phase": "adversarial-review",
+      "prefix": "ADV",
+      "title": "Adversarial review",
+      "summary": "Explicit SPEC_REVIEW_DECISION: proceed.",
+      "agent": "adversarial-reviewer",
+      "runId": "issue-0013-12a72512-4876-4e52-b3d9-dc49744cccd6",
+      "status": "complete",
+      "decision": "proceed",
+      "path": "docs/automation/specs/issue-0013-harden-edge-functions-baked-in-anon-key-alone-ca/artifacts/ADV-007.md",
+      "sha256": "1d6a9f34925cc3a51e8dba05dacdd62f6b05003b0b5fe8eaf1f6bfe721f5ea40",
+      "createdAt": "2026-07-25T10:11:39.756Z",
+      "metadata": {
+        "reviewPath": "docs/automation/specs/issue-0013-harden-edge-functions-baked-in-anon-key-alone-ca/adversarial-review.md",
+        "reviewSha": "2946fa6d668c99d5941f71b46b33e5da2c9cf3a4a97eaf8da20f71ef22fe072c",
+        "specPath": "docs/automation/specs/issue-0013-harden-edge-functions-baked-in-anon-key-alone-ca/spec.md",
+        "specSha": "66b444dedd756d0bbae5b017429a15fe6ecb25313718adb498814fb12449afd9"
+      }
+    }
+  ],
+  "latestArtifacts": {
+    "requirements": {
+      "id": "issue-0013-issue-0013-0e8497d0-fa96-4e1c-b927-e021dd52ac29-PRD-001",
+      "displayId": "PRD-001",
+      "phase": "requirements",
+      "prefix": "PRD",
+      "title": "Requirements critique",
+      "summary": "Requirements are clear enough to draft a spec without a human requirements gate.",
+      "agent": "requirements-critic",
+      "runId": "issue-0013-0e8497d0-fa96-4e1c-b927-e021dd52ac29",
+      "status": "complete",
+      "decision": "clear",
+      "path": "docs/automation/specs/issue-0013-harden-edge-functions-baked-in-anon-key-alone-ca/artifacts/PRD-001.md",
+      "sha256": "2f14438616de20c011e4d0ac8646b9ff5d39c096256df86b1cb1da9e6570519f",
+      "createdAt": "2026-07-24T09:40:09.944Z",
+      "metadata": {
+        "issueInputSha": "e91f1df6081001c80d1f5f6a272b8c6ae35be1828bc6fda0a59166398e02414f",
+        "status": "clear",
+        "questions": [],
+        "findings": [
+          "Issue is well-structured (problem/approach/acceptance context present).",
+          "Issue includes concrete diagnostic evidence."
+        ]
+      }
+    },
+    "spec": {
+      "id": "issue-0013-issue-0013-12a72512-4876-4e52-b3d9-dc49744cccd6-SPEC-007",
+      "displayId": "SPEC-007",
+      "phase": "spec",
+      "prefix": "SPEC",
+      "title": "Architect spec",
+      "summary": "Spec",
+      "agent": "architect",
+      "runId": "issue-0013-12a72512-4876-4e52-b3d9-dc49744cccd6",
+      "status": "complete",
+      "decision": "proceed",
+      "path": "docs/automation/specs/issue-0013-harden-edge-functions-baked-in-anon-key-alone-ca/artifacts/SPEC-007.md",
+      "sha256": "6a5bb5403e07564ea2a1e76e0b41773f2295b78db4fd2854702c4c60bae1d54b",
+      "createdAt": "2026-07-25T10:09:36.158Z",
+      "metadata": {
+        "specPath": "docs/automation/specs/issue-0013-harden-edge-functions-baked-in-anon-key-alone-ca/spec.md",
+        "specSha": "66b444dedd756d0bbae5b017429a15fe6ecb25313718adb498814fb12449afd9"
+      }
+    },
+    "adversarial-review": {
+      "id": "issue-0013-issue-0013-12a72512-4876-4e52-b3d9-dc49744cccd6-ADV-007",
+      "displayId": "ADV-007",
+      "phase": "adversarial-review",
+      "prefix": "ADV",
+      "title": "Adversarial review",
+      "summary": "Explicit SPEC_REVIEW_DECISION: proceed.",
+      "agent": "adversarial-reviewer",
+      "runId": "issue-0013-12a72512-4876-4e52-b3d9-dc49744cccd6",
+      "status": "complete",
+      "decision": "proceed",
+      "path": "docs/automation/specs/issue-0013-harden-edge-functions-baked-in-anon-key-alone-ca/artifacts/ADV-007.md",
+      "sha256": "1d6a9f34925cc3a51e8dba05dacdd62f6b05003b0b5fe8eaf1f6bfe721f5ea40",
+      "createdAt": "2026-07-25T10:11:39.756Z",
+      "metadata": {
+        "reviewPath": "docs/automation/specs/issue-0013-harden-edge-functions-baked-in-anon-key-alone-ca/adversarial-review.md",
+        "reviewSha": "2946fa6d668c99d5941f71b46b33e5da2c9cf3a4a97eaf8da20f71ef22fe072c",
+        "specPath": "docs/automation/specs/issue-0013-harden-edge-functions-baked-in-anon-key-alone-ca/spec.md",
+        "specSha": "66b444dedd756d0bbae5b017429a15fe6ecb25313718adb498814fb12449afd9"
+      }
+    }
+  },
+  "phaseStatuses": {
+    "requirements": {
+      "status": "complete",
+      "decision": "clear",
+      "latestArtifactId": "issue-0013-issue-0013-0e8497d0-fa96-4e1c-b927-e021dd52ac29-PRD-001",
+      "latestDisplayId": "PRD-001",
+      "count": 1,
+      "updatedAt": "2026-07-25T10:08:51.132Z",
+      "details": {
+        "issueInputSha": "e91f1df6081001c80d1f5f6a272b8c6ae35be1828bc6fda0a59166398e02414f",
+        "reason": "Requirements are clear enough to draft a spec without a human requirements gate."
+      }
+    },
+    "spec": {
+      "status": "complete",
+      "decision": "proceed",
+      "latestArtifactId": "issue-0013-issue-0013-12a72512-4876-4e52-b3d9-dc49744cccd6-SPEC-007",
+      "latestDisplayId": "SPEC-007",
+      "count": 7,
+      "updatedAt": "2026-07-25T10:09:36.158Z"
+    },
+    "adversarial-review": {
+      "status": "complete",
+      "decision": "proceed",
+      "latestArtifactId": "issue-0013-issue-0013-12a72512-4876-4e52-b3d9-dc49744cccd6-ADV-007",
+      "latestDisplayId": "ADV-007",
+      "count": 7,
+      "updatedAt": "2026-07-25T10:11:39.756Z"
+    },
+    "implementation": {
+      "status": "blocked",
+      "updatedAt": "2026-07-25T10:11:41.080Z",
+      "details": {
+        "reason": "Unhandled error: git worktree add -B copilot/issue-13-harden-edge-functions-baked-in-anon [REDACTED_REPOSITORY]/.copilot-issue-loop/worktrees/issue-13-harden-edge-functions-baked-in-anon-issue-0013-12a72512-4876-4e52-b3 origin/main failed:\nfatal: 'copilot/issue-13-harden-edge-functions-baked-in-anon' is already used by worktree at '[REDACTED_REPOSITORY]/.copilot-issue-loop/worktrees/issue-13-harden-edge-functions-baked-in-anon-issue-0013-0e8497d0-fa96-4e1c-b9'\n"
+      }
+    }
+  }
+}

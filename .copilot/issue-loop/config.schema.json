@@ -10,7 +10,7 @@
     "baseBranch": { "type": "string", "minLength": 1 },
     "pollIntervalSeconds": { "type": "integer", "minimum": 60 },
     "maxConcurrentIssues": { "type": "integer", "minimum": 1, "maximum": 5 },
-    "maxIssuesPerTick": { "type": "integer", "minimum": 1, "maximum": 5 },
+    "maxIssuesPerTick": { "type": "integer", "minimum": 1, "maximum": 25 },
     "maxPrReviewIterations": { "type": "integer", "minimum": 1, "maximum": 5 },
     "requiredLabels": { "type": "array", "items": { "type": "string" } },
     "excludedLabels": { "type": "array", "items": { "type": "string" } },
@@ -33,6 +33,70 @@
         "requireHumanOnSpecReviewQuestions": { "type": "boolean" },
         "requireHumanMerge": { "type": "boolean" },
         "requireScreenshotsForUxChanges": { "type": "boolean" }
+      }
+    },
+    "recovery": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "defaultPolicy": { "type": "string" },
+        "budgets": {
+          "type": "object",
+          "properties": {
+            "maxModelCallsPerIssue": { "type": "integer", "minimum": 1 },
+            "maxModelCallsPerPhase": { "type": "integer", "minimum": 1 },
+            "maxCouncilRounds": { "type": "integer", "minimum": 1 },
+            "maxImplementationAttempts": { "type": "integer", "minimum": 1 },
+            "maxVerifierRepairAttempts": { "type": "integer", "minimum": 1 },
+            "maxWallClockMinutesPerIssue": { "type": "integer", "minimum": 1 }
+          }
+        },
+        "locking": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "ttlMinutes": { "type": "integer", "minimum": 1 }
+          }
+        },
+        "phases": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "enabled": { "type": "boolean" },
+              "allowedTiers": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "primary",
+                    "requirementsCritic",
+                    "diverseRetry",
+                    "council",
+                    "sequentialRetry",
+                    "repairOnly"
+                  ]
+                }
+              },
+              "securityVeto": { "type": "boolean" },
+              "verifierAuthoritative": { "type": "boolean" },
+              "maxAttempts": { "type": "integer", "minimum": 1 },
+              "branchStrategy": {
+                "type": "string",
+                "enum": ["incremental-after-pr", "replace-before-pr"]
+              },
+              "allowAiDowngrade": { "type": "boolean" },
+              "allowAiDowngradeForSecuritySensitive": { "type": "boolean", "const": false }
+            }
+          }
+        },
+        "rosters": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        }
       }
     }
   }

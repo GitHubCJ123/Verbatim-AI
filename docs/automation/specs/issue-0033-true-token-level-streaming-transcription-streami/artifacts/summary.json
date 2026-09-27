@@ -1,0 +1,328 @@
+{
+  "version": 1,
+  "issue": {
+    "number": 33,
+    "title": "True token-level streaming transcription (streaming-capable engine)",
+    "folder": "issue-0033-true-token-level-streaming-transcription-streami"
+  },
+  "updatedAt": "2026-07-24T09:02:00.832Z",
+  "artifacts": [
+    {
+      "id": "issue-0033-issue-0033-9465be71-f9bf-45d1-aa05-185d0580fdf8-PRD-001",
+      "displayId": "PRD-001",
+      "phase": "requirements",
+      "prefix": "PRD",
+      "title": "Requirements critique",
+      "summary": "Requirements are clear enough to draft a spec without a human requirements gate.",
+      "agent": "requirements-critic",
+      "runId": "issue-0033-9465be71-f9bf-45d1-aa05-185d0580fdf8",
+      "status": "complete",
+      "decision": "clear",
+      "path": "docs/automation/specs/issue-0033-true-token-level-streaming-transcription-streami/artifacts/PRD-001.md",
+      "sha256": "b1e3ffc71003fabc119cfc289b2720625d10911dc90a9e5f4844dd3d8517b804",
+      "createdAt": "2026-07-24T08:31:47.732Z",
+      "metadata": {
+        "issueInputSha": "817185043aca72b48bf4430f2b01930ed24adc90ea0d5e5e88f1bfd24ed660e7",
+        "status": "clear",
+        "questions": [],
+        "findings": []
+      }
+    },
+    {
+      "id": "issue-0033-issue-0033-9465be71-f9bf-45d1-aa05-185d0580fdf8-SPEC-001",
+      "displayId": "SPEC-001",
+      "phase": "spec",
+      "prefix": "SPEC",
+      "title": "Architect spec",
+      "summary": "Spec",
+      "agent": "architect",
+      "runId": "issue-0033-9465be71-f9bf-45d1-aa05-185d0580fdf8",
+      "status": "complete",
+      "decision": "proceed",
+      "path": "docs/automation/specs/issue-0033-true-token-level-streaming-transcription-streami/artifacts/SPEC-001.md",
+      "sha256": "c610ffca59079e5b2dbe77e792a0101aab28ce1d88e5b8c4fa0bbec31be77171",
+      "createdAt": "2026-07-24T08:32:40.767Z",
+      "metadata": {
+        "specPath": "docs/automation/specs/issue-0033-true-token-level-streaming-transcription-streami/spec.md",
+        "specSha": "cf064b9c3e09488b3606041d3c6d8b40e9ccf89e12cba4c3910008c41f3df15c"
+      }
+    },
+    {
+      "id": "issue-0033-issue-0033-9465be71-f9bf-45d1-aa05-185d0580fdf8-ADV-001",
+      "displayId": "ADV-001",
+      "phase": "adversarial-review",
+      "prefix": "ADV",
+      "title": "Adversarial review",
+      "summary": "Explicit SPEC_REVIEW_DECISION: proceed.",
+      "agent": "adversarial-reviewer",
+      "runId": "issue-0033-9465be71-f9bf-45d1-aa05-185d0580fdf8",
+      "status": "complete",
+      "decision": "proceed",
+      "path": "docs/automation/specs/issue-0033-true-token-level-streaming-transcription-streami/artifacts/ADV-001.md",
+      "sha256": "80d6456cecff382fde12dc0b89df7da71b8635fb2102250e56018c8757cc3cf4",
+      "createdAt": "2026-07-24T08:34:36.144Z",
+      "metadata": {
+        "reviewPath": "docs/automation/specs/issue-0033-true-token-level-streaming-transcription-streami/adversarial-review.md",
+        "reviewSha": "6a04c1b89861695bb01f0e8c06b1d01f4e7145df53d5709397d69cf21ca335f2",
+        "specPath": "docs/automation/specs/issue-0033-true-token-level-streaming-transcription-streami/spec.md",
+        "specSha": "cf064b9c3e09488b3606041d3c6d8b40e9ccf89e12cba4c3910008c41f3df15c"
+      }
+    },
+    {
+      "id": "issue-0033-issue-0033-9465be71-f9bf-45d1-aa05-185d0580fdf8-IMPL-001",
+      "displayId": "IMPL-001",
+      "phase": "implementation",
+      "prefix": "IMPL",
+      "title": "Draft PR #84",
+      "summary": "Opened draft PR #84 from copilot/issue-33-true-token-level-streaming-transcrip.",
+      "agent": "implementer",
+      "runId": "issue-0033-9465be71-f9bf-45d1-aa05-185d0580fdf8",
+      "status": "complete",
+      "decision": "proceed",
+      "path": "docs/automation/specs/issue-0033-true-token-level-streaming-transcription-streami/artifacts/IMPL-001.md",
+      "sha256": "539906ccd26704e211a6e72a1ed2927db6b86b9decf7f2fda8c8d32cfe128b0c",
+      "createdAt": "2026-07-24T08:46:30.078Z",
+      "metadata": {
+        "prNumber": 84,
+        "prUrl": "https://github.com/GitHubCJ123/Verbatim-AI/pull/84",
+        "branch": "copilot/issue-33-true-token-level-streaming-transcrip",
+        "headSha": "4eb7b624e6e1c95eec5e1c20357d6b3ab9944f07",
+        "worktreePath": "[REDACTED_REPOSITORY]/.copilot-issue-loop/worktrees/issue-33-true-token-level-streaming-transcrip-issue-0033-9465be71-f9bf-45d1-aa",
+        "changedFiles": [
+          "docs/proposals/streaming-sidecar.md",
+          "src/lib/settingsRegistry.ts",
+          "src/routes/Settings.tsx"
+        ]
+      }
+    },
+    {
+      "id": "issue-0033-issue-0033-9465be71-f9bf-45d1-aa05-185d0580fdf8-REVIEW-001",
+      "displayId": "REVIEW-001",
+      "phase": "agent-pr-review",
+      "prefix": "REVIEW",
+      "title": "Agent PR review requested changes",
+      "summary": "Agent PR review found blockers on attempt 1.",
+      "agent": "agent-pr-reviewer",
+      "runId": "issue-0033-9465be71-f9bf-45d1-aa05-185d0580fdf8",
+      "status": "needs-redo",
+      "decision": "needs-changes",
+      "path": "docs/automation/specs/issue-0033-true-token-level-streaming-transcription-streami/artifacts/REVIEW-001.md",
+      "sha256": "c5ad703da8088c046d349a853dd0d14ff383816cc2668a8d1f8e8384124427d3",
+      "createdAt": "2026-07-24T08:46:38.907Z",
+      "metadata": {
+        "prNumber": 84,
+        "headSha": "4eb7b624e6e1c95eec5e1c20357d6b3ab9944f07",
+        "attempt": 1
+      }
+    },
+    {
+      "id": "issue-0033-issue-0033-9465be71-f9bf-45d1-aa05-185d0580fdf8-IMPL-002",
+      "displayId": "IMPL-002",
+      "phase": "implementation",
+      "prefix": "IMPL",
+      "title": "Revision for PR #84",
+      "summary": "Pushed revision d716637ff472339417c1d9f461ea60ffd1123bf7 addressing agent PR review feedback.",
+      "agent": "implementer",
+      "runId": "issue-0033-9465be71-f9bf-45d1-aa05-185d0580fdf8",
+      "status": "complete",
+      "decision": "proceed",
+      "path": "docs/automation/specs/issue-0033-true-token-level-streaming-transcription-streami/artifacts/IMPL-002.md",
+      "sha256": "23fd4d90a34fa2bf0193a6cd562e4487e2667ffdf32f4575937ea30138e32146",
+      "createdAt": "2026-07-24T09:01:46.393Z",
+      "metadata": {
+        "prNumber": 84,
+        "prUrl": "https://github.com/GitHubCJ123/Verbatim-AI/pull/84",
+        "branch": "copilot/issue-33-true-token-level-streaming-transcrip",
+        "headSha": "d716637ff472339417c1d9f461ea60ffd1123bf7",
+        "worktreePath": "[REDACTED_REPOSITORY]/.copilot-issue-loop/worktrees/issue-33-true-token-level-streaming-transcrip-issue-0033-9465be71-f9bf-45d1-aa",
+        "changedFiles": [
+          "docs/proposals/streaming-sidecar.md",
+          "src/lib/ai/localWhisper.test.ts",
+          "src/lib/ai/localWhisper.ts",
+          "src/overlay/Overlay.tsx",
+          "src/routes/Settings.tsx"
+        ],
+        "attempt": 1
+      }
+    },
+    {
+      "id": "issue-0033-issue-0033-9465be71-f9bf-45d1-aa05-185d0580fdf8-REVIEW-002",
+      "displayId": "REVIEW-002",
+      "phase": "agent-pr-review",
+      "prefix": "REVIEW",
+      "title": "Agent PR review requested changes",
+      "summary": "Agent PR review found blockers on attempt 2.",
+      "agent": "agent-pr-reviewer",
+      "runId": "issue-0033-9465be71-f9bf-45d1-aa05-185d0580fdf8",
+      "status": "needs-redo",
+      "decision": "needs-changes",
+      "path": "docs/automation/specs/issue-0033-true-token-level-streaming-transcription-streami/artifacts/REVIEW-002.md",
+      "sha256": "24be04e2fe70286747a17445cf4e189ff31aa0f68be95de12899220c62867eca",
+      "createdAt": "2026-07-24T09:02:00.828Z",
+      "metadata": {
+        "prNumber": 84,
+        "headSha": "d716637ff472339417c1d9f461ea60ffd1123bf7",
+        "attempt": 2
+      }
+    }
+  ],
+  "latestArtifacts": {
+    "requirements": {
+      "id": "issue-0033-issue-0033-9465be71-f9bf-45d1-aa05-185d0580fdf8-PRD-001",
+      "displayId": "PRD-001",
+      "phase": "requirements",
+      "prefix": "PRD",
+      "title": "Requirements critique",
+      "summary": "Requirements are clear enough to draft a spec without a human requirements gate.",
+      "agent": "requirements-critic",
+      "runId": "issue-0033-9465be71-f9bf-45d1-aa05-185d0580fdf8",
+      "status": "complete",
+      "decision": "clear",
+      "path": "docs/automation/specs/issue-0033-true-token-level-streaming-transcription-streami/artifacts/PRD-001.md",
+      "sha256": "b1e3ffc71003fabc119cfc289b2720625d10911dc90a9e5f4844dd3d8517b804",
+      "createdAt": "2026-07-24T08:31:47.732Z",
+      "metadata": {
+        "issueInputSha": "817185043aca72b48bf4430f2b01930ed24adc90ea0d5e5e88f1bfd24ed660e7",
+        "status": "clear",
+        "questions": [],
+        "findings": []
+      }
+    },
+    "spec": {
+      "id": "issue-0033-issue-0033-9465be71-f9bf-45d1-aa05-185d0580fdf8-SPEC-001",
+      "displayId": "SPEC-001",
+      "phase": "spec",
+      "prefix": "SPEC",
+      "title": "Architect spec",
+      "summary": "Spec",
+      "agent": "architect",
+      "runId": "issue-0033-9465be71-f9bf-45d1-aa05-185d0580fdf8",
+      "status": "complete",
+      "decision": "proceed",
+      "path": "docs/automation/specs/issue-0033-true-token-level-streaming-transcription-streami/artifacts/SPEC-001.md",
+      "sha256": "c610ffca59079e5b2dbe77e792a0101aab28ce1d88e5b8c4fa0bbec31be77171",
+      "createdAt": "2026-07-24T08:32:40.767Z",
+      "metadata": {
+        "specPath": "docs/automation/specs/issue-0033-true-token-level-streaming-transcription-streami/spec.md",
+        "specSha": "cf064b9c3e09488b3606041d3c6d8b40e9ccf89e12cba4c3910008c41f3df15c"
+      }
+    },
+    "adversarial-review": {
+      "id": "issue-0033-issue-0033-9465be71-f9bf-45d1-aa05-185d0580fdf8-ADV-001",
+      "displayId": "ADV-001",
+      "phase": "adversarial-review",
+      "prefix": "ADV",
+      "title": "Adversarial review",
+      "summary": "Explicit SPEC_REVIEW_DECISION: proceed.",
+      "agent": "adversarial-reviewer",
+      "runId": "issue-0033-9465be71-f9bf-45d1-aa05-185d0580fdf8",
+      "status": "complete",
+      "decision": "proceed",
+      "path": "docs/automation/specs/issue-0033-true-token-level-streaming-transcription-streami/artifacts/ADV-001.md",
+      "sha256": "80d6456cecff382fde12dc0b89df7da71b8635fb2102250e56018c8757cc3cf4",
+      "createdAt": "2026-07-24T08:34:36.144Z",
+      "metadata": {
+        "reviewPath": "docs/automation/specs/issue-0033-true-token-level-streaming-transcription-streami/adversarial-review.md",
+        "reviewSha": "6a04c1b89861695bb01f0e8c06b1d01f4e7145df53d5709397d69cf21ca335f2",
+        "specPath": "docs/automation/specs/issue-0033-true-token-level-streaming-transcription-streami/spec.md",
+        "specSha": "cf064b9c3e09488b3606041d3c6d8b40e9ccf89e12cba4c3910008c41f3df15c"
+      }
+    },
+    "implementation": {
+      "id": "issue-0033-issue-0033-9465be71-f9bf-45d1-aa05-185d0580fdf8-IMPL-002",
+      "displayId": "IMPL-002",
+      "phase": "implementation",
+      "prefix": "IMPL",
+      "title": "Revision for PR #84",
+      "summary": "Pushed revision d716637ff472339417c1d9f461ea60ffd1123bf7 addressing agent PR review feedback.",
+      "agent": "implementer",
+      "runId": "issue-0033-9465be71-f9bf-45d1-aa05-185d0580fdf8",
+      "status": "complete",
+      "decision": "proceed",
+      "path": "docs/automation/specs/issue-0033-true-token-level-streaming-transcription-streami/artifacts/IMPL-002.md",
+      "sha256": "23fd4d90a34fa2bf0193a6cd562e4487e2667ffdf32f4575937ea30138e32146",
+      "createdAt": "2026-07-24T09:01:46.393Z",
+      "metadata": {
+        "prNumber": 84,
+        "prUrl": "https://github.com/GitHubCJ123/Verbatim-AI/pull/84",
+        "branch": "copilot/issue-33-true-token-level-streaming-transcrip",
+        "headSha": "d716637ff472339417c1d9f461ea60ffd1123bf7",
+        "worktreePath": "[REDACTED_REPOSITORY]/.copilot-issue-loop/worktrees/issue-33-true-token-level-streaming-transcrip-issue-0033-9465be71-f9bf-45d1-aa",
+        "changedFiles": [
+          "docs/proposals/streaming-sidecar.md",
+          "src/lib/ai/localWhisper.test.ts",
+          "src/lib/ai/localWhisper.ts",
+          "src/overlay/Overlay.tsx",
+          "src/routes/Settings.tsx"
+        ],
+        "attempt": 1
+      }
+    },
+    "agent-pr-review": {
+      "id": "issue-0033-issue-0033-9465be71-f9bf-45d1-aa05-185d0580fdf8-REVIEW-002",
+      "displayId": "REVIEW-002",
+      "phase": "agent-pr-review",
+      "prefix": "REVIEW",
+      "title": "Agent PR review requested changes",
+      "summary": "Agent PR review found blockers on attempt 2.",
+      "agent": "agent-pr-reviewer",
+      "runId": "issue-0033-9465be71-f9bf-45d1-aa05-185d0580fdf8",
+      "status": "needs-redo",
+      "decision": "needs-changes",
+      "path": "docs/automation/specs/issue-0033-true-token-level-streaming-transcription-streami/artifacts/REVIEW-002.md",
+      "sha256": "24be04e2fe70286747a17445cf4e189ff31aa0f68be95de12899220c62867eca",
+      "createdAt": "2026-07-24T09:02:00.828Z",
+      "metadata": {
+        "prNumber": 84,
+        "headSha": "d716637ff472339417c1d9f461ea60ffd1123bf7",
+        "attempt": 2
+      }
+    }
+  },
+  "phaseStatuses": {
+    "requirements": {
+      "status": "complete",
+      "decision": "clear",
+      "latestArtifactId": "issue-0033-issue-0033-9465be71-f9bf-45d1-aa05-185d0580fdf8-PRD-001",
+      "latestDisplayId": "PRD-001",
+      "count": 1,
+      "updatedAt": "2026-07-24T08:31:47.732Z"
+    },
+    "spec": {
+      "status": "complete",
+      "decision": "proceed",
+      "latestArtifactId": "issue-0033-issue-0033-9465be71-f9bf-45d1-aa05-185d0580fdf8-SPEC-001",
+      "latestDisplayId": "SPEC-001",
+      "count": 1,
+      "updatedAt": "2026-07-24T08:32:40.767Z"
+    },
+    "adversarial-review": {
+      "status": "complete",
+      "decision": "proceed",
+      "latestArtifactId": "issue-0033-issue-0033-9465be71-f9bf-45d1-aa05-185d0580fdf8-ADV-001",
+      "latestDisplayId": "ADV-001",
+      "count": 1,
+      "updatedAt": "2026-07-24T08:34:36.144Z"
+    },
+    "implementation": {
+      "status": "blocked",
+      "decision": "proceed",
+      "latestArtifactId": "issue-0033-issue-0033-9465be71-f9bf-45d1-aa05-185d0580fdf8-IMPL-002",
+      "latestDisplayId": "IMPL-002",
+      "count": 2,
+      "updatedAt": "2026-07-24T09:02:00.832Z",
+      "details": {
+        "prNumber": 84,
+        "reason": "Agent PR review did not approve after 2 attempt(s). Human feedback or manual intervention is required."
+      }
+    },
+    "agent-pr-review": {
+      "status": "needs-redo",
+      "decision": "needs-changes",
+      "latestArtifactId": "issue-0033-issue-0033-9465be71-f9bf-45d1-aa05-185d0580fdf8-REVIEW-002",
+      "latestDisplayId": "REVIEW-002",
+      "count": 2,
+      "updatedAt": "2026-07-24T09:02:00.828Z"
+    }
+  }
+}

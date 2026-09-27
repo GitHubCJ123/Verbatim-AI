@@ -1,0 +1,456 @@
+{
+  "version": 1,
+  "issue": {
+    "number": 40,
+    "title": "Full multi-architecture model catalogue (GGUF engine for Handy-parity model breadth)",
+    "folder": "issue-0040-full-multi-architecture-model-catalogue-gguf-eng"
+  },
+  "updatedAt": "2026-07-25T12:48:37.506Z",
+  "artifacts": [
+    {
+      "id": "issue-0040-issue-0040-30e345f2-8940-48c7-b3c4-98b9692ff680-PRD-001",
+      "displayId": "PRD-001",
+      "phase": "requirements",
+      "prefix": "PRD",
+      "title": "Requirements critique",
+      "summary": "Requirements are clear enough to draft a spec without a human requirements gate.",
+      "agent": "requirements-critic",
+      "runId": "issue-0040-30e345f2-8940-48c7-b3c4-98b9692ff680",
+      "status": "complete",
+      "decision": "clear",
+      "path": "docs/automation/specs/issue-0040-full-multi-architecture-model-catalogue-gguf-eng/artifacts/PRD-001.md",
+      "sha256": "08d0ae1229e6603b6d4d77e12b8ca8eb1b80a8beb830d7de86e48093e9015f16",
+      "createdAt": "2026-07-24T08:00:08.505Z",
+      "metadata": {
+        "issueInputSha": "97b03f7a3c9142bd89ee9790bc45d33706137f8340b9c0a5c6d2b91e28989ec9",
+        "status": "clear",
+        "questions": [],
+        "findings": [
+          "Issue is well-structured (problem/approach/acceptance context present)."
+        ]
+      }
+    },
+    {
+      "id": "issue-0040-issue-0040-30e345f2-8940-48c7-b3c4-98b9692ff680-SPEC-001",
+      "displayId": "SPEC-001",
+      "phase": "spec",
+      "prefix": "SPEC",
+      "title": "Architect spec",
+      "summary": "Spec",
+      "agent": "architect",
+      "runId": "issue-0040-30e345f2-8940-48c7-b3c4-98b9692ff680",
+      "status": "complete",
+      "decision": "proceed",
+      "path": "docs/automation/specs/issue-0040-full-multi-architecture-model-catalogue-gguf-eng/artifacts/SPEC-001.md",
+      "sha256": "c68f0384c28cc961d146fc9bd46b4ccf13b8c7cb3f14e5b6c11c0464e1cd8057",
+      "createdAt": "2026-07-24T08:01:52.945Z",
+      "metadata": {
+        "specPath": "docs/automation/specs/issue-0040-full-multi-architecture-model-catalogue-gguf-eng/spec.md",
+        "specSha": "46d23bb55602f195c8a66fd96c9f2c6477bc52365d171ac80595e2f757e315d9"
+      }
+    },
+    {
+      "id": "issue-0040-issue-0040-30e345f2-8940-48c7-b3c4-98b9692ff680-ADV-001",
+      "displayId": "ADV-001",
+      "phase": "adversarial-review",
+      "prefix": "ADV",
+      "title": "Adversarial review",
+      "summary": "Explicit SPEC_REVIEW_DECISION: proceed.",
+      "agent": "adversarial-reviewer",
+      "runId": "issue-0040-30e345f2-8940-48c7-b3c4-98b9692ff680",
+      "status": "complete",
+      "decision": "proceed",
+      "path": "docs/automation/specs/issue-0040-full-multi-architecture-model-catalogue-gguf-eng/artifacts/ADV-001.md",
+      "sha256": "2aa84c5532eedfd3d9f728b62df6f6b58b9033326bda5caf4bd6c9a638ad2160",
+      "createdAt": "2026-07-24T08:03:53.985Z",
+      "metadata": {
+        "reviewPath": "docs/automation/specs/issue-0040-full-multi-architecture-model-catalogue-gguf-eng/adversarial-review.md",
+        "reviewSha": "7d8ddc2f5984d23c28d9c41591d16b2b40cf7ca9e9e5fb160ed68365d0481c92",
+        "specPath": "docs/automation/specs/issue-0040-full-multi-architecture-model-catalogue-gguf-eng/spec.md",
+        "specSha": "46d23bb55602f195c8a66fd96c9f2c6477bc52365d171ac80595e2f757e315d9"
+      }
+    },
+    {
+      "id": "issue-0040-issue-0040-e8c2fafe-1a42-4e79-a1b2-c69e5693a169-SPEC-002",
+      "displayId": "SPEC-002",
+      "phase": "spec",
+      "prefix": "SPEC",
+      "title": "Architect spec",
+      "summary": "Spec",
+      "agent": "architect",
+      "runId": "issue-0040-e8c2fafe-1a42-4e79-a1b2-c69e5693a169",
+      "status": "complete",
+      "decision": "proceed",
+      "path": "docs/automation/specs/issue-0040-full-multi-architecture-model-catalogue-gguf-eng/artifacts/SPEC-002.md",
+      "sha256": "b4152d94602658f041c91b244006fda5eaab1e1efa80e6e658c8c7215423e7d7",
+      "createdAt": "2026-07-24T12:09:26.558Z",
+      "metadata": {
+        "specPath": "docs/automation/specs/issue-0040-full-multi-architecture-model-catalogue-gguf-eng/spec.md",
+        "specSha": "c5fa8fc665e9889215fd50d1db2098be82730faf2e4664ef9e9b7a856887b29c"
+      }
+    },
+    {
+      "id": "issue-0040-issue-0040-e8c2fafe-1a42-4e79-a1b2-c69e5693a169-ADV-002",
+      "displayId": "ADV-002",
+      "phase": "adversarial-review",
+      "prefix": "ADV",
+      "title": "Adversarial review",
+      "summary": "Explicit SPEC_REVIEW_DECISION: proceed.",
+      "agent": "adversarial-reviewer",
+      "runId": "issue-0040-e8c2fafe-1a42-4e79-a1b2-c69e5693a169",
+      "status": "complete",
+      "decision": "proceed",
+      "path": "docs/automation/specs/issue-0040-full-multi-architecture-model-catalogue-gguf-eng/artifacts/ADV-002.md",
+      "sha256": "adc97d66dcb2a753161caf8637fd78527f0f202ef7d38929ebd58bb11bf6172e",
+      "createdAt": "2026-07-24T12:11:36.781Z",
+      "metadata": {
+        "reviewPath": "docs/automation/specs/issue-0040-full-multi-architecture-model-catalogue-gguf-eng/adversarial-review.md",
+        "reviewSha": "8fcced23483ba30775fb4314cbb563b57931b7f8d567ca2a1bc969124680fc9b",
+        "specPath": "docs/automation/specs/issue-0040-full-multi-architecture-model-catalogue-gguf-eng/spec.md",
+        "specSha": "c5fa8fc665e9889215fd50d1db2098be82730faf2e4664ef9e9b7a856887b29c"
+      }
+    },
+    {
+      "id": "issue-0040-issue-0040-4979ba32-6511-48f6-8289-b68d23dcf476-SPEC-003",
+      "displayId": "SPEC-003",
+      "phase": "spec",
+      "prefix": "SPEC",
+      "title": "Architect spec",
+      "summary": "Spec",
+      "agent": "architect",
+      "runId": "issue-0040-4979ba32-6511-48f6-8289-b68d23dcf476",
+      "status": "complete",
+      "decision": "proceed",
+      "path": "docs/automation/specs/issue-0040-full-multi-architecture-model-catalogue-gguf-eng/artifacts/SPEC-003.md",
+      "sha256": "daf1bf07cc05a3f590c807bf839ac400955b5c765aa27541f28afbfd0bc37516",
+      "createdAt": "2026-07-24T16:12:37.142Z",
+      "metadata": {
+        "specPath": "docs/automation/specs/issue-0040-full-multi-architecture-model-catalogue-gguf-eng/spec.md",
+        "specSha": "f480d2c7d693ad7a91805102234fb3ffd46e6d7859a5f50479865b4ce8d92f5b"
+      }
+    },
+    {
+      "id": "issue-0040-issue-0040-4979ba32-6511-48f6-8289-b68d23dcf476-ADV-003",
+      "displayId": "ADV-003",
+      "phase": "adversarial-review",
+      "prefix": "ADV",
+      "title": "Adversarial review",
+      "summary": "Explicit SPEC_REVIEW_DECISION: proceed.",
+      "agent": "adversarial-reviewer",
+      "runId": "issue-0040-4979ba32-6511-48f6-8289-b68d23dcf476",
+      "status": "complete",
+      "decision": "proceed",
+      "path": "docs/automation/specs/issue-0040-full-multi-architecture-model-catalogue-gguf-eng/artifacts/ADV-003.md",
+      "sha256": "b3f51b770d3afce9941bf543a9a176a9102e4774fe332ea3567c3ce51eec9031",
+      "createdAt": "2026-07-24T16:16:45.526Z",
+      "metadata": {
+        "reviewPath": "docs/automation/specs/issue-0040-full-multi-architecture-model-catalogue-gguf-eng/adversarial-review.md",
+        "reviewSha": "f06d2de3b1f89445fd2be413ba8bcd458bb60c3f9f39b833384103ef09e678be",
+        "specPath": "docs/automation/specs/issue-0040-full-multi-architecture-model-catalogue-gguf-eng/spec.md",
+        "specSha": "f480d2c7d693ad7a91805102234fb3ffd46e6d7859a5f50479865b4ce8d92f5b"
+      }
+    },
+    {
+      "id": "issue-0040-issue-0040-f84b3e4c-e459-446b-ad8a-a0176ddafd7b-SPEC-004",
+      "displayId": "SPEC-004",
+      "phase": "spec",
+      "prefix": "SPEC",
+      "title": "Architect spec",
+      "summary": "Spec",
+      "agent": "architect",
+      "runId": "issue-0040-f84b3e4c-e459-446b-ad8a-a0176ddafd7b",
+      "status": "complete",
+      "decision": "proceed",
+      "path": "docs/automation/specs/issue-0040-full-multi-architecture-model-catalogue-gguf-eng/artifacts/SPEC-004.md",
+      "sha256": "f385b020454d622c3c982e2f17ecf6873aaea02f57ae734a93c45e215001aff8",
+      "createdAt": "2026-07-24T20:20:48.168Z",
+      "metadata": {
+        "specPath": "docs/automation/specs/issue-0040-full-multi-architecture-model-catalogue-gguf-eng/spec.md",
+        "specSha": "97fa0345503071a34c7b9705acd880b5755829d0d1827dd5511c67419bc92e70"
+      }
+    },
+    {
+      "id": "issue-0040-issue-0040-f84b3e4c-e459-446b-ad8a-a0176ddafd7b-ADV-004",
+      "displayId": "ADV-004",
+      "phase": "adversarial-review",
+      "prefix": "ADV",
+      "title": "Adversarial review",
+      "summary": "Explicit SPEC_REVIEW_DECISION: proceed.",
+      "agent": "adversarial-reviewer",
+      "runId": "issue-0040-f84b3e4c-e459-446b-ad8a-a0176ddafd7b",
+      "status": "complete",
+      "decision": "proceed",
+      "path": "docs/automation/specs/issue-0040-full-multi-architecture-model-catalogue-gguf-eng/artifacts/ADV-004.md",
+      "sha256": "53985ba8e7f32531083216776f9bd8b7870b4d1f8dfba622aee93b7abce3b1e2",
+      "createdAt": "2026-07-24T20:22:55.693Z",
+      "metadata": {
+        "reviewPath": "docs/automation/specs/issue-0040-full-multi-architecture-model-catalogue-gguf-eng/adversarial-review.md",
+        "reviewSha": "228f276c09d3cba98931c63693ad1e223dfc1b59850be865ce315ef88b6ea121",
+        "specPath": "docs/automation/specs/issue-0040-full-multi-architecture-model-catalogue-gguf-eng/spec.md",
+        "specSha": "97fa0345503071a34c7b9705acd880b5755829d0d1827dd5511c67419bc92e70"
+      }
+    },
+    {
+      "id": "issue-0040-issue-0040-612b9e89-0cd5-466f-9309-93b2e34872a3-SPEC-005",
+      "displayId": "SPEC-005",
+      "phase": "spec",
+      "prefix": "SPEC",
+      "title": "Architect spec",
+      "summary": "Spec",
+      "agent": "architect",
+      "runId": "issue-0040-612b9e89-0cd5-466f-9309-93b2e34872a3",
+      "status": "complete",
+      "decision": "proceed",
+      "path": "docs/automation/specs/issue-0040-full-multi-architecture-model-catalogue-gguf-eng/artifacts/SPEC-005.md",
+      "sha256": "30a8967b4d9148f291b3d7cd44a5f40be34de4a187754624de0cc07466ecc614",
+      "createdAt": "2026-07-25T00:28:32.311Z",
+      "metadata": {
+        "specPath": "docs/automation/specs/issue-0040-full-multi-architecture-model-catalogue-gguf-eng/spec.md",
+        "specSha": "e5d4734979359de92ed74b7ff31862750f2b6938eb140370e69d6c2c2d5f0e9c"
+      }
+    },
+    {
+      "id": "issue-0040-issue-0040-612b9e89-0cd5-466f-9309-93b2e34872a3-ADV-005",
+      "displayId": "ADV-005",
+      "phase": "adversarial-review",
+      "prefix": "ADV",
+      "title": "Adversarial review",
+      "summary": "Explicit SPEC_REVIEW_DECISION: proceed.",
+      "agent": "adversarial-reviewer",
+      "runId": "issue-0040-612b9e89-0cd5-466f-9309-93b2e34872a3",
+      "status": "complete",
+      "decision": "proceed",
+      "path": "docs/automation/specs/issue-0040-full-multi-architecture-model-catalogue-gguf-eng/artifacts/ADV-005.md",
+      "sha256": "efc4bceb924a19a368a382505c703a56790abc50b615bb0421b19ebb8d2eb809",
+      "createdAt": "2026-07-25T00:30:03.739Z",
+      "metadata": {
+        "reviewPath": "docs/automation/specs/issue-0040-full-multi-architecture-model-catalogue-gguf-eng/adversarial-review.md",
+        "reviewSha": "ab88f3425fee779357b32158daf8c1276aa9c9c55f395c36d3850db75045028e",
+        "specPath": "docs/automation/specs/issue-0040-full-multi-architecture-model-catalogue-gguf-eng/spec.md",
+        "specSha": "e5d4734979359de92ed74b7ff31862750f2b6938eb140370e69d6c2c2d5f0e9c"
+      }
+    },
+    {
+      "id": "issue-0040-issue-0040-0a2238bd-1e75-4bdb-b243-8f7fa517d6cd-SPEC-006",
+      "displayId": "SPEC-006",
+      "phase": "spec",
+      "prefix": "SPEC",
+      "title": "Architect spec",
+      "summary": "Spec",
+      "agent": "architect",
+      "runId": "issue-0040-0a2238bd-1e75-4bdb-b243-8f7fa517d6cd",
+      "status": "complete",
+      "decision": "proceed",
+      "path": "docs/automation/specs/issue-0040-full-multi-architecture-model-catalogue-gguf-eng/artifacts/SPEC-006.md",
+      "sha256": "76cff28c605c0cfc51f5b9e686168849c9bb65ee969c67594e04c96b1178ef2d",
+      "createdAt": "2026-07-25T04:36:56.758Z",
+      "metadata": {
+        "specPath": "docs/automation/specs/issue-0040-full-multi-architecture-model-catalogue-gguf-eng/spec.md",
+        "specSha": "3159611962da99ba4e59247ebda1ba42258e0c1bb40183a9693213a3fec38dd9"
+      }
+    },
+    {
+      "id": "issue-0040-issue-0040-0a2238bd-1e75-4bdb-b243-8f7fa517d6cd-ADV-006",
+      "displayId": "ADV-006",
+      "phase": "adversarial-review",
+      "prefix": "ADV",
+      "title": "Adversarial review",
+      "summary": "Explicit SPEC_REVIEW_DECISION: proceed.",
+      "agent": "adversarial-reviewer",
+      "runId": "issue-0040-0a2238bd-1e75-4bdb-b243-8f7fa517d6cd",
+      "status": "complete",
+      "decision": "proceed",
+      "path": "docs/automation/specs/issue-0040-full-multi-architecture-model-catalogue-gguf-eng/artifacts/ADV-006.md",
+      "sha256": "638771e0aba7bbb98fa7c206f7e0bec015ae5491c1e3e3097cd74cc6e60d048e",
+      "createdAt": "2026-07-25T04:38:39.685Z",
+      "metadata": {
+        "reviewPath": "docs/automation/specs/issue-0040-full-multi-architecture-model-catalogue-gguf-eng/adversarial-review.md",
+        "reviewSha": "eda5352f324bbd3243eaf8ab41054f0b6a98ba7b216350dc1927401b274b2319",
+        "specPath": "docs/automation/specs/issue-0040-full-multi-architecture-model-catalogue-gguf-eng/spec.md",
+        "specSha": "3159611962da99ba4e59247ebda1ba42258e0c1bb40183a9693213a3fec38dd9"
+      }
+    },
+    {
+      "id": "issue-0040-issue-0040-3a8f2910-80fc-4e56-be8a-dcbe22cb9f7b-SPEC-007",
+      "displayId": "SPEC-007",
+      "phase": "spec",
+      "prefix": "SPEC",
+      "title": "Architect spec",
+      "summary": "Spec",
+      "agent": "architect",
+      "runId": "issue-0040-3a8f2910-80fc-4e56-be8a-dcbe22cb9f7b",
+      "status": "complete",
+      "decision": "proceed",
+      "path": "docs/automation/specs/issue-0040-full-multi-architecture-model-catalogue-gguf-eng/artifacts/SPEC-007.md",
+      "sha256": "798845470b6e7a9e5f264be2233de8d040dde7001d41ea252ca6f58b1124425f",
+      "createdAt": "2026-07-25T08:43:38.404Z",
+      "metadata": {
+        "specPath": "docs/automation/specs/issue-0040-full-multi-architecture-model-catalogue-gguf-eng/spec.md",
+        "specSha": "0dffc68c610446d07fad6a3e1c62a9538b0a4ee5bf155a81cd696b98c8aebe4c"
+      }
+    },
+    {
+      "id": "issue-0040-issue-0040-3a8f2910-80fc-4e56-be8a-dcbe22cb9f7b-ADV-007",
+      "displayId": "ADV-007",
+      "phase": "adversarial-review",
+      "prefix": "ADV",
+      "title": "Adversarial review",
+      "summary": "Explicit SPEC_REVIEW_DECISION: proceed.",
+      "agent": "adversarial-reviewer",
+      "runId": "issue-0040-3a8f2910-80fc-4e56-be8a-dcbe22cb9f7b",
+      "status": "complete",
+      "decision": "proceed",
+      "path": "docs/automation/specs/issue-0040-full-multi-architecture-model-catalogue-gguf-eng/artifacts/ADV-007.md",
+      "sha256": "c5b0b204eb948c53ff07ff0c2832ee06f48af0428bc4bb182e0384b0d64cae2e",
+      "createdAt": "2026-07-25T08:44:59.170Z",
+      "metadata": {
+        "reviewPath": "docs/automation/specs/issue-0040-full-multi-architecture-model-catalogue-gguf-eng/adversarial-review.md",
+        "reviewSha": "65817b969a67b5215bae8545b18587d86ebc2b4ccac8a88be462f96210184023",
+        "specPath": "docs/automation/specs/issue-0040-full-multi-architecture-model-catalogue-gguf-eng/spec.md",
+        "specSha": "0dffc68c610446d07fad6a3e1c62a9538b0a4ee5bf155a81cd696b98c8aebe4c"
+      }
+    },
+    {
+      "id": "issue-0040-issue-0040-3000dc2d-e9e6-415d-ab1d-47f797413f60-SPEC-008",
+      "displayId": "SPEC-008",
+      "phase": "spec",
+      "prefix": "SPEC",
+      "title": "Architect spec",
+      "summary": "Spec",
+      "agent": "architect",
+      "runId": "issue-0040-3000dc2d-e9e6-415d-ab1d-47f797413f60",
+      "status": "complete",
+      "decision": "proceed",
+      "path": "docs/automation/specs/issue-0040-full-multi-architecture-model-catalogue-gguf-eng/artifacts/SPEC-008.md",
+      "sha256": "fce518608c9c8f43080934b629267849f5033a1c4568e8c243cb6c98a1350583",
+      "createdAt": "2026-07-25T12:46:48.372Z",
+      "metadata": {
+        "specPath": "docs/automation/specs/issue-0040-full-multi-architecture-model-catalogue-gguf-eng/spec.md",
+        "specSha": "0a176c9d3369ba1060e8d4aee11768dba0a1f3e2a1002dfa177ace77b3a153f4"
+      }
+    },
+    {
+      "id": "issue-0040-issue-0040-3000dc2d-e9e6-415d-ab1d-47f797413f60-ADV-008",
+      "displayId": "ADV-008",
+      "phase": "adversarial-review",
+      "prefix": "ADV",
+      "title": "Adversarial review",
+      "summary": "Explicit SPEC_REVIEW_DECISION: proceed.",
+      "agent": "adversarial-reviewer",
+      "runId": "issue-0040-3000dc2d-e9e6-415d-ab1d-47f797413f60",
+      "status": "complete",
+      "decision": "proceed",
+      "path": "docs/automation/specs/issue-0040-full-multi-architecture-model-catalogue-gguf-eng/artifacts/ADV-008.md",
+      "sha256": "975c47458d08ed041b65444834658911160acb45d21a8e1df0d8ce64f4f5534a",
+      "createdAt": "2026-07-25T12:48:35.427Z",
+      "metadata": {
+        "reviewPath": "docs/automation/specs/issue-0040-full-multi-architecture-model-catalogue-gguf-eng/adversarial-review.md",
+        "reviewSha": "776d082040a062bd9dcf1cb9575a685a6db2a41d24df0ebdb58cb94796747024",
+        "specPath": "docs/automation/specs/issue-0040-full-multi-architecture-model-catalogue-gguf-eng/spec.md",
+        "specSha": "0a176c9d3369ba1060e8d4aee11768dba0a1f3e2a1002dfa177ace77b3a153f4"
+      }
+    }
+  ],
+  "latestArtifacts": {
+    "requirements": {
+      "id": "issue-0040-issue-0040-30e345f2-8940-48c7-b3c4-98b9692ff680-PRD-001",
+      "displayId": "PRD-001",
+      "phase": "requirements",
+      "prefix": "PRD",
+      "title": "Requirements critique",
+      "summary": "Requirements are clear enough to draft a spec without a human requirements gate.",
+      "agent": "requirements-critic",
+      "runId": "issue-0040-30e345f2-8940-48c7-b3c4-98b9692ff680",
+      "status": "complete",
+      "decision": "clear",
+      "path": "docs/automation/specs/issue-0040-full-multi-architecture-model-catalogue-gguf-eng/artifacts/PRD-001.md",
+      "sha256": "08d0ae1229e6603b6d4d77e12b8ca8eb1b80a8beb830d7de86e48093e9015f16",
+      "createdAt": "2026-07-24T08:00:08.505Z",
+      "metadata": {
+        "issueInputSha": "97b03f7a3c9142bd89ee9790bc45d33706137f8340b9c0a5c6d2b91e28989ec9",
+        "status": "clear",
+        "questions": [],
+        "findings": [
+          "Issue is well-structured (problem/approach/acceptance context present)."
+        ]
+      }
+    },
+    "spec": {
+      "id": "issue-0040-issue-0040-3000dc2d-e9e6-415d-ab1d-47f797413f60-SPEC-008",
+      "displayId": "SPEC-008",
+      "phase": "spec",
+      "prefix": "SPEC",
+      "title": "Architect spec",
+      "summary": "Spec",
+      "agent": "architect",
+      "runId": "issue-0040-3000dc2d-e9e6-415d-ab1d-47f797413f60",
+      "status": "complete",
+      "decision": "proceed",
+      "path": "docs/automation/specs/issue-0040-full-multi-architecture-model-catalogue-gguf-eng/artifacts/SPEC-008.md",
+      "sha256": "fce518608c9c8f43080934b629267849f5033a1c4568e8c243cb6c98a1350583",
+      "createdAt": "2026-07-25T12:46:48.372Z",
+      "metadata": {
+        "specPath": "docs/automation/specs/issue-0040-full-multi-architecture-model-catalogue-gguf-eng/spec.md",
+        "specSha": "0a176c9d3369ba1060e8d4aee11768dba0a1f3e2a1002dfa177ace77b3a153f4"
+      }
+    },
+    "adversarial-review": {
+      "id": "issue-0040-issue-0040-3000dc2d-e9e6-415d-ab1d-47f797413f60-ADV-008",
+      "displayId": "ADV-008",
+      "phase": "adversarial-review",
+      "prefix": "ADV",
+      "title": "Adversarial review",
+      "summary": "Explicit SPEC_REVIEW_DECISION: proceed.",
+      "agent": "adversarial-reviewer",
+      "runId": "issue-0040-3000dc2d-e9e6-415d-ab1d-47f797413f60",
+      "status": "complete",
+      "decision": "proceed",
+      "path": "docs/automation/specs/issue-0040-full-multi-architecture-model-catalogue-gguf-eng/artifacts/ADV-008.md",
+      "sha256": "975c47458d08ed041b65444834658911160acb45d21a8e1df0d8ce64f4f5534a",
+      "createdAt": "2026-07-25T12:48:35.427Z",
+      "metadata": {
+        "reviewPath": "docs/automation/specs/issue-0040-full-multi-architecture-model-catalogue-gguf-eng/adversarial-review.md",
+        "reviewSha": "776d082040a062bd9dcf1cb9575a685a6db2a41d24df0ebdb58cb94796747024",
+        "specPath": "docs/automation/specs/issue-0040-full-multi-architecture-model-catalogue-gguf-eng/spec.md",
+        "specSha": "0a176c9d3369ba1060e8d4aee11768dba0a1f3e2a1002dfa177ace77b3a153f4"
+      }
+    }
+  },
+  "phaseStatuses": {
+    "requirements": {
+      "status": "complete",
+      "decision": "clear",
+      "latestArtifactId": "issue-0040-issue-0040-30e345f2-8940-48c7-b3c4-98b9692ff680-PRD-001",
+      "latestDisplayId": "PRD-001",
+      "count": 1,
+      "updatedAt": "2026-07-25T12:45:22.857Z",
+      "details": {
+        "issueInputSha": "97b03f7a3c9142bd89ee9790bc45d33706137f8340b9c0a5c6d2b91e28989ec9",
+        "reason": "Requirements are clear enough to draft a spec without a human requirements gate."
+      }
+    },
+    "spec": {
+      "status": "complete",
+      "decision": "proceed",
+      "latestArtifactId": "issue-0040-issue-0040-3000dc2d-e9e6-415d-ab1d-47f797413f60-SPEC-008",
+      "latestDisplayId": "SPEC-008",
+      "count": 8,
+      "updatedAt": "2026-07-25T12:46:48.372Z"
+    },
+    "adversarial-review": {
+      "status": "complete",
+      "decision": "proceed",
+      "latestArtifactId": "issue-0040-issue-0040-3000dc2d-e9e6-415d-ab1d-47f797413f60-ADV-008",
+      "latestDisplayId": "ADV-008",
+      "count": 8,
+      "updatedAt": "2026-07-25T12:48:35.427Z"
+    },
+    "implementation": {
+      "status": "blocked",
+      "updatedAt": "2026-07-25T12:48:37.506Z",
+      "details": {
+        "reason": "Unhandled error: git worktree add -B copilot/issue-40-full-multi-architecture-model-catalo [REDACTED_REPOSITORY]/.copilot-issue-loop/worktrees/issue-40-full-multi-architecture-model-catalo-issue-0040-3000dc2d-e9e6-415d-ab origin/main failed:\nfatal: 'copilot/issue-40-full-multi-architecture-model-catalo' is already used by worktree at '[REDACTED_REPOSITORY]/.copilot-issue-loop/worktrees/issue-40-full-multi-architecture-model-catalo-issue-0040-30e345f2-8940-48c7-b3'\n"
+      }
+    }
+  }
+}

@@ -48,6 +48,29 @@ export function artifactDirectory(root, issue) {
   return path.join(root, "docs/automation/specs", issueFolderName(issue), "artifacts");
 }
 
+// Resolve an artifact's stored relative path to a safe absolute path, or null.
+// The path comes from the loop-written summary.json, but is confined defensively:
+// it must be a .md file directly inside docs/automation/specs/<issue-NNNN...>/artifacts/
+// for THIS issue. Anything escaping that directory (path traversal, wrong issue,
+// non-markdown) returns null. Never pass a client-supplied path here.
+export function resolveArtifactFilePath(root, issue, relPath) {
+  if (typeof relPath !== "string" || !relPath) return null;
+  const number = Number(issue?.number);
+  if (!Number.isFinite(number)) return null;
+  const specsRoot = path.join(root, "docs", "automation", "specs");
+  const abs = path.resolve(root, relPath);
+  const relToSpecs = path.relative(specsRoot, abs);
+  if (!relToSpecs || relToSpecs.startsWith("..") || path.isAbsolute(relToSpecs)) return null;
+  const segments = relToSpecs.split(path.sep);
+  if (segments.length !== 3) return null;
+  const [folder, artifactsDir, file] = segments;
+  if (artifactsDir !== "artifacts") return null;
+  if (!/^[A-Za-z0-9._-]+\.md$/.test(file)) return null;
+  const prefix = `issue-${String(number).padStart(4, "0")}`;
+  if (folder !== prefix && !folder.startsWith(`${prefix}-`)) return null;
+  return abs;
+}
+
 export function summaryPath(root, issue) {
   return path.join(artifactDirectory(root, issue), "summary.json");
 }

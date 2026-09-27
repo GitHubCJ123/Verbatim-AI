@@ -1,0 +1,67 @@
+{
+  "version": 1,
+  "issue": {
+    "number": 1,
+    "title": "Seamless updates: skip onboarding for existing configs and show a \"What's New\" pop-up",
+    "folder": "issue-0001-seamless-updates-skip-onboarding-for-existing-co"
+  },
+  "updatedAt": "2026-07-21T14:09:07.743Z",
+  "artifacts": [
+    {
+      "id": "issue-0001-issue-0001-32ac989b-616c-4255-80cd-4bd7a8178847-CLEAN-001",
+      "displayId": "CLEAN-001",
+      "phase": "cleanup",
+      "prefix": "CLEAN",
+      "title": "Cleanup complete for PR #11",
+      "summary": "Removed automation worktree/branch for merged PR #11 (copilot/issue-1).",
+      "agent": "cleanup",
+      "runId": "issue-0001-32ac989b-616c-4255-80cd-4bd7a8178847",
+      "status": "complete",
+      "decision": "done",
+      "path": "docs/automation/specs/issue-0001-seamless-updates-skip-onboarding-for-existing-co/artifacts/CLEAN-001.md",
+      "sha256": "6407e6411dfb45d8bf0904d144d922bf6bc98ff30dc2aa8a6a760b7a8de66f73",
+      "createdAt": "2026-07-21T14:09:07.743Z",
+      "metadata": {
+        "prNumber": 11,
+        "branch": "copilot/issue-1",
+        "actions": [
+          "remote-branch"
+        ]
+      }
+    }
+  ],
+  "latestArtifacts": {
+    "cleanup": {
+      "id": "issue-0001-issue-0001-32ac989b-616c-4255-80cd-4bd7a8178847-CLEAN-001",
+      "displayId": "CLEAN-001",
+      "phase": "cleanup",
+      "prefix": "CLEAN",
+      "title": "Cleanup complete for PR #11",
+      "summary": "Removed automation worktree/branch for merged PR #11 (copilot/issue-1).",
+      "agent": "cleanup",
+      "runId": "issue-0001-32ac989b-616c-4255-80cd-4bd7a8178847",
+      "status": "complete",
+      "decision": "done",
+      "path": "docs/automation/specs/issue-0001-seamless-updates-skip-onboarding-for-existing-co/artifacts/CLEAN-001.md",
+      "sha256": "6407e6411dfb45d8bf0904d144d922bf6bc98ff30dc2aa8a6a760b7a8de66f73",
+      "createdAt": "2026-07-21T14:09:07.743Z",
+      "metadata": {
+        "prNumber": 11,
+        "branch": "copilot/issue-1",
+        "actions": [
+          "remote-branch"
+        ]
+      }
+    }
+  },
+  "phaseStatuses": {
+    "cleanup": {
+      "status": "complete",
+      "decision": "done",
+      "latestArtifactId": "issue-0001-issue-0001-32ac989b-616c-4255-80cd-4bd7a8178847-CLEAN-001",
+      "latestDisplayId": "CLEAN-001",
+      "count": 1,
+      "updatedAt": "2026-07-21T14:09:07.743Z"
+    }
+  }
+}

@@ -2,14 +2,21 @@
   "enabled": false,
   "dryRun": true,
   "repository": "GitHubCJ123/Verbatim-AI",
+  "projectName": "Verbatim AI",
   "baseBranch": "main",
   "pollIntervalSeconds": 300,
   "maxConcurrentIssues": 1,
   "maxIssuesPerTick": 1,
   "maxPrReviewIterations": 2,
   "triageAllOpenIssues": false,
-  "requiredLabels": ["automate"],
-  "excludedLabels": ["wontfix", "blocked", "needs-human"],
+  "requiredLabels": [
+    "automate"
+  ],
+  "excludedLabels": [
+    "wontfix",
+    "blocked",
+    "needs-human"
+  ],
   "automationLabels": {
     "inProgress": "automation-in-progress",
     "readyForReview": "ready-for-review",
@@ -28,7 +35,10 @@
   "stop": {
     "env": "COPILOT_ISSUE_LOOP_STOP",
     "file": ".copilot-issue-loop/STOP",
-    "labels": ["automation-stop", "blocked"]
+    "labels": [
+      "automation-stop",
+      "blocked"
+    ]
   },
   "agents": {
     "requirementsCritic": {
@@ -40,7 +50,7 @@
       "model": "gpt-5.5"
     },
     "adversarialReviewer": {
-      "persona": "skeptical senior reviewer focused on missed requirements, security, UX regressions, and test gaps",
+      "persona": "pragmatic senior spec reviewer (blocks only on genuinely blocking problems)",
       "model": "claude-opus-4.8",
       "mustDifferFrom": "architect"
     },
@@ -50,15 +60,6 @@
     "agentPrReviewer": {
       "persona": "skeptical PR reviewer focused on correctness, security, tests, and UX regressions",
       "model": "gpt-5.5"
-    },
-    "verifier": {
-      "model": "gpt-5.5"
-    },
-    "finalizer": {
-      "model": "gpt-5.5"
-    },
-    "selfReflector": {
-      "model": "claude-opus-4.8"
     }
   },
   "gates": {
@@ -68,20 +69,147 @@
   },
   "verification": {
     "installCommand": "pnpm install --frozen-lockfile --ignore-scripts",
-    "commands": ["pnpm lint", "pnpm test", "pnpm build"],
-    "heavyCommands": ["pnpm tauri build"],
+    "commands": [
+      "pnpm lint",
+      "pnpm test",
+      "pnpm build"
+    ],
+    "heavyCommands": [
+      "pnpm tauri build"
+    ],
     "runHeavyCommands": false,
     "allowHostExecution": false,
+    "allowedCommandPrefixes": [
+      "corepack ",
+      "pnpm ",
+      "npm ",
+      "cargo ",
+      "git diff --check"
+    ],
     "sandboxCommand": "",
     "timeoutMinutes": 45
   },
   "copilot": {
     "command": "copilot",
     "model": "auto",
-    "baseArgs": ["-p", "--add-dir", "{worktree}"],
-    "allowTools": ["view", "rg", "glob", "apply_patch"],
-    "readOnlyRoles": ["architect", "adversarialReviewer", "agentPrReviewer"],
-    "readOnlyTools": ["view", "rg", "glob"]
+    "baseArgs": [
+      "--add-dir",
+      "{worktree}"
+    ],
+    "allowTools": [
+      "view",
+      "write",
+      "str_replace"
+    ],
+    "implementerTools": [
+      "view",
+      "write",
+      "str_replace",
+      "shell"
+    ],
+    "denyTools": [
+      "shell(gh:*)",
+      "shell(git push:*)",
+      "shell(git commit:*)",
+      "shell(git reset:*)",
+      "shell(git checkout:*)",
+      "shell(git switch:*)",
+      "shell(git rebase:*)",
+      "shell(git merge:*)",
+      "shell(curl:*)",
+      "shell(wget:*)",
+      "shell(ssh:*)",
+      "shell(scp:*)",
+      "shell(sudo:*)"
+    ],
+    "readOnlyRoles": [
+      "architect",
+      "adversarialReviewer",
+      "agentPrReviewer",
+      "requirementsCritic"
+    ],
+    "readOnlyTools": [
+      "view"
+    ],
+    "timeoutMinutes": 15
+  },
+  "skills": {
+    "enabled": true,
+    "dir": "vendor/agent-skills",
+    "maxChars": 8000,
+    "roleSkills": {
+      "requirementsCritic": "interview-me",
+      "architect": "spec-driven-development",
+      "implementer": "incremental-implementation",
+      "adversarialReviewer": "code-review-and-quality",
+      "agentPrReviewer": "code-review-and-quality"
+    }
+  },
+  "recovery": {
+    "enabled": true,
+    "defaultPolicy": "conservative",
+    "budgets": {
+      "maxModelCallsPerIssue": 20,
+      "maxModelCallsPerPhase": 6,
+      "maxCouncilRounds": 1,
+      "maxImplementationAttempts": 2,
+      "maxVerifierRepairAttempts": 2,
+      "maxWallClockMinutesPerIssue": 60
+    },
+    "locking": {
+      "enabled": true,
+      "ttlMinutes": 30
+    },
+    "phases": {
+      "requirements": {
+        "enabled": true,
+        "allowedTiers": [
+          "primary",
+          "requirementsCritic"
+        ],
+        "allowAiDowngrade": true,
+        "allowAiDowngradeForSecuritySensitive": false
+      },
+      "spec-review": {
+        "enabled": true,
+        "allowedTiers": [
+          "primary",
+          "diverseRetry",
+          "council"
+        ],
+        "securityVeto": true
+      },
+      "implementation": {
+        "enabled": true,
+        "allowedTiers": [
+          "primary",
+          "sequentialRetry"
+        ],
+        "maxAttempts": 2,
+        "branchStrategy": "incremental-after-pr"
+      },
+      "verification": {
+        "enabled": true,
+        "allowedTiers": [
+          "repairOnly"
+        ],
+        "verifierAuthoritative": true
+      }
+    },
+    "rosters": {
+      "requirements": [
+        "gpt-5.5",
+        "claude-opus-4.8"
+      ],
+      "spec-review": [
+        "claude-opus-4.8",
+        "gpt-5.5"
+      ],
+      "implementation": [
+        "claude-sonnet-5",
+        "gpt-5.5"
+      ]
+    }
   },
   "triggers": {
     "mode": "local-watch",

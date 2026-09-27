@@ -1,269 +1,1151 @@
 const token = document.querySelector('meta[name="dashboard-token"]').content;
+
+const headers = { "x-dashboard-token": token };
+const actionHeaders = { ...headers, "x-dashboard-action": "1", "content-type": "application/json" };
+
+// ---- persistent UI state (survives 2s polls; never reset by a refresh) -----
 let state = null;
 let selectedId = null;
-
-const headers = {
-  "x-dashboard-token": token,
-};
-const actionHeaders = {
-  ...headers,
-  "x-dashboard-action": "1",
-  "content-type": "application/json",
-};
-const openPhases = new Set();
+const selectedPhaseByIssue = new Map();
+let scanAll = false;
+let filter = "all";
+let showCompletedPrs = false;
+const collapsedCtx = new Set();
+const openForms = new Set();       // `${issueId}:${phaseId}:approval|feedback`
 const approvalDrafts = new Map();
+const feedbackDrafts = new Map();
+const continueDrafts = new Map();
+const expandedOutputs = new Set();
+let lastInteractionAt = 0;
+let loadedOnce = false;
+let historyOpen = false;
+let historyTab = "issues";
+let historyPrFilter = "all";
+let historyData = null; // { closedIssues: [] } fetched on demand
+let artifactOpen = false;
+let artifactCurrent = null; // last fetched artifact payload (for Copy)
 
-document.getElementById("refreshBtn").addEventListener("click", load);
+const density = localStorage.getItem("vb.density") === "cozy" ? "cozy" : "compact";
+document.body.dataset.density = density;
+if (localStorage.getItem("vb.leftCollapsed") === "1") document.body.classList.add("left-collapsed");
+if (localStorage.getItem("vb.rightCollapsed") === "1") document.body.classList.add("right-collapsed");
+
+const PHASE_SHORT = {
+  requirements: "Reqs",
+  spec: "Spec",
+  "adversarial-review": "Adversarial",
+  implementation: "Impl",
+  "agent-pr-review": "PR review",
+  verification: "Verify",
+  finalization: "Finalize",
+  "human-pr-review": "Human",
+  "self-reflection": "Reflect",
+};
+const DONE = new Set(["complete", "approved", "local-approved", "recovered"]);
+
+// ---------------------------------------------------------------------------
+// wiring
+// ---------------------------------------------------------------------------
+byId("refreshBtn").addEventListener("click", () => load());
+byId("densityCompact").addEventListener("click", () => setDensity("compact"));
+byId("densityCozy").addEventListener("click", () => setDensity("cozy"));
+byId("helpBtn").addEventListener("click", () => byId("helpPopover").classList.toggle("hidden"));
+byId("collapseLeft").addEventListener("click", () => toggleRail("left"));
+byId("showLeft").addEventListener("click", () => toggleRail("left"));
+byId("collapseRight").addEventListener("click", () => toggleRail("right"));
+byId("showRight").addEventListener("click", () => toggleRail("right"));
+byId("historyBtn").addEventListener("click", toggleHistory);
+byId("historyClose").addEventListener("click", closeHistory);
+byId("historyBackdrop").addEventListener("click", closeHistory);
+byId("artifactClose").addEventListener("click", closeArtifact);
+byId("artifactBackdrop").addEventListener("click", closeArtifact);
+byId("artifactCopy").addEventListener("click", () => {
+  if (artifactCurrent?.content != null) void copyText(artifactCurrent.content);
+});
+for (const tab of document.querySelectorAll("#historyOverlay .otab")) {
+  tab.addEventListener("click", () => { historyTab = tab.dataset.tab; renderHistory(); });
+}
+setDensityButtons();
+
+document.addEventListener("scroll", markInteraction, { capture: true, passive: true });
+document.addEventListener("pointerdown", markInteraction, { capture: true });
+document.addEventListener("keydown", onKeydown);
+
 setInterval(() => {
-  if (document.activeElement?.tagName === "TEXTAREA") return;
-  void load({ preserveOpen: true });
+  if (isUserBusy()) return;
+  void load({ background: true });
 }, 2000);
 
-async function load(_options = {}) {
-  const res = await fetch("/api/state", { headers });
-  state = await res.json();
-  selectedId ??= state.issues[0]?.id;
-  render();
+function markInteraction() { lastInteractionAt = Date.now(); }
+function isUserBusy() {
+  const tag = document.activeElement?.tagName;
+  if (tag === "TEXTAREA" || tag === "INPUT") return true;
+  if (openForms.size > 0) return true;
+  return Date.now() - lastInteractionAt < 4000;
 }
 
-function render() {
-  document.getElementById("modeBadge").textContent = state.mode.agentRunsEnabled
-    ? "Local + Copilot text runs"
-    : "Local read-only";
+// ---------------------------------------------------------------------------
+// data load
+// ---------------------------------------------------------------------------
+async function load(options = {}) {
+  let data;
+  try {
+    const res = await fetch("/api/state", { headers });
+    if (!res.ok) throw new Error(`state ${res.status}`);
+    data = await res.json();
+    hideError();
+  } catch (err) {
+    if (options.background) return;
+    showError(`Cannot reach dashboard server: ${err.message}`);
+    return;
+  }
+  state = data;
+  loadedOnce = true;
+  if (options.background && isUserBusy()) return; // keep the user's view stable
+  if (!selectedId || !state.issues.some((i) => i.id === selectedId)) {
+    selectedId = state.issues[0]?.id ?? null;
+  }
+  render({ background: options.background });
+}
+
+// ---------------------------------------------------------------------------
+// render
+// ---------------------------------------------------------------------------
+let lastSig = null;
+
+// A stable fingerprint of everything the DOM is built from. Background polls
+// that produce an identical fingerprint are skipped entirely, so an idle
+// dashboard never rebuilds the DOM (no flicker). User actions always render.
+function renderSignature() {
+  const issues = (state?.issues ?? []).map((is) => ({
+    id: is.id,
+    t: is.title,
+    e: is.eligibility?.eligible ?? null,
+    r: (is.eligibility?.reasons ?? []).map((x) => x.code),
+    p: is.phases.map((p) => [
+      p.id, p.status, p.statusLabel ?? "", p.output ?? "",
+      p.needsHuman ? 1 : 0, p.blockedReason ?? "",
+      p.recoverable ? 1 : 0, (p.artifacts ?? []).length,
+      (p.feedback ?? []).length, (p.approvals ?? []).length,
+      (p.activeActions ?? []).length,
+    ]),
+    pr: (is.relatedPrs ?? []).map((x) => [x.number, x.status]),
+    a: (is.automationSummary?.artifacts ?? []).length,
+  }));
+  return JSON.stringify({
+    issues,
+    prs: (state?.prs ?? []).map((p) => [p.number, p.status]),
+    live: state?.mode?.agentRunsEnabled ?? false,
+    sel: selectedId,
+    ph: [...selectedPhaseByIssue.entries()],
+    filter, scanAll, showCompletedPrs,
+    d: document.body.dataset.density,
+    of: [...openForms].sort(),
+    eo: [...expandedOutputs].sort(),
+  });
+}
+
+function render(opts = {}) {
+  const sig = renderSignature();
+  if (opts.background && sig === lastSig) return; // nothing changed → no rebuild
+  lastSig = sig;
+  const scroll = snapshotScroll();
+  renderTopbar();
+  renderFilters();
   renderIssues();
-  renderPRs();
   renderDetail();
+  renderRight();
+  restoreScroll(scroll);
 }
 
-function renderPRs() {
-  const list = document.getElementById("prList");
-  list.textContent = "";
-  for (const pr of state.prs ?? []) {
-    const card = el("a", { className: "pr-card", text: `PR #${pr.number}` });
-    card.href = pr.url;
-    card.target = "_blank";
-    card.rel = "noreferrer";
-    card.append(
-      el("span", { className: "pr-title", text: pr.title }),
-      el("span", {
-        className: "pr-meta",
-        text: `${pr.isDraft ? "draft" : "ready/open"} · ${pr.mergeStateStatus ?? "unknown"} · issues ${pr.closingIssues.join(", ") || "none"}`,
-      }),
-    );
-    list.append(card);
+function renderTopbar() {
+  const live = state.mode?.agentRunsEnabled;
+  const badge = byId("modeBadge");
+  badge.textContent = live ? "Local + Copilot runs" : "Local read-only";
+  badge.classList.toggle("live", Boolean(live));
+
+  const counts = prCounts(state.prs ?? []);
+  const el = byId("topPrCounts");
+  el.textContent = "";
+  const order = [["open", "open"], ["draft", "draft"], ["merged", "merged"], ["closed", "closed"]];
+  const parts = order.filter(([k]) => counts[k]).map(([k, label]) => `${counts[k]} ${label}`);
+  if (parts.length) {
+    el.append(node("span", { class: "pill-dot", text: "PRs" }), document.createTextNode(" " + parts.join(" · ")));
   }
-  if (!list.children.length) {
-    list.append(el("div", { className: "empty-prs", text: "No pull requests found." }));
+}
+
+function renderFilters() {
+  const wrap = byId("issueFilters");
+  wrap.textContent = "";
+  const issues = state.issues ?? [];
+  const defs = [
+    ["all", "All", issues.length],
+    ["action", "Needs action", issues.filter((i) => matchFilter(i, "action")).length],
+    ["running", "Running", issues.filter((i) => matchFilter(i, "running")).length],
+    ["ineligible", "Ineligible", issues.filter((i) => matchFilter(i, "ineligible")).length],
+    ["haspr", "Has PR", issues.filter((i) => matchFilter(i, "haspr")).length],
+  ];
+  for (const [key, label, n] of defs) {
+    const chip = node("button", { class: `filter-chip ${filter === key ? "is-on" : ""}` });
+    chip.type = "button";
+    chip.setAttribute("role", "tab");
+    chip.setAttribute("aria-selected", String(filter === key));
+    chip.append(document.createTextNode(label), node("span", { class: "chip-n", text: String(n) }));
+    chip.addEventListener("click", () => { markInteraction(); filter = key; render(); });
+    wrap.append(chip);
   }
+}
+
+function visibleIssues() {
+  const issues = (state.issues ?? []).filter((i) => matchFilter(i, filter));
+  return issues.sort((a, b) => urgencyRank(a) - urgencyRank(b) || b.number - a.number);
 }
 
 function renderIssues() {
-  const list = document.getElementById("issueList");
+  const list = byId("issueList");
   list.textContent = "";
-  for (const issue of state.issues) {
-    const running = issue.phases.some((phase) => phase.status === "running");
-    const redo = issue.phases.filter((phase) => phase.status === "needs-redo").length;
-    const btn = el("button", { className: `issue-item ${issue.id === selectedId ? "active" : ""}` });
-    btn.append(
-      el("span", { className: "issue-number", text: `#${issue.number}` }),
-      el("span", { className: "issue-title", text: issue.title }),
-      el("div", {
-        className: "issue-meta",
-        text: `${issue.source} · ${issue.phases.filter((p) => ["complete", "approved"].includes(p.status)).length}/${issue.phases.length} phases${running ? " · running" : ""}${redo ? ` · ${redo} redo` : ""}`,
-      }),
+  const issues = visibleIssues();
+  byId("issueCount").textContent = issues.length ? `(${issues.length})` : "";
+  if (!issues.length) {
+    list.append(node("div", { class: "empty-note", text: loadedOnce ? "No issues match this filter." : "Loading…" }));
+    return;
+  }
+  for (const issue of issues) {
+    const dom = dominantState(issue);
+    const done = doneCount(issue);
+    const row = node("div", { class: `issue-row s-${dom.key} ${issue.id === selectedId ? "active" : ""}` });
+    row.tabIndex = -1;
+    row.setAttribute("role", "option");
+    row.setAttribute("aria-selected", String(issue.id === selectedId));
+    row.dataset.id = issue.id;
+
+    const state1 = node("span", { class: "ir-state" });
+    state1.append(node("span", { class: "dot" }), node("span", { class: "state-tag", text: dom.label }));
+
+    const foot = node("div", { class: "ir-foot" });
+    const prog = node("span", { class: "progress" });
+    const fill = node("i");
+    fill.style.width = `${Math.round((done / issue.phases.length) * 100)}%`;
+    prog.append(fill);
+    foot.append(prog, node("span", { class: "ir-progress-label", text: `${done}/${issue.phases.length}` }));
+    const activePr = (issue.relatedPrs ?? []).find(isActivePr);
+    if (activePr) foot.append(node("span", { class: `ir-pr ${activePr.status}`, text: `#${activePr.number}` }));
+
+    row.append(
+      node("span", { class: "ir-num", text: `#${issue.number}` }),
+      state1,
+      node("span", { class: "ir-title", text: issue.title }),
+      foot,
     );
-    btn.addEventListener("click", () => {
-      selectedId = issue.id;
-      render();
-    });
-    list.append(btn);
+    row.addEventListener("click", () => selectIssue(issue.id));
+    list.append(row);
   }
 }
 
 function renderDetail() {
-  const issue = state.issues.find((item) => item.id === selectedId);
-  const detail = document.getElementById("issueDetail");
+  const detail = byId("issueDetail");
   detail.textContent = "";
-  if (!issue) return;
-  const wrap = el("div", { className: "detail-inner" });
-  const head = el("div", { className: "detail-head" });
-  const title = el("div");
-  title.append(el("div", { className: "issue-number", text: `#${issue.number}` }), el("h2", { text: issue.title }));
-  const labels = el("div", { className: "labels" });
-  for (const label of issue.labels ?? []) labels.append(el("span", { className: "label", text: label }));
-  title.append(labels);
-  const related = el("div", { className: "related-prs" });
-  if (issue.relatedPrs?.length) {
-    related.append(el("div", { className: "mini-title", text: "Related PRs" }));
-    for (const pr of issue.relatedPrs) {
-      const link = el("a", {
-        className: "related-pr",
-        text: `#${pr.number} ${pr.title} · ${pr.isDraft ? "draft" : "ready/open"} · ${pr.mergeStateStatus ?? "unknown"}`,
-      });
-      link.href = pr.url;
-      link.target = "_blank";
-      link.rel = "noreferrer";
-      related.append(link);
-    }
-  } else {
-    related.append(el("div", { className: "mini-title", text: "No related PR yet" }));
+  const issue = state.issues.find((i) => i.id === selectedId);
+  if (!issue) {
+    detail.append(skeleton());
+    return;
   }
-  title.append(related);
-  title.append(renderArtifactSummary(issue));
-  const reflect = el("button", { className: "reflection-btn", text: "Run self-reflection" });
-  reflect.addEventListener("click", () => runReflection(issue.id));
-  head.append(title, reflect);
-  wrap.append(head);
+  const dom = dominantState(issue);
 
-  for (const [index, phase] of issue.phases.entries()) {
-    wrap.append(renderPhase(issue, phase, index));
+  // header
+  const head = node("div", { class: "detail-head" });
+  const main = node("div", { class: "dh-main" });
+  main.append(node("div", { class: "dh-num", text: `#${issue.number}` }), node("h2", { class: "dh-title", text: issue.title }));
+  if ((issue.labels ?? []).length) {
+    const labels = node("div", { class: "labels" });
+    for (const label of issue.labels) labels.append(node("span", { class: "label", text: label }));
+    main.append(labels);
   }
-  detail.append(wrap);
+  const acts = node("div", { class: "dh-actions" });
+  const reflect = node("button", { class: "btn", text: "Self-reflect" });
+  reflect.type = "button";
+  reflect.addEventListener("click", () => runReflection(issue.id));
+  acts.append(copyButton("Copy issue", () => copyableIssueText(issue)), reflect);
+  head.append(main, acts);
+  detail.append(head);
+
+  if (issue.eligibility?.eligible === false) detail.append(eligStrip(issue));
+
+  // blocker / next-action strip (the eligibility strip already covers ineligible)
+  if (dom.key !== "ineligible") detail.append(blockerStrip(issue, dom));
+
+  // phase pipeline rail
+  detail.append(phaseRail(issue));
+
+  // phase detail panel OR scan-all
+  if (scanAll) detail.append(scanTable(issue));
+  else detail.append(phasePanel(issue, currentPhase(issue)));
+
+  // full trajectory of every pipeline step (shows the back-and-forth loop)
+  detail.append(trajectoryView(issue));
 }
 
-function renderPhase(issue, phase, index) {
-  const template = document.getElementById("phaseTemplate").content.cloneNode(true);
-  const card = template.querySelector(".phase-card");
-  const phaseKey = `${issue.id}:${phase.id}`;
-  if (openPhases.has(phaseKey)) card.classList.add("open");
-  template.querySelector(".phase-index").textContent = String(index + 1).padStart(2, "0");
-  template.querySelector(".phase-title").textContent = phase.title;
-  const status = template.querySelector(".phase-status");
-  status.textContent = phase.statusLabel ?? phase.status;
-  status.classList.add(phase.status);
-  template.querySelector(".phase-output").textContent = phase.output || "(no output yet)";
-  const header = template.querySelector(".phase-header");
-  header.addEventListener("click", () => {
-    card.classList.toggle("open");
-    if (card.classList.contains("open")) openPhases.add(phaseKey);
-    else openPhases.delete(phaseKey);
-  });
-  if (phase.status === "running") {
-    template.querySelector(".phase-output").textContent =
-      `${phase.activeActions.map((action) => action.message).join("\n")}\n\n${phase.output || ""}`;
+// ---------------------------------------------------------------------------
+// trajectory: chronological strip of every artifact/step, including loop-backs
+// ---------------------------------------------------------------------------
+// Map a decision to an allowlisted tone (never derive a CSS class from the raw
+// decision string — keeps rendering injection-safe).
+const TRAJ_TONE = {
+  proceed: "ok", recovered: "ok", clear: "ok", approved: "ok", pass: "ok", complete: "ok",
+  "needs-human": "warn", "needs-revision": "warn", "needs-redo": "warn",
+  blocked: "bad", fail: "bad", failed: "bad", rejected: "bad",
+};
+
+function trajectoryView(issue) {
+  const arts = [...(issue?.automationSummary?.artifacts ?? [])]
+    .filter((a) => a && a.createdAt)
+    .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+  const section = node("section", { class: "trajectory" });
+  const head = node("div", { class: "trajectory-head" });
+  head.append(node("span", { class: "trajectory-title", text: "Trajectory" }));
+  head.append(node("span", { class: "trajectory-sub", text: arts.length === 1 ? "1 step" : `${arts.length} steps` }));
+  section.append(head);
+  if (!arts.length) {
+    section.append(node("div", { class: "empty-note", text: "No pipeline steps recorded yet." }));
+    return section;
   }
-  const artifacts = phase.artifacts ?? [];
-  if (artifacts.length) {
-    const artifactList = el("div", { className: "artifact-list" });
-    for (const artifact of artifacts) {
-      const item = el("div", { className: "artifact-chip" });
-      item.append(
-        el("span", { className: "artifact-id", text: artifact.displayId ?? artifact.id ?? "artifact" }),
-        el("span", { className: "artifact-text", text: artifact.summary || artifact.title || artifact.path || "" }),
-      );
-      artifactList.append(item);
-    }
-    template.querySelector(".phase-output").after(artifactList);
+  const track = node("div", { class: "trajectory-track" });
+  arts.forEach((a, i) => track.append(trajectoryNode(issue, a, i + 1)));
+  section.append(track);
+  return section;
+}
+
+function trajectoryNode(issue, a, step) {
+  const decision = String(a.decision ?? "").toLowerCase();
+  const tone = TRAJ_TONE[decision] ?? "neutral";
+  const btn = node("button", { class: `traj-node traj-${tone}` });
+  btn.type = "button";
+  btn.title = `${a.displayId ?? a.id ?? "step"} — ${a.phase ?? ""}${a.decision ? ` — ${a.decision}` : ""} — ${fmtDate(a.createdAt)}`;
+  btn.append(
+    node("span", { class: "traj-step", text: String(step ?? "") }),
+    node("span", { class: "traj-phase", text: PHASE_SHORT[a.phase] ?? a.phase ?? "step" }),
+    node("span", { class: "traj-id", text: a.displayId ?? "" }),
+    node("span", { class: "traj-decision", text: decision || "" }),
+    node("span", { class: "traj-time", text: fmtDate(a.createdAt) }),
+  );
+  btn.addEventListener("click", () => void openArtifact(issue.id, a));
+  return btn;
+}
+
+function eligStrip(issue) {
+  const first = issue.eligibility?.reasons?.[0];
+  const notEnrolled = first?.code === "MISSING_REQUIRED_LABEL";
+  const strip = node("div", { class: "elig-strip" });
+  strip.append(
+    node("span", { class: "elig-badge", text: notEnrolled ? "Not enrolled" : "Ineligible" }),
+    node("span", { class: "elig-msg", text: first?.message ?? "This issue is not eligible for automation." }),
+  );
+  if (notEnrolled) strip.append(node("span", { class: "elig-help", text: "The driver skips it until enrollment is fixed — this is not a phase-1 failure." }));
+  return strip;
+}
+
+function blockerStrip(issue, dom) {
+  const phase = currentPhase(issue);
+  const strip = node("div", { class: `blocker s-${dom.key}` });
+  const msg = dom.key === "ineligible"
+    ? (issue.eligibility?.reasons?.[0]?.message ?? "Not eligible.")
+    : firstLine(phase?.output) || `${phase?.title ?? "Phase"} — ${phase?.statusLabel ?? phase?.status ?? "idle"}`;
+  strip.append(
+    node("span", { class: "blocker-state", text: dom.label }),
+    node("span", { class: "blocker-msg", text: msg }),
+  );
+  return strip;
+}
+
+function phaseRail(issue) {
+  const wrap = node("div", { class: "prail-wrap" });
+  const top = node("div", { class: "prail-top" });
+  const scanBtn = node("button", { class: `btn btn-mini ${scanAll ? "btn-accent" : ""}`, text: scanAll ? "Focus view" : "Scan all" });
+  scanBtn.type = "button";
+  scanBtn.addEventListener("click", () => { markInteraction(); scanAll = !scanAll; render(); });
+  top.append(node("span", { class: "prail-legend", text: "Pipeline" }), scanBtn);
+  wrap.append(top);
+
+  const rail = node("div", { class: "prail" });
+  rail.setAttribute("role", "tablist");
+  const selId = currentPhase(issue)?.id;
+  issue.phases.forEach((phase, index) => {
+    const node1 = node("button", { class: `pnode p-${phase.status} ${phase.id === selId ? "active" : ""}` });
+    node1.type = "button";
+    node1.setAttribute("role", "tab");
+    node1.setAttribute("aria-selected", String(phase.id === selId));
+    node1.title = `${phase.title} — ${phase.statusLabel ?? phase.status}`;
+    const track = node("span", { class: "pnode-track" });
+    track.append(node("span", { class: "pnode-dot" }));
+    node1.append(
+      track,
+      node("span", { class: "pnode-idx", text: String(index + 1).padStart(2, "0") }),
+      node("span", { class: "pnode-label", text: shortLabel(phase) }),
+    );
+    node1.addEventListener("click", () => selectPhase(issue.id, phase.id));
+    rail.append(node1);
+  });
+  wrap.append(rail);
+  return wrap;
+}
+
+function scanTable(issue) {
+  const wrap = node("div", { class: "scan" });
+  const selId = currentPhase(issue)?.id;
+  issue.phases.forEach((phase, index) => {
+    const row = node("div", { class: `scan-row ${phase.id === selId ? "active" : ""}` });
+    row.append(
+      node("span", { class: "scan-idx", text: String(index + 1).padStart(2, "0") }),
+      node("span", { class: "scan-name", text: phase.title }),
+      statusChip(phase),
+      node("span", { class: "scan-summary", text: firstLine(phase.output) || "—" }),
+    );
+    row.addEventListener("click", () => { selectPhase(issue.id, phase.id); scanAll = false; render(); });
+    wrap.append(row);
+  });
+  return wrap;
+}
+
+function phasePanel(issue, phase) {
+  if (!phase) return node("div", { class: "empty-note", text: "No phase selected." });
+  const panel = node("div", { class: "ppanel" });
+
+  const headRow = node("div", { class: "ppanel-head" });
+  const actions = node("div", { class: "ppanel-actions" });
+  if (phase.recoverable) {
+    const recover = node("button", { class: "btn btn-signal btn-mini", text: "Recover" });
+    recover.type = "button";
+    recover.title = "Planning-only: records recovery intent and plan; the CLI driver executes recovery.";
+    recover.addEventListener("click", () => runRecover(issue.id, phase.id));
+    actions.append(recover);
+  }
+  const approveBtn = node("button", { class: "btn btn-mini", text: "Approve" });
+  approveBtn.type = "button";
+  approveBtn.disabled = !phase.canApprove;
+  approveBtn.title = phase.sideEffect ?? "";
+  const feedbackBtn = node("button", { class: "btn btn-mini", text: "Revision" });
+  feedbackBtn.type = "button";
+  feedbackBtn.disabled = !phase.canGiveFeedback;
+  actions.append(approveBtn, feedbackBtn);
+  headRow.append(
+    node("span", { class: "ppanel-idx", text: String(issue.phases.indexOf(phase) + 1).padStart(2, "0") }),
+    node("span", { class: "ppanel-title", text: phase.title }),
+    statusChip(phase),
+    actions,
+  );
+  panel.append(headRow);
+
+  const body = node("div", { class: "ppanel-body" });
+
+  // output
+  const outputText = phase.status === "running" && phase.activeActions?.length
+    ? `${phase.activeActions.map((a) => a.message).join("\n")}\n\n${phase.output || ""}`
+    : (phase.output || "(no output yet)");
+  if (phase.needsHuman) body.append(continueForm(issue, phase, outputText));
+  const outKey = `${issue.id}:${phase.id}`;
+  const pre = node("pre", { class: `output ${expandedOutputs.has(outKey) ? "expanded" : ""}`, text: outputText });
+  body.append(pre);
+  const outTools = node("div", { class: "inline-tools" });
+  if (outputText.length > 400) {
+    const exp = node("button", { class: "copy-btn", text: expandedOutputs.has(outKey) ? "Collapse" : "Expand" });
+    exp.type = "button";
+    exp.addEventListener("click", () => { toggleSet(expandedOutputs, outKey); render(); });
+    outTools.append(exp);
+  }
+  outTools.append(copyButton("Copy output", () => phase.output || ""));
+  body.append(outTools);
+
+  // artifacts for this phase (newest first; click any version to read full output)
+  if ((phase.artifacts ?? []).length) {
+    const n = phase.artifacts.length;
+    body.append(node("div", { class: "field-label", text: n > 1 ? `Phase artifacts (${n} versions — click to view)` : "Phase artifact (click to view)" }));
+    const chips = node("div", { class: "chips" });
+    for (const a of [...phase.artifacts].reverse()) chips.append(artifactChip(a, issue.id));
+    body.append(chips);
   }
 
-  const approve = template.querySelector(".approve-btn");
-  const approvalForm = template.querySelector(".approval-form");
-  const approvalNote = approvalForm.note;
-  const approvalDraftKey = `${phaseKey}:approval-note`;
-  approve.disabled = !phase.canApprove;
-  approve.title = phase.sideEffect;
-  approvalNote.value = approvalDrafts.get(approvalDraftKey) ?? "";
-  approvalNote.addEventListener("input", () => {
-    approvalDrafts.set(approvalDraftKey, approvalNote.value);
+  // recovery
+  const recovery = recoveryPanel(phase);
+  if (recovery) body.append(recovery);
+
+  // approval + feedback forms
+  body.append(approvalForm(issue, phase, approveBtn));
+  body.append(feedbackForm(issue, phase, feedbackBtn));
+
+  // log
+  const log = phaseLogText(phase);
+  if (log) {
+    body.append(node("div", { class: "field-label", text: "Activity" }));
+    body.append(node("div", { class: "phase-log", text: log }));
+    body.append(copyButton("Copy log", () => log));
+  }
+
+  panel.append(body);
+  return panel;
+}
+
+function continueForm(issue, phase, outputText) {
+  const key = `${issue.id}:${phase.id}:continue`;
+  const draftKey = `${issue.id}:${phase.id}:continue`;
+  const form = node("form", { class: "needs-human" });
+  form.append(node("div", { class: "needs-human-title", text: "Needs your input" }));
+  const attention = phase.attention || phase.blockedReason || firstLine(outputText) ||
+    "Automation is waiting for maintainer feedback before it can continue.";
+  const reasonBox = node("div", { class: "needs-human-reason" });
+  reasonBox.append(node("pre", { class: "attention-text", text: attention }));
+  form.append(
+    reasonBox,
+    node("label", { class: "field-label", text: "Steering (optional) — added to whichever action you choose" }),
+  );
+  const ta = node("textarea");
+  ta.name = "feedback";
+  ta.maxLength = 6000;
+  ta.placeholder = phase.rerunnable
+    ? "Optional guidance, e.g. which findings to address on a re-run, or context to approve past them."
+    : "Explain what to do next, any constraints, and what would make this phase safe to resume.";
+  ta.value = continueDrafts.get(draftKey) ?? "";
+  ta.addEventListener("focus", () => openForms.add(key));
+  ta.addEventListener("blur", () => openForms.delete(key));
+  ta.addEventListener("input", () => {
+    continueDrafts.set(draftKey, ta.value);
+    openForms.add(key);
   });
-  approve.addEventListener("click", (event) => {
-    event.stopPropagation();
-    approvalForm.classList.toggle("hidden");
-    if (!approvalForm.classList.contains("hidden")) approvalNote.focus();
+  form.append(ta);
+
+  const rowBtns = node("div", { class: "form-row" });
+  // "Approve & continue" advances to the next stage using the current artifacts.
+  const approveContinue = node("button", { class: "btn btn-accent btn-mini", text: "Approve & continue →" });
+  approveContinue.type = "submit";
+  approveContinue.title = "Accept this stage and move to the next one (your steering is passed as a note).";
+  // "Rerun this stage" re-drafts spec + review with the steering (only where wired).
+  let rerunBtn = null;
+  if (phase.rerunnable) {
+    rerunBtn = node("button", { class: "btn btn-mini", text: "↻ Rerun this stage" });
+    rerunBtn.type = "button";
+    rerunBtn.title = "Re-run this stage (re-draft the spec and review) using your steering.";
+    rerunBtn.addEventListener("click", async () => {
+      rerunBtn.disabled = true;
+      const out = await post(`/api/issues/${issue.id}/phases/${phase.id}/rerun`, {
+        note: ta.value,
+        issueInputSha: issue.requirementsIssueInputSha,
+      });
+      rerunBtn.disabled = false;
+      if (out) {
+        continueDrafts.delete(draftKey);
+        toast("Rerun requested — this stage will re-run with your steering on the next tick.", "ok");
+      }
+    });
+    rowBtns.append(rerunBtn);
+  }
+  rowBtns.append(approveContinue);
+  form.append(rowBtns);
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    openForms.delete(key);
+    const out = await post(`/api/issues/${issue.id}/phases/${phase.id}/continue`, {
+      feedback: ta.value || "Approved by maintainer; continue to the next stage.",
+      issueInputSha: issue.requirementsIssueInputSha,
+    });
+    if (out) {
+      continueDrafts.delete(draftKey);
+      toast("Approved — automation will continue to the next stage.", "ok");
+    }
   });
-  approvalForm.addEventListener("submit", async (event) => {
-    event.preventDefault();
+  return form;
+}
+
+function approvalForm(issue, phase, approveBtn) {
+  const key = `${issue.id}:${phase.id}:approval`;
+  const draftKey = `${issue.id}:${phase.id}`;
+  const form = node("form", { class: `pform ${openForms.has(key) ? "" : "hidden"}` });
+  form.append(node("label", { class: "field-label", text: "Optional note for the next agent" }));
+  const ta = node("textarea");
+  ta.name = "note";
+  ta.maxLength = 4000;
+  ta.placeholder = "Add maintainer guidance before approving, or leave blank.";
+  ta.value = approvalDrafts.get(draftKey) ?? "";
+  ta.addEventListener("input", () => approvalDrafts.set(draftKey, ta.value));
+  form.append(ta);
+  const rowBtns = node("div", { class: "form-row" });
+  const submit = node("button", { class: "btn btn-accent btn-mini", text: "Approve with note" });
+  submit.type = "submit";
+  const cancel = node("button", { class: "btn btn-mini", text: "Cancel" });
+  cancel.type = "button";
+  cancel.addEventListener("click", () => { openForms.delete(key); render(); });
+  rowBtns.append(submit, cancel);
+  form.append(rowBtns);
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    openForms.delete(key);
     await post(`/api/issues/${issue.id}/phases/${phase.id}/approve`, {
       approver: "local-maintainer",
       spec: issue.spec,
       issueInputSha: issue.requirementsIssueInputSha,
-      note: approvalNote.value,
+      note: ta.value,
     });
-    approvalDrafts.delete(approvalDraftKey);
+    approvalDrafts.delete(draftKey);
   });
-  template.querySelector(".approval-cancel-btn").addEventListener("click", (event) => {
-    event.stopPropagation();
-    approvalForm.classList.add("hidden");
+  approveBtn.addEventListener("click", () => {
+    toggleSet(openForms, key);
+    openForms.delete(`${issue.id}:${phase.id}:feedback`);
+    render();
+    if (openForms.has(key)) requestAnimationFrame(() => ta.focus());
   });
+  return form;
+}
 
-  const feedbackBtn = template.querySelector(".feedback-btn");
-  const form = template.querySelector(".feedback-form");
-  feedbackBtn.disabled = !phase.canGiveFeedback;
-  feedbackBtn.addEventListener("click", (event) => {
-    event.stopPropagation();
-    form.classList.toggle("hidden");
+function feedbackForm(issue, phase, feedbackBtn) {
+  const key = `${issue.id}:${phase.id}:feedback`;
+  const draftKey = `${issue.id}:${phase.id}:fb`;
+  const form = node("form", { class: `pform ${openForms.has(key) ? "" : "hidden"}` });
+  form.append(node("label", { class: "field-label", text: "Human feedback" }));
+  const ta = node("textarea");
+  ta.name = "feedback";
+  ta.placeholder = "Decision, reason, requested change, acceptance criteria";
+  ta.value = feedbackDrafts.get(draftKey) ?? "";
+  ta.addEventListener("input", () => feedbackDrafts.set(draftKey, ta.value));
+  form.append(ta);
+  const check = node("label", { class: "checkline" });
+  const box = node("input");
+  box.type = "checkbox";
+  box.name = "runAgent";
+  check.append(box, document.createTextNode("Run local Copilot text session"));
+  form.append(check);
+  const rowBtns = node("div", { class: "form-row" });
+  const submit = node("button", { class: "btn btn-accent btn-mini", text: "Send feedback" });
+  submit.type = "submit";
+  const cancel = node("button", { class: "btn btn-mini", text: "Cancel" });
+  cancel.type = "button";
+  cancel.addEventListener("click", () => { openForms.delete(key); render(); });
+  rowBtns.append(submit, cancel);
+  form.append(rowBtns);
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    openForms.delete(key);
+    await post(`/api/issues/${issue.id}/phases/${phase.id}/feedback`, { feedback: ta.value, runAgent: box.checked });
+    feedbackDrafts.delete(draftKey);
   });
-  form.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    await post(`/api/issues/${issue.id}/phases/${phase.id}/feedback`, {
-      feedback: form.feedback.value,
-      runAgent: form.runAgent.checked,
-    });
+  feedbackBtn.addEventListener("click", () => {
+    toggleSet(openForms, key);
+    openForms.delete(`${issue.id}:${phase.id}:approval`);
+    render();
+    if (openForms.has(key)) requestAnimationFrame(() => ta.focus());
   });
+  return form;
+}
 
-  const log = template.querySelector(".phase-log");
+function recoveryPanel(phase) {
+  if (!phase.recoverable && !phase.recovery) return null;
+  const r = phase.recovery ?? {};
+  const panel = node("div", { class: "recovery" });
+  panel.append(
+    node("div", { class: "recovery-title", text: "Recovery" }),
+    node("div", { class: "recovery-note", text: "Dashboard Recover is planning-only: it records intent + a plan; the CLI driver executes." }),
+  );
+  const grid = node("div", { class: "recovery-grid" });
+  const cells = [
+    ["State", r.state ?? (phase.recoverable ? "recoverable" : "idle")],
+    ["Tier", r.currentTier ?? "none"],
+    ["Models tried", r.modelsTried?.length ? r.modelsTried.join(", ") : "none"],
+    ["Budget used", fmtObj(r.budgetUsed) || "—"],
+    ["Last reason", r.lastReason ?? "none"],
+    ["Next action", r.nextAction ?? "awaiting Recover / CLI driver"],
+    ["Why human", r.whyHuman ?? "not human-gated"],
+  ];
+  for (const [k, v] of cells) {
+    const cell = node("div", { class: "rcell" });
+    cell.append(node("b", { text: k }), node("span", { text: String(v ?? "unknown") }));
+    grid.append(cell);
+  }
+  panel.append(grid);
+  return panel;
+}
+
+// ---------------------------------------------------------------------------
+// right rail: PRs + artifacts
+// ---------------------------------------------------------------------------
+function renderRight() {
+  const panel = byId("contextPanel");
+  panel.textContent = "";
+  const issue = state.issues.find((i) => i.id === selectedId);
+
+  const prs = issue ? relatedPrsForDisplay(issue) : [];
+  const prSection = ctxSection("related-prs", `Related PRs`, prs.length, (body) => {
+    if (!issue) { body.append(node("div", { class: "empty-note", text: "Select an issue." })); return; }
+    const toggle = node("button", { class: "btn btn-mini pr-toggle", text: showCompletedPrs ? "Hide merged/closed" : "Show merged/closed" });
+    toggle.type = "button";
+    toggle.addEventListener("click", () => { markInteraction(); showCompletedPrs = !showCompletedPrs; render(); });
+    if (!prs.length) body.append(node("div", { class: "empty-note", text: showCompletedPrs ? "No related PRs." : "No active related PRs." }));
+    for (const pr of prs) body.append(prRow(pr));
+    body.append(toggle);
+  });
+  panel.append(prSection);
+
+  const artifacts = issue?.automationSummary?.artifacts ?? [];
+  const artSection = ctxSection("artifacts", "Artifact trail", artifacts.length, (body) => {
+    if (!artifacts.length) { body.append(node("div", { class: "empty-note", text: "No durable artifacts yet." })); return; }
+    for (const a of artifacts.slice(-12).reverse()) body.append(artifactChip(a, issue?.id, true));
+  });
+  panel.append(artSection);
+}
+
+function ctxSection(id, title, count, fill) {
+  const wrap = node("div", { class: "ctx-section" });
+  const collapsed = collapsedCtx.has(id);
+  const head = node("button", { class: "ctx-head" });
+  head.type = "button";
+  head.setAttribute("aria-expanded", String(!collapsed));
+  head.append(node("span", { text: title }), node("span", { class: "ctx-n", text: String(count) }));
+  head.addEventListener("click", () => { toggleSet(collapsedCtx, id); render(); });
+  const body = node("div", { class: `ctx-body ${collapsed ? "collapsed" : ""}` });
+  if (!collapsed) fill(body);
+  wrap.append(head, body);
+  return wrap;
+}
+
+function prRow(pr) {
+  const row = node("a", { class: `pr-row ${pr.status ?? "unknown"}` });
+  row.href = pr.url;
+  row.target = "_blank";
+  row.rel = "noreferrer";
+  row.append(
+    node("span", { class: `pr-badge ${pr.status ?? "unknown"}`, text: pr.statusLabel ?? prStatusLabel(pr) }),
+    node("span", { class: "pr-num", text: `#${pr.number}` }),
+    node("span", { class: "pr-title", text: pr.title }),
+    node("span", { class: "pr-meta", text: `${prDate(pr) || pr.mergeStateStatus || "—"} · issues ${issueListText(pr)}` }),
+  );
+  return row;
+}
+
+function artifactChip(a, issueId, withPhase = false) {
+  const chip = node("div", { class: "chip-row" });
+  const idBtn = node("button", { class: "artifact-id-btn", text: a.displayId ?? a.id ?? "artifact" });
+  idBtn.type = "button";
+  idBtn.title = "View full agent output";
+  if (issueId) idBtn.addEventListener("click", () => void openArtifact(issueId, a));
+  else idBtn.disabled = true;
+  chip.append(idBtn);
+  if (withPhase) chip.append(node("span", { class: "artifact-phase", text: a.phase ?? "" }));
+  chip.append(node("span", { class: "artifact-text", text: a.summary || a.title || a.path || "" }));
+  const viewBtn = node("button", { class: "copy-btn", text: "View" });
+  viewBtn.type = "button";
+  if (issueId) viewBtn.addEventListener("click", () => void openArtifact(issueId, a));
+  else viewBtn.disabled = true;
+  chip.append(viewBtn, copyButton("Copy", () => copyableArtifactText(a)));
+  return chip;
+}
+
+// ---------------------------------------------------------------------------
+// artifact viewer overlay (full agent output for any phase version)
+// ---------------------------------------------------------------------------
+function closeArtifact() {
+  artifactOpen = false;
+  artifactCurrent = null;
+  byId("artifactOverlay").classList.add("hidden");
+}
+
+async function openArtifact(issueId, artifact) {
+  markInteraction();
+  artifactOpen = true;
+  artifactCurrent = null;
+  byId("artifactOverlay").classList.remove("hidden");
+  const meta = byId("artifactMeta");
+  const body = byId("artifactBody");
+  meta.textContent = "";
+  meta.append(node("span", { class: "artifact-head-id", text: artifact.displayId ?? artifact.id ?? "artifact" }));
+  if (artifact.title) meta.append(node("span", { class: "artifact-head-sub", text: artifact.title }));
+  body.textContent = "";
+  body.append(node("div", { class: "artifact-loading", text: "Loading full output…" }));
+  const key = artifact.displayId ?? artifact.id;
+  try {
+    const res = await fetch(
+      `/api/issues/${encodeURIComponent(issueId)}/artifacts/${encodeURIComponent(key)}`,
+      { headers },
+    );
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    if (!artifactOpen) return; // user closed it while loading
+    artifactCurrent = data;
+    renderArtifact(data);
+  } catch (err) {
+    if (!artifactOpen) return;
+    body.textContent = "";
+    body.append(node("div", { class: "artifact-error", text: `Could not load artifact: ${err.message}` }));
+  }
+}
+
+function renderArtifact(data) {
+  const meta = byId("artifactMeta");
+  meta.textContent = "";
+  meta.append(node("span", { class: "artifact-head-id", text: data.displayId ?? "artifact" }));
+  const sub = [
+    PHASE_SHORT[data.phase] ?? data.phase,
+    data.agent,
+    data.decision ? `decision: ${data.decision}` : "",
+    data.createdAt ? fmtDate(data.createdAt) : "",
+  ].filter(Boolean).join("  ·  ");
+  if (sub) meta.append(node("span", { class: "artifact-head-sub", text: sub }));
+  const body = byId("artifactBody");
+  body.textContent = "";
+  body.append(node("pre", { class: "artifact-content", text: data.content || "(empty artifact)" }));
+}
+
+// ---------------------------------------------------------------------------
+// selection + phase helpers
+// ---------------------------------------------------------------------------
+function selectIssue(id) { markInteraction(); selectedId = id; render(); }
+function selectPhase(issueId, phaseId) { markInteraction(); selectedPhaseByIssue.set(issueId, phaseId); render(); }
+
+function currentPhase(issue) {
+  const stored = selectedPhaseByIssue.get(issue.id);
+  const found = stored && issue.phases.find((p) => p.id === stored);
+  if (found) return found;
+  return issue.phases.find((p) => p.id === pickDefaultPhaseId(issue)) ?? issue.phases[0];
+}
+
+function pickDefaultPhaseId(issue) {
+  const p = issue.phases;
+  const pick =
+    p.find((x) => x.status === "needs-human") ||
+    p.find((x) => x.status === "running") ||
+    p.find((x) => x.status === "needs-revision" || x.status === "needs-redo") ||
+    [...p].reverse().find((x) => DONE.has(x.status)) ||
+    p[0];
+  return pick?.id;
+}
+
+function dominantState(issue) {
+  if (issue.eligibility?.eligible === false) return { key: "ineligible", label: "Ineligible" };
+  const st = issue.phases.map((p) => p.status);
+  if (st.includes("needs-human")) return { key: "needshuman", label: "Needs human" };
+  if (st.includes("running")) return { key: "running", label: "Running" };
+  if (st.some((s) => s === "needs-revision" || s === "needs-redo")) return { key: "revision", label: "Revision" };
+  const done = doneCount(issue);
+  if (done === issue.phases.length) return { key: "complete", label: "Complete" };
+  if (done > 0) return { key: "progress", label: "In progress" };
+  if (st.every((s) => s === "not-started")) return { key: "queued", label: "Queued" };
+  return { key: "idle", label: "Idle" };
+}
+
+function doneCount(issue) { return issue.phases.filter((p) => DONE.has(p.status)).length; }
+
+function urgencyRank(issue) {
+  return { needshuman: 0, revision: 1, running: 2, progress: 3, complete: 4, idle: 5, ineligible: 6 }[dominantState(issue).key] ?? 9;
+}
+
+function matchFilter(issue, key) {
+  const dom = dominantState(issue).key;
+  if (key === "all") return true;
+  if (key === "action") return dom === "needshuman" || dom === "revision" || issue.phases.some((p) => p.recoverable);
+  if (key === "running") return dom === "running";
+  if (key === "ineligible") return issue.eligibility?.eligible === false;
+  if (key === "haspr") return (issue.relatedPrs ?? []).some(isActivePr);
+  return true;
+}
+
+function shortLabel(phase) { return PHASE_SHORT[phase.id] ?? (phase.title || "").split(/\s+/)[0]; }
+
+function statusChip(phase) {
+  return node("span", { class: `status-chip ${phase.status}`, text: phase.statusLabel ?? phase.status });
+}
+
+function phaseLogText(phase) {
   const feedback = phase.feedback ?? [];
   const approvals = phase.approvals ?? [];
   const transitions = phase.transitions ?? [];
   const actions = phase.activeActions ?? [];
-  log.textContent = [
-    ...actions.map((item) => `Running ${item.type}: ${item.message}`),
-    ...approvals.map((item) =>
-      `Approved by ${item.approver} at ${item.createdAt}${item.note ? `\nNote: ${item.note}` : ""}`,
-    ),
-    ...feedback.map((item) => `Feedback ${item.createdAt}: ${item.feedback}\n${item.agentResult}`),
-    ...transitions.map((item) => `Transition ${item.from ?? "derived"} -> ${item.to}: ${item.message}`),
+  return [
+    ...actions.map((i) => `Running ${i.type}: ${i.message}`),
+    ...approvals.map((i) => `Approved by ${i.approver} at ${i.createdAt}${i.note ? `\nNote: ${i.note}` : ""}`),
+    ...feedback.map((i) => `Feedback ${i.createdAt}: ${i.feedback}\n${i.agentResult}`),
+    ...transitions.map((i) => `Transition ${i.from ?? "derived"} -> ${i.to}: ${i.message}`),
   ].join("\n\n");
-
-  return template;
 }
 
-function renderArtifactSummary(issue) {
-  const wrap = el("div", { className: "artifact-summary" });
-  const artifacts = issue.automationSummary?.artifacts ?? [];
-  wrap.append(el("div", { className: "mini-title", text: "Automation artifacts" }));
-  if (!artifacts.length) {
-    wrap.append(el("div", { className: "artifact-empty", text: "No durable artifacts yet." }));
-    return wrap;
-  }
-  for (const artifact of artifacts.slice(-8)) {
-    const item = el("div", { className: "artifact-row" });
-    item.append(
-      el("span", { className: "artifact-id", text: artifact.displayId ?? artifact.id }),
-      el("span", { className: "artifact-phase", text: artifact.phase ?? "" }),
-      el("span", { className: "artifact-text", text: artifact.summary || artifact.title || artifact.path || "" }),
-    );
-    wrap.append(item);
-  }
-  return wrap;
+// ---------------------------------------------------------------------------
+// PR helpers
+// ---------------------------------------------------------------------------
+function prCounts(prs) {
+  return prs.reduce((acc, pr) => { const s = pr.status ?? "unknown"; acc[s] = (acc[s] ?? 0) + 1; return acc; }, {});
+}
+function relatedPrsForDisplay(issue) {
+  const prs = issue.relatedPrs ?? [];
+  return showCompletedPrs ? prs : prs.filter(isActivePr);
+}
+function isActivePr(pr) { const s = (pr.status ?? "").toLowerCase(); return s === "open" || s === "draft"; }
+function prStatusLabel(pr) {
+  if (pr.mergedAt || pr.state === "MERGED") return "MERGED";
+  if (pr.state === "CLOSED") return "CLOSED";
+  if (pr.isDraft) return "DRAFT";
+  if (pr.state === "OPEN") return "OPEN";
+  return "UNKNOWN";
+}
+function prDate(pr) {
+  const v = pr.mergedAt || pr.closedAt;
+  return v ? new Date(v).toLocaleDateString([], { month: "short", day: "numeric" }) : "";
+}
+function issueListText(pr) {
+  const issues = pr.relatedIssues?.length ? pr.relatedIssues : pr.closingIssues;
+  return issues?.length ? issues.map((n) => `#${n}`).join(", ") : "none";
 }
 
-async function runReflection(issueId) {
-  await post(`/api/issues/${issueId}/reflect`, { runAgent: false });
+// ---------------------------------------------------------------------------
+// actions
+// ---------------------------------------------------------------------------
+async function runReflection(issueId) { await post(`/api/issues/${issueId}/reflect`, { runAgent: false }); }
+async function runRecover(issueId, phaseId) {
+  const out = await post(`/api/issues/${issueId}/phases/${phaseId}/recover`, {});
+  if (out) toast("Recovery plan recorded (planning-only).", "ok");
 }
 
 async function post(url, body) {
-  const res = await fetch(url, {
-    method: "POST",
-    headers: actionHeaders,
-    body: JSON.stringify(body),
-  });
-  const data = await res.json();
-  if (!res.ok) {
-    alert(data.error || "Request failed");
+  markInteraction();
+  let res;
+  try {
+    res = await fetch(url, { method: "POST", headers: mutationHeaders(), body: JSON.stringify(body) });
+  } catch (err) {
+    toast(`Request failed: ${err.message}`, "err");
+    return null;
+  }
+  let data = {};
+  try { data = await res.json(); } catch { /* ignore */ }
+  if (!res.ok) { toast(data.error || `Request failed (${res.status})`, "err"); return null; }
+  if (data.state) state = data.state;
+  render();
+  return data;
+}
+
+function mutationHeaders() {
+  const out = { ...actionHeaders };
+  if (state?.security?.nonce) out["x-dashboard-nonce"] = state.security.nonce;
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// keyboard
+// ---------------------------------------------------------------------------
+function onKeydown(e) {
+  const typing = ["TEXTAREA", "INPUT"].includes(document.activeElement?.tagName);
+  if (e.key === "Escape") {
+    if (artifactOpen) { closeArtifact(); return; }
+    if (historyOpen) { closeHistory(); return; }
+    byId("helpPopover").classList.add("hidden");
     return;
   }
-  state = data.state;
-  render();
+  if (typing) return;
+  if (e.key === "?" || (e.shiftKey && e.key === "/")) { e.preventDefault(); byId("helpPopover").classList.toggle("hidden"); return; }
+  if (e.key.toLowerCase() === "h") { e.preventDefault(); toggleHistory(); return; }
+  if (e.key === "[") { e.preventDefault(); toggleRail("left"); return; }
+  if (e.key === "]") { e.preventDefault(); toggleRail("right"); return; }
+  if (e.key === "/") { e.preventDefault(); byId("issueFilters").querySelector(".filter-chip")?.focus(); return; }
+  if (e.key.toLowerCase() === "r") { e.preventDefault(); void load(); return; }
+  if (e.key.toLowerCase() === "s") { e.preventDefault(); markInteraction(); scanAll = !scanAll; render(); return; }
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); moveIssue(e.key === "ArrowDown" ? 1 : -1); return; }
+  if (e.key === "ArrowRight" || e.key === "ArrowLeft") { e.preventDefault(); movePhase(e.key === "ArrowRight" ? 1 : -1); return; }
 }
 
-function el(tag, { className, text } = {}) {
-  const node = document.createElement(tag);
-  if (className) node.className = className;
-  if (text !== undefined) node.textContent = text;
-  return node;
+function moveIssue(delta) {
+  const issues = visibleIssues();
+  if (!issues.length) return;
+  const idx = Math.max(0, issues.findIndex((i) => i.id === selectedId));
+  const next = issues[(idx + delta + issues.length) % issues.length];
+  selectIssue(next.id);
+  byId("issueList").querySelector(".issue-row.active")?.scrollIntoView({ block: "nearest" });
 }
 
-load().catch((error) => {
-  document.body.textContent = error instanceof Error ? error.message : String(error);
-});
+function movePhase(delta) {
+  const issue = state?.issues.find((i) => i.id === selectedId);
+  if (!issue) return;
+  const idx = issue.phases.findIndex((p) => p.id === currentPhase(issue).id);
+  const next = issue.phases[(idx + delta + issue.phases.length) % issue.phases.length];
+  selectPhase(issue.id, next.id);
+}
+
+// ---------------------------------------------------------------------------
+// misc UI
+// ---------------------------------------------------------------------------
+function setDensity(d) { document.body.dataset.density = d; localStorage.setItem("vb.density", d); setDensityButtons(); }
+function setDensityButtons() {
+  byId("densityCompact").classList.toggle("is-on", document.body.dataset.density === "compact");
+  byId("densityCozy").classList.toggle("is-on", document.body.dataset.density === "cozy");
+}
+function toggleRail(side) {
+  const cls = side === "left" ? "left-collapsed" : "right-collapsed";
+  const collapsed = document.body.classList.toggle(cls);
+  localStorage.setItem(`vb.${side}Collapsed`, collapsed ? "1" : "0");
+  byId(side === "left" ? "collapseLeft" : "collapseRight")?.setAttribute("aria-expanded", String(!collapsed));
+}
+
+// ---------------------------------------------------------------------------
+// history overlay (closed issues + all PRs) — hidden by default
+// ---------------------------------------------------------------------------
+function toggleHistory() { if (historyOpen) closeHistory(); else void openHistory(); }
+async function openHistory() {
+  historyOpen = true;
+  byId("historyOverlay").classList.remove("hidden");
+  if (!historyData) {
+    try {
+      const res = await fetch("/api/history", { headers });
+      historyData = res.ok ? await res.json() : { closedIssues: [] };
+    } catch { historyData = { closedIssues: [] }; }
+  }
+  renderHistory();
+}
+function closeHistory() { historyOpen = false; byId("historyOverlay").classList.add("hidden"); }
+
+function renderHistory() {
+  for (const tab of document.querySelectorAll("#historyOverlay .otab")) {
+    tab.classList.toggle("is-on", tab.dataset.tab === historyTab);
+    tab.setAttribute("aria-selected", String(tab.dataset.tab === historyTab));
+  }
+  const closedIssues = historyData?.closedIssues ?? [];
+  const prs = state?.prs ?? [];
+  byId("histIssueN").textContent = String(closedIssues.length);
+  byId("histPrN").textContent = String(prs.length);
+
+  const filters = byId("historyFilters");
+  const body = byId("historyBody");
+  filters.textContent = "";
+  body.textContent = "";
+
+  if (historyTab === "issues") {
+    if (!closedIssues.length) { body.append(node("div", { class: "empty-note", text: "No closed issues." })); return; }
+    for (const issue of closedIssues) body.append(histIssueRow(issue));
+    return;
+  }
+
+  const counts = prCounts(prs);
+  const defs = [["all", "All", prs.length], ["open", "Open", counts.open || 0], ["draft", "Draft", counts.draft || 0], ["merged", "Merged", counts.merged || 0], ["closed", "Closed", counts.closed || 0]];
+  for (const [key, label, n] of defs) {
+    const chip = node("button", { class: `filter-chip ${historyPrFilter === key ? "is-on" : ""}` });
+    chip.type = "button";
+    chip.append(document.createTextNode(label), node("span", { class: "chip-n", text: String(n) }));
+    chip.addEventListener("click", () => { historyPrFilter = key; renderHistory(); });
+    filters.append(chip);
+  }
+  const visible = (historyPrFilter === "all" ? prs : prs.filter((p) => (p.status ?? "unknown") === historyPrFilter)).slice().sort((a, b) => b.number - a.number);
+  if (!visible.length) { body.append(node("div", { class: "empty-note", text: "No pull requests match." })); return; }
+  for (const pr of visible) body.append(histPrRow(pr));
+}
+
+function histIssueRow(issue) {
+  const row = node("a", { class: "hist-row" });
+  row.href = issue.url; row.target = "_blank"; row.rel = "noreferrer";
+  row.append(
+    node("span", { class: "hist-num", text: `#${issue.number}` }),
+    node("span", { class: "hist-title", text: issue.title }),
+    node("span", { class: "hist-date", text: fmtDate(issue.closedAt) }),
+    node("span", { class: "hist-link", text: "Open ↗" }),
+  );
+  if ((issue.labels ?? []).length) {
+    const labels = node("div", { class: "hist-labels" });
+    for (const l of issue.labels) labels.append(node("span", { class: "hist-label", text: l }));
+    row.append(labels);
+  }
+  return row;
+}
+
+function histPrRow(pr) {
+  const row = node("a", { class: "hist-row" });
+  row.href = pr.url; row.target = "_blank"; row.rel = "noreferrer";
+  row.append(
+    node("span", { class: `pr-badge ${pr.status ?? "unknown"}`, text: pr.statusLabel ?? prStatusLabel(pr) }),
+    node("span", { class: "hist-title", text: pr.title }),
+    node("span", { class: "hist-date", text: `#${pr.number}${prDate(pr) ? ` · ${prDate(pr)}` : ""}` }),
+    node("span", { class: "hist-link", text: "Open ↗" }),
+  );
+  return row;
+}
+
+function fmtDate(v) {
+  return v ? new Date(v).toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" }) : "";
+}
+
+function toast(text, kind = "") {
+  const box = byId("toast");
+  const item = node("div", { class: `toast-item ${kind}`, text });
+  box.append(item);
+  setTimeout(() => item.remove(), 4200);
+}
+function showError(text) { const b = byId("errorBanner"); b.textContent = text; b.classList.remove("hidden"); }
+function hideError() { byId("errorBanner").classList.add("hidden"); }
+
+function skeleton() {
+  const sk = node("div", { class: "skeleton" });
+  sk.append(node("div", { class: "sk-line short" }), node("div", { class: "sk-line" }), node("div", { class: "sk-line" }), node("div", { class: "sk-line short" }));
+  return sk;
+}
+
+// ---------------------------------------------------------------------------
+// copy helpers
+// ---------------------------------------------------------------------------
+function copyButton(label, getText) {
+  const b = node("button", { class: "copy-btn", text: label });
+  b.type = "button";
+  b.addEventListener("click", async (e) => {
+    e.preventDefault();
+    const original = b.textContent;
+    try { await copyText(getText()); b.textContent = "Copied"; }
+    catch { b.textContent = "Copy failed"; }
+    setTimeout(() => { b.textContent = original; }, 1200);
+  });
+  return b;
+}
+async function copyText(text) {
+  const value = String(text ?? "");
+  if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(value); return; }
+  const ta = document.createElement("textarea");
+  ta.value = value; ta.setAttribute("readonly", "");
+  ta.style.position = "fixed"; ta.style.left = "-9999px";
+  document.body.append(ta); ta.select(); document.execCommand("copy"); ta.remove();
+}
+function copyableIssueText(issue) {
+  return [
+    `Issue #${issue.number}: ${issue.title}`,
+    `Labels: ${(issue.labels ?? []).join(", ") || "none"}`,
+    `Eligibility: ${issue.eligibility?.eligible === false ? issue.eligibility.reasons?.[0]?.message : "eligible"}`,
+    `Related PRs: ${(issue.relatedPrs ?? []).map((p) => `#${p.number} ${p.statusLabel ?? prStatusLabel(p)}`).join(", ") || "none"}`,
+    `URL: ${issue.url ?? ""}`,
+  ].join("\n");
+}
+function copyableArtifactText(a) {
+  return [`${a.displayId ?? a.id}: ${a.title ?? ""}`, `Phase: ${a.phase ?? ""}`, `Summary: ${a.summary ?? ""}`, `Path: ${a.path ?? ""}`].join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// scroll preservation across re-renders
+// ---------------------------------------------------------------------------
+function snapshotScroll() {
+  return {
+    issues: byId("issueList")?.scrollTop ?? 0,
+    center: byId("issueDetail")?.scrollTop ?? 0,
+    context: byId("contextPanel")?.scrollTop ?? 0,
+  };
+}
+function restoreScroll(s) {
+  requestAnimationFrame(() => {
+    const list = byId("issueList"); if (list) list.scrollTop = s.issues;
+    const center = byId("issueDetail"); if (center) center.scrollTop = s.center;
+    const ctx = byId("contextPanel"); if (ctx) ctx.scrollTop = s.context;
+  });
+}
+
+// ---------------------------------------------------------------------------
+// tiny helpers
+// ---------------------------------------------------------------------------
+function byId(id) { return document.getElementById(id); }
+function node(tag, { class: cls, text } = {}) {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text !== undefined) n.textContent = text;
+  return n;
+}
+function toggleSet(set, key) { if (set.has(key)) set.delete(key); else set.add(key); }
+function firstLine(text) { return String(text ?? "").split(/\r?\n/).map((l) => l.trim()).find(Boolean) ?? ""; }
+function fmtObj(v) {
+  if (!v) return "";
+  if (typeof v !== "object") return String(v);
+  return Object.entries(v).map(([k, n]) => `${k}: ${n}`).join(", ");
+}
+
+load().catch((err) => showError(err instanceof Error ? err.message : String(err)));

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
@@ -42,6 +43,8 @@ import {
 } from "./lib/copilot.mjs";
 import {
   critiqueRequirements,
+  isSecuritySensitiveIssue,
+  issueInputSha,
   latestRequirementsMarker,
   requirementsMarker,
   requirementsReview,
@@ -51,8 +54,30 @@ import {
   readIssueAutomationSummary,
   setDurablePhaseStatus,
 } from "./lib/artifacts.mjs";
-import { readDashboardApproval } from "./lib/dashboard.mjs";
+import { readDashboardApproval, readDashboardRerun } from "./lib/dashboard.mjs";
+import { reconcileIssue, RESUME_ACTIONS } from "./lib/resume.mjs";
+import {
+  SPEC_GATE_PHASE,
+  SPEC_GATE_EVIDENCE_PHASE,
+  buildGateRecord,
+  computeSpecGateFingerprint,
+  securityVeto,
+  specGateIsFresh,
+} from "./lib/spec-gate.mjs";
 import { evaluateSpecReview } from "./lib/spec-review.mjs";
+import { evaluateEligibility } from "./lib/eligibility.mjs";
+import { createBudget, emptyRecoveryState } from "./lib/recovery.mjs";
+import {
+  completeRecoveryAttempt,
+  makeRunModel,
+  recoverImplementation,
+  recoverRequirements,
+  recoverSpecReview,
+  recoverVerification,
+  recoveryEnabled,
+  sharperQuestions,
+  summarizeRecovery,
+} from "./lib/recovery-driver.mjs";
 import { runVerification, verificationComment } from "./lib/verifier.mjs";
 import { findSecretLikeText, redactSecrets, truncateForComment } from "./lib/redaction.mjs";
 
@@ -75,14 +100,63 @@ async function main() {
     console.log("Issue loop is in dry-run mode; no GitHub or git write actions will be taken.");
   }
 
-  if (args.watch) {
-    while (true) {
+  // Single-active-service guard: refuse to start if another watcher is live, so
+  // two schedulers can never process the same issue concurrently (state safety).
+  const lock = await acquireServiceLock(ROOT);
+  try {
+    if (args.watch) {
+      while (true) {
+        await lock.heartbeat();
+        await tick(config, args);
+        await sleep(config.pollIntervalSeconds * 1000);
+      }
+    } else {
       await tick(config, args);
-      await sleep(config.pollIntervalSeconds * 1000);
     }
-  } else {
-    await tick(config, args);
+  } finally {
+    await lock.release();
   }
+}
+
+function isProcessAlive(pid) {
+  if (!Number.isInteger(pid)) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error.code === "EPERM"; // exists but owned by another user
+  }
+}
+
+async function acquireServiceLock(root) {
+  const lockPath = path.join(root, ".copilot-issue-loop", "service.lock");
+  await fs.mkdir(path.dirname(lockPath), { recursive: true });
+  try {
+    const prev = JSON.parse(await fs.readFile(lockPath, "utf8"));
+    const fresh = Date.now() - (Number(prev.heartbeat) || 0) < 90_000;
+    if (fresh && isProcessAlive(Number(prev.pid))) {
+      throw new Error(
+        `Another issue-loop service is already running (pid ${prev.pid}, host ${prev.host}). ` +
+          `Stop it or remove ${path.relative(root, lockPath)} if it is stale.`,
+      );
+    }
+  } catch (error) {
+    if (error.code !== "ENOENT") {
+      if (/already running/.test(error.message)) throw error;
+      // Corrupt/unreadable lock: treat as stale and overwrite.
+    }
+  }
+  const record = { pid: process.pid, host: os.hostname(), startedAt: new Date().toISOString(), heartbeat: Date.now() };
+  await fs.writeFile(lockPath, `${JSON.stringify(record)}\n`);
+  return {
+    async heartbeat() {
+      record.heartbeat = Date.now();
+      await fs.writeFile(lockPath, `${JSON.stringify(record)}\n`).catch(() => {});
+    },
+    async release() {
+      await fs.rm(lockPath, { force: true }).catch(() => {});
+    },
+  };
 }
 
 async function tick(config, args) {
@@ -100,6 +174,25 @@ async function tick(config, args) {
       await maybeProcessRequirementsOnly(config, issue);
     }
     if (selected.length >= config.maxIssuesPerTick) break;
+    // Reconcile BEFORE eligibility: an interrupted run owns its own branch/PR/claim,
+    // which makes it ineligible to START. Without this, the automation's own draft PR
+    // permanently stranded the issue and the pipeline could only finish inside one tick.
+    const summary = await readIssueAutomationSummary(ROOT, issue);
+    const labels = (issue.labels ?? []).map((label) => label?.name ?? label);
+    const stopReason = await stopRequested(config, ROOT, labels);
+    const decision = reconcileIssue({
+      summary,
+      stopReason,
+      enrolled: (config.requiredLabels ?? []).every((label) => labels.includes(label)),
+      labels,
+      excludedLabels: config.excludedLabels ?? [],
+    });
+    if (decision.action === RESUME_ACTIONS.RESUME) {
+      console.log(`Issue #${issue.number}: resuming interrupted run (${decision.reason})`);
+      selected.push(issue);
+      continue;
+    }
+    if (decision.action === RESUME_ACTIONS.SKIP) continue;
     if (await isEligible(config, issue, prs)) selected.push(issue);
   }
 
@@ -107,7 +200,15 @@ async function tick(config, args) {
     console.log("No eligible issues.");
   } else {
     for (const issue of selected) {
-      await processIssue(config, issue, args);
+      try {
+        await processIssue(config, issue, args);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`processIssue failed for #${issue.number}: ${message}`);
+        await setDurablePhaseStatus(ROOT, issue, "implementation", "blocked", {
+          reason: `Unhandled error: ${truncateForComment(message, 500)}`,
+        }).catch(() => {});
+      }
     }
   }
 
@@ -218,17 +319,34 @@ async function preflight(config) {
 
 async function isEligible(config, issue, prs) {
   const labels = issue.labels.map((label) => label.name);
-  const stopped = await stopRequested(config, ROOT, labels);
-  if (stopped) return false;
-  if (!config.requiredLabels.every((label) => labels.includes(label))) return false;
-  if (labels.some((label) => config.excludedLabels.includes(label))) return false;
-  if (prs.some((pr) => pr.closingIssuesReferences?.some((ref) => ref.number === issue.number))) {
-    return false;
-  }
+  const stopReason = await stopRequested(config, ROOT, labels);
+  const openPrs = prs ?? [];
+  // Single source of truth for the accept/reject decision (shared with the
+  // dashboard) lives in evaluateEligibility. To stay byte-identical to the
+  // original driver we preserve its exact short-circuit ORDER and network
+  // profile: (1) cheap in-memory gates (stop/labels/linked-PR) first, (2) the
+  // network `git ls-remote` branch check only if those pass, (3) active-claim
+  // computation (which may fetch comments) last.
+  const cheap = evaluateEligibility({
+    config,
+    issue,
+    openPrs,
+    stopReason,
+    remoteBranchExists: false,
+    activeClaims: 0,
+  });
+  if (!cheap.eligible) return false;
   if (await remoteBranchExists(ROOT, issueBranchName(config, issue))) return false;
   const comments = issue.comments ?? (await issueComments(config, issue.number));
-  if (activeClaimsFromComments(comments).length > 0) return false;
-  return true;
+  const activeClaims = activeClaimsFromComments(comments).length;
+  return evaluateEligibility({
+    config,
+    issue,
+    openPrs,
+    stopReason,
+    remoteBranchExists: false,
+    activeClaims,
+  }).eligible;
 }
 
 function canRequirementsTriage(config, issue) {
@@ -252,12 +370,8 @@ async function processIssue(config, issue, args) {
   });
   await writeRequirementsArtifact(config, issue, specDir, critique, runId);
   if (critique.status === "needs-human" && !requirementsApproval) {
-    await maybeCommentRequirements(config, issue, critique);
-    await setDurablePhaseStatus(ROOT, issue, "requirements", "needs-human", {
-      issueInputSha: critique.issueInputSha,
-      reason: critique.summary,
-    });
-    return;
+    const proceed = await maybeRecoverRequirements(config, issue, critique, specDir, runId, args);
+    if (!proceed) return;
   }
   if (critique.status === "needs-human" && requirementsApproval) {
     await setDurablePhaseStatus(ROOT, issue, "requirements", "approved", {
@@ -267,34 +381,111 @@ async function processIssue(config, issue, args) {
     });
   }
 
-  const review = await writeSpecAndReview(
-    config,
-    issue,
-    specDir,
+  // Spec-stage human gate. Once the adversarial review has asked for human
+  // input, STOP auto-re-drafting each tick (that is what produced 8+ churned
+  // spec versions on #73). Instead wait for the maintainer to either:
+  //   - Rerun this stage (with optional steering) -> re-draft with guidance, or
+  //   - Approve & continue -> advance using the EXISTING spec+review (no re-draft).
+  const reviewPathAbs = path.join(specDir, "adversarial-review.md");
+  const priorSummary = await readIssueAutomationSummary(ROOT, issue);
+
+  // IDEMPOTENCY: if a previously PASSED spec gate still matches the current inputs
+  // (issue text + spec + review + gate policy), do NOT re-draft. Re-drafting every
+  // tick is what produced 7-8 churned SPEC/ADV pairs per issue and meant the spec
+  // never stabilized. Resume straight at implementation instead.
+  const freshFp = await computeSpecGateFingerprint({
+    issueInputSha: critique.issueInputSha,
     specPath,
-    critique,
-    args,
-    runId,
-    requirementsApproval?.note ?? "",
+    reviewPath: reviewPathAbs,
+  });
+  const gateIsFresh = specGateIsFresh(priorSummary, freshFp.fingerprint);
+
+  // A hard security veto is monotonic and must not be cleared by an ordinary Continue.
+  // FAIL CLOSED: if the fingerprint cannot be computed (a missing/unreadable spec or
+  // review file), we cannot prove the inputs changed, so the veto still holds.
+  const veto = securityVeto(priorSummary);
+  if (veto.active && !config.gates?.allowHumanSecurityOverride) {
+    const provenDifferent =
+      freshFp.fingerprint !== null && veto.fingerprint !== null && veto.fingerprint !== freshFp.fingerprint;
+    if (!provenDifferent) {
+      console.log(`Issue #${issue.number}: spec gate held by security veto; requires an explicit human security override.`);
+      return;
+    }
+  }
+
+  const specStageNeedsHuman = !gateIsFresh && SPEC_STAGE_PHASES.some(
+    (phaseId) => priorSummary.phaseStatuses?.[phaseId]?.status === "needs-human",
   );
+  const humanRerun = specStageNeedsHuman ? await consumeHumanRerun(issue, critique.issueInputSha) : null;
+  const specApproval = specStageNeedsHuman
+    ? (await readDashboardApproval(ROOT, issue, "adversarial-review", { issueInputSha: critique.issueInputSha })) ??
+      (await readDashboardApproval(ROOT, issue, "spec-review", { issueInputSha: critique.issueInputSha }))
+    : null;
+
+  if (specStageNeedsHuman && humanRerun?.exhausted && !specApproval) {
+    await setDurablePhaseStatus(ROOT, issue, "adversarial-review", "needs-human", {
+      ...(priorSummary.phaseStatuses?.["adversarial-review"]?.details ?? {}),
+      reason: `Human rerun budget (${MAX_HUMAN_RERUNS}) exhausted. Approve & continue to proceed, or edit the issue/spec to reset.`,
+    });
+    console.log(`Issue #${issue.number}: rerun budget exhausted; awaiting Approve & continue.`);
+    return;
+  }
+  if (specStageNeedsHuman && !humanRerun && !specApproval) {
+    console.log(`Issue #${issue.number}: adversarial review awaiting human input; not re-drafting.`);
+    return;
+  }
+
+  let review;
+  if (gateIsFresh) {
+    // Cached pass: reuse the reviewed spec verbatim, skip both agent calls.
+    console.log(`Issue #${issue.number}: spec gate already passed for these inputs; skipping re-draft.`);
+    review = await fs.readFile(reviewPathAbs, "utf8").catch(() => "");
+  } else if (specStageNeedsHuman && specApproval && !humanRerun) {
+    // Approve & continue: advance using the spec+review the maintainer reviewed.
+    review = await fs.readFile(reviewPathAbs, "utf8").catch(() => "");
+  } else {
+    // First draft, or a maintainer-steered re-run.
+    const steering = humanRerun?.note || requirementsApproval?.note || "";
+    review = await writeSpecAndReview(config, issue, specDir, specPath, critique, args, runId, steering);
+  }
   await maybeCommentRequirements(config, issue, critique, path.join(specDir, "requirements-review.md"));
   await maybeClaim(config, issue, branch);
 
   if (review && config.gates.requireHumanOnSpecReviewQuestions !== false && specReviewNeedsHuman(review)) {
-      await maybeComment(
-        config,
-        issue.number,
-        `${specMarker({
-          issue: issue.number,
-          status: "needs-human",
-          path: path.relative(ROOT, specPath),
-          sha: await fileSha256(specPath),
-        })}\n\nSpec review raised open questions that require maintainer input before implementation.\n\n${review.slice(0, 6000)}`,
-      );
-      await setDurablePhaseStatus(ROOT, issue, "implementation", "blocked", {
-        reason: "Spec review raised questions requiring human input.",
+    const proceed = await maybeRecoverSpecReview(config, issue, specPath, review, runId);
+    if (!proceed) return;
+  }
+
+  // Record the gate PASS with the fingerprint of the exact inputs that produced it,
+  // so later ticks reuse it instead of re-drafting.
+  if (!gateIsFresh) {
+    const passedFp = await computeSpecGateFingerprint({
+      issueInputSha: critique.issueInputSha,
+      specPath,
+      reviewPath: reviewPathAbs,
+    });
+    // Never record a pass we cannot bind to concrete inputs, and never let a pass
+    // silently erase a recorded security veto (setDurablePhaseStatus replaces details).
+    const priorVeto = securityVeto(await readIssueAutomationSummary(ROOT, issue));
+    if (passedFp.fingerprint && !(priorVeto.active && !config.gates?.allowHumanSecurityOverride)) {
+      await setDurablePhaseStatus(ROOT, issue, SPEC_GATE_PHASE, "approved", await preserveRerunTracking(issue, {
+        reason: "Spec gate passed; implementation may proceed.",
+        gate: buildGateRecord({
+          passed: true,
+          fingerprint: passedFp.fingerprint,
+          specSha: passedFp.specSha,
+          reviewSha: passedFp.reviewSha,
+          decision: "proceed",
+          reason: "Spec review cleared this spec for implementation.",
+        }),
+      }));
+      await setDurablePhaseStatus(ROOT, issue, SPEC_GATE_EVIDENCE_PHASE, "complete", {
+        reason: "Adversarial review completed; see the spec gate for the authoritative decision.",
       });
+    } else if (priorVeto.active) {
+      console.log(`Issue #${issue.number}: refusing to record a spec-gate pass over an active security veto.`);
       return;
+    }
   }
 
   await setDurablePhaseStatus(ROOT, issue, "implementation", "ready", {
@@ -389,11 +580,268 @@ async function writeRequirementsArtifact(config, issue, specDir, critique, runId
   });
 }
 
+// Requirements gate recovery. Returns true when the issue may proceed to spec
+// drafting (recovery downgraded needs-human to clear), false when it must stay
+// needs-human. When recovery is disabled or in dry-run, this reproduces the
+// EXACT original needs-human behavior (comment + durable status + caller return).
+async function maybeRecoverRequirements(config, issue, critique, specDir, runId, args) {
+  const dryRun = config.dryRun || args?.dryRun;
+  if (!recoveryEnabled(config, "requirements") || dryRun) {
+    await maybeCommentRequirements(config, issue, critique);
+    await setDurablePhaseStatus(ROOT, issue, "requirements", "needs-human", {
+      issueInputSha: critique.issueInputSha,
+      reason: critique.summary,
+    });
+    return false;
+  }
+  const isSecuritySensitive = isSecuritySensitiveIssue(issue);
+  const heuristic = [critique.summary, ...(critique.questions ?? [])].filter(Boolean).join("\n");
+  // Honor STOP before spending any recovery model calls: fall back to the exact
+  // original needs-human behavior without invoking a model.
+  const stop = await stopRequested(config, ROOT, issue.labels.map((label) => label.name));
+  if (stop) {
+    await maybeCommentRequirements(config, issue, critique);
+    await setDurablePhaseStatus(ROOT, issue, "requirements", "needs-human", {
+      issueInputSha: critique.issueInputSha,
+      reason: critique.summary,
+    });
+    return false;
+  }
+  let decision;
+  try {
+    ({ decision } = await recoverRequirements({
+      config,
+      issue,
+      heuristic,
+      isSecuritySensitive,
+      budget: createBudget(config.recovery.budgets),
+      state: emptyRecoveryState(),
+      runModel: makeRunModel(config, ROOT),
+    }));
+  } catch (err) {
+    console.error(`Requirements recovery failed for #${issue.number}: ${err.message}`);
+    decision = null;
+  }
+  if (decision?.proceed) {
+    await recordArtifact({
+      root: ROOT,
+      issue,
+      phase: "requirements",
+      agent: "recovery-council",
+      title: "Requirements recovery cleared for spec drafting",
+      summary: decision.reason,
+      body: `Requirements recovery (tier: ${decision.tier}) cleared this issue for spec drafting. Spec review and human PR merge gates still apply.`,
+      runId,
+      status: "complete",
+      decision: "recovered",
+      metadata: { issueInputSha: critique.issueInputSha, recovery: decision.recovery },
+    });
+    await setDurablePhaseStatus(ROOT, issue, "requirements", "recovered", {
+      issueInputSha: critique.issueInputSha,
+      reason: decision.reason,
+      recovery: decision.recovery,
+    });
+    return true;
+  }
+  const sharper = decision ? sharperQuestions(decision) : [];
+  const augmented = sharper.length
+    ? { ...critique, questions: [...(critique.questions ?? []), ...sharper] }
+    : critique;
+  await maybeCommentRequirements(config, issue, augmented);
+  await setDurablePhaseStatus(ROOT, issue, "requirements", "needs-human", {
+    issueInputSha: critique.issueInputSha,
+    reason: decision?.reason ?? critique.summary,
+    recovery: decision?.recovery,
+  });
+  return false;
+}
+
+// Spec-review gate recovery. Returns true when the spec may proceed to
+// implementation (recovery reached a deterministic proceed with no security
+// veto), false when it must stay blocked. When recovery is disabled this
+// reproduces the EXACT original block behavior (comment + durable status).
+const SPEC_STAGE_PHASES = ["adversarial-review", "spec-review"];
+const MAX_HUMAN_RERUNS = 3;
+
+// Consume a maintainer "Rerun this stage" request (single-use, bounded). Returns
+// { note } to steer a fresh spec+review draft, { exhausted: true } once the rerun
+// budget is spent, or null when there is nothing to do. Consumption is recorded
+// durably (merged into spec-review details) so one click == one re-run.
+async function consumeHumanRerun(issue, issueInputSha) {
+  const rerun = await readDashboardRerun(ROOT, issue, SPEC_STAGE_PHASES, { issueInputSha });
+  if (!rerun) return null;
+  const summary = await readIssueAutomationSummary(ROOT, issue);
+  const details = summary.phaseStatuses?.["spec-review"]?.details ?? {};
+  if (details.consumedRerunId === rerun.id) return null; // single-use per click
+  const count = Number(details.humanRerunCount ?? 0);
+  if (count >= MAX_HUMAN_RERUNS) return { exhausted: true, note: rerun.note ?? "" };
+  await setDurablePhaseStatus(ROOT, issue, "spec-review", "needs-revision", {
+    ...details,
+    consumedRerunId: rerun.id,
+    humanRerunCount: count + 1,
+    reason: `Human rerun ${count + 1}/${MAX_HUMAN_RERUNS}: ${truncateForComment(rerun.note || "(no steering)", 200)}`,
+  });
+  return { note: rerun.note ?? "", rerunId: rerun.id, count: count + 1 };
+}
+
+// Preserve the single-use rerun tracking (consumedRerunId + humanRerunCount)
+// across spec-review status writes, because setDurablePhaseStatus REPLACES
+// details. Without this, a recovery-blocked write would wipe consumedRerunId and
+// the same rerun click would be re-consumed every tick (infinite re-draft).
+async function preserveRerunTracking(issue, details) {
+  const summary = await readIssueAutomationSummary(ROOT, issue);
+  const current = summary.phaseStatuses?.["spec-review"]?.details ?? {};
+  const tracking = {};
+  if (current.consumedRerunId !== undefined) tracking.consumedRerunId = current.consumedRerunId;
+  if (current.humanRerunCount !== undefined) tracking.humanRerunCount = current.humanRerunCount;
+  return { ...tracking, ...details };
+}
+
+async function consumeHumanContinue(issue, phaseIds) {
+  const inputSha = issueInputSha(issue);
+  for (const phaseId of phaseIds) {
+    const approval = await readDashboardApproval(ROOT, issue, phaseId, { issueInputSha: inputSha });
+    if (!approval) continue;
+    const summary = await readIssueAutomationSummary(ROOT, issue);
+    const details = summary.phaseStatuses?.["spec-review"]?.details ?? {};
+    if (details.consumedContinueId === approval.id) continue; // single-use per feedback
+    const resumeCount = Number(details.humanResumeCount ?? 0);
+    if (resumeCount >= 3) continue; // bounded: stop auto-resuming after 3 human continues
+    await setDurablePhaseStatus(ROOT, issue, "spec-review", "approved", {
+      consumedContinueId: approval.id,
+      humanResumeCount: resumeCount + 1,
+      approvalId: approval.id,
+      reason: `Human Continue for ${phaseId}: ${truncateForComment(approval.note || "(no note)", 240)}`,
+    });
+    return { approval, phaseId, note: approval.note ?? "" };
+  }
+  return null;
+}
+
+async function appendHumanGuidance(specPath, note) {
+  if (!note || !note.trim()) return;
+  const reviewPath = path.join(path.dirname(specPath), "adversarial-review.md");
+  // Treat the maintainer note as untrusted: redact secrets and neutralize any
+  // prompt delimiters before it lands in a file that is later fed to agents.
+  const safeNote = redactSecrets(String(note))
+    .replace(/(?:BEGIN|END)_[A-Z0-9_]+/g, "[neutralized prompt delimiter]")
+    .slice(0, 4000);
+  const block = `\n\n## Human maintainer guidance (untrusted)\n\n${safeNote}\n`;
+  await fs.appendFile(reviewPath, block).catch(() => {});
+}
+
+async function maybeRecoverSpecReview(config, issue, specPath, review, runId) {
+  // A recorded hard security veto is monotonic: an ordinary "Continue" must not
+  // clear it (previously Continue was consumed first and silently bypassed the
+  // veto). Releasing it requires an explicit security override or changed inputs.
+  const priorSummary = await readIssueAutomationSummary(ROOT, issue);
+  const veto = securityVeto(priorSummary);
+  if (veto.active && !config.gates?.allowHumanSecurityOverride) {
+    await setDurablePhaseStatus(ROOT, issue, "implementation", "blocked", {
+      reason: `Held by security veto: ${truncateForComment(veto.reason, 300)}`,
+    });
+    return false;
+  }
+  // Human "Continue" from the dashboard overrides the gate: if the maintainer
+  // submitted feedback for the blocked spec/review/implementation phase, thread
+  // the note to the implementer and proceed to implementation.
+  const humanContinue = await consumeHumanContinue(issue, ["adversarial-review", "spec-review", "implementation"]);
+  if (humanContinue) {
+    await appendHumanGuidance(specPath, humanContinue.note);
+    return true;
+  }
+  const blockAsBefore = async () => {
+    await maybeComment(
+      config,
+      issue.number,
+      `${specMarker({
+        issue: issue.number,
+        status: "needs-human",
+        path: path.relative(ROOT, specPath),
+        sha: await fileSha256(specPath),
+      })}\n\nSpec review raised open questions that require maintainer input before implementation.\n\n${review.slice(0, 6000)}`,
+    );
+    await setDurablePhaseStatus(ROOT, issue, "implementation", "blocked", {
+      reason: "Spec review raised questions requiring human input.",
+    });
+    return false;
+  };
+  if (!recoveryEnabled(config, "spec-review")) {
+    return blockAsBefore();
+  }
+  // Honor STOP before spending any recovery model calls.
+  const stop = await stopRequested(config, ROOT, issue.labels.map((label) => label.name));
+  if (stop) {
+    return blockAsBefore();
+  }
+  let decision;
+  try {
+    const specText = await fs.readFile(specPath, "utf8");
+    ({ decision } = await recoverSpecReview({
+      config,
+      issue,
+      specText,
+      priorFailure: `Spec review raised open questions requiring human input:\n${review}`,
+      budget: createBudget(config.recovery.budgets),
+      state: emptyRecoveryState(),
+      runModel: makeRunModel(config, ROOT),
+    }));
+  } catch (err) {
+    console.error(`Spec-review recovery failed for #${issue.number}: ${err.message}`);
+    decision = null;
+  }
+  if (!decision?.proceed) {
+    if (decision) {
+      // Persist a typed, monotonic veto record when the block is security-driven,
+      // so it survives later status writes and cannot be cleared by a plain Continue.
+      const isSecurityVeto = /security|secret|credential|auth|veto/i.test(String(decision.reason ?? ""));
+      const fp = await computeSpecGateFingerprint({
+        issueInputSha: issueInputSha(issue),
+        specPath,
+        reviewPath: path.join(path.dirname(specPath), "adversarial-review.md"),
+      });
+      await setDurablePhaseStatus(ROOT, issue, SPEC_GATE_PHASE, "needs-human", await preserveRerunTracking(issue, {
+        reason: decision.reason,
+        recovery: decision.recovery,
+        gate: buildGateRecord({
+          passed: false,
+          fingerprint: fp.fingerprint,
+          specSha: fp.specSha,
+          reviewSha: fp.reviewSha,
+          decision: "needs-human",
+          reason: decision.reason,
+          securityVeto: isSecurityVeto,
+          vetoReason: isSecurityVeto ? decision.reason : "",
+        }),
+      }));
+    }
+    return blockAsBefore();
+  }
+  await recordArtifact({
+    root: ROOT,
+    issue,
+    phase: "spec-review",
+    agent: "recovery-council",
+    title: "Spec review recovery cleared for implementation",
+    summary: decision.reason,
+    body: `Spec-review recovery (tier: ${decision.tier}) cleared this spec for implementation. Verification and human PR merge gates still apply.`,
+    runId,
+    status: "complete",
+    decision: "recovered",
+    metadata: { recovery: decision.recovery },
+  });
+  await setDurablePhaseStatus(ROOT, issue, "spec-review", "recovered", {
+    reason: decision.reason,
+    recovery: decision.recovery,
+  });
+  return true;
+}
+
 async function writeArchitectSpec(config, issue, specPath, runId, approvalNote = "") {
   const result = await runCopilot(config, {
     role: "architect",
     worktree: ROOT,
-    prompt: architectPrompt(issue, path.relative(ROOT, specPath), approvalNote),
+    prompt: architectPrompt(issue, path.relative(ROOT, specPath), approvalNote, config.projectName),
   });
   if (result.code !== 0) throw new Error(result.stderr);
   const spec = normalizeAgentMarkdown(result.stdout, "Spec");
@@ -495,6 +943,8 @@ async function runPostSpecPhases(config, issue, { branch, specDir, specPath, rev
   const verification = await runVerificationPhase(config, issue, {
     pr: implementation.pr,
     worktreePath: implementation.worktreePath,
+    specPath,
+    branch,
     runId,
   });
   if (!verification?.ok) return;
@@ -521,59 +971,156 @@ async function runImplementationPhase(config, issue, { branch, specDir, specPath
   });
   const specContent = await fs.readFile(specPath, "utf8");
   const reviewContent = await fs.readFile(reviewPath, "utf8").catch(() => "");
-  const result = await runCopilot(config, {
-    role: "implementer",
-    worktree: worktree.path,
-    prompt: implementerPrompt(issue, path.relative(worktree.path, specPath), specContent, reviewContent),
-  });
-  if (result.code !== 0) {
-    await setDurablePhaseStatus(ROOT, issue, "implementation", "blocked", {
-      reason: truncateForComment(result.stderr, 1000),
+
+  const attemptCtx = { worktree, branch, specPath, specContent, reviewContent, runId };
+  let outcome = await attemptImplementation(config, issue, attemptCtx);
+  if (outcome.ok) return outcome.value;
+
+  // DEFAULT (recovery disabled): reproduce the original per-failure persistence
+  // exactly and give up. Byte-identical to the pre-recovery driver.
+  if (!recoveryEnabled(config, "implementation")) {
+    await finalizeBlocked(config, issue, outcome.kind, {
       branch,
       worktreePath: worktree.path,
+      runId,
+      stderr: outcome.stderr,
+      stdout: outcome.stdout,
+      decision: outcome.decision,
+      findings: outcome.findings,
     });
     return null;
   }
 
-  const decision = parseDecisionLine(result.stdout, "IMPLEMENTATION_DECISION", ["ready", "blocked"]);
-  if (decision !== "ready") {
-    await recordArtifact({
-      root: ROOT,
-      issue,
-      phase: "implementation",
-      agent: "implementer",
-      title: "Implementation blocked",
-      summary: "Implementer reported that the spec could not be implemented safely.",
-      body: result.stdout,
-      runId,
-      status: "blocked",
-      decision: decision ?? "blocked",
-      metadata: { branch, worktreePath: worktree.path },
+  // Recovery enabled: rotate roster models on RETRYABLE failures only. Secrets
+  // are non-retryable (fail closed). Budget is reserved inside
+  // recoverImplementation; the disposable pre-PR worktree is reset between tries.
+  const budget = createBudget(config.recovery.budgets);
+  let state = emptyRecoveryState();
+  const alreadyTried = [config.agents?.implementer?.model].filter(Boolean);
+
+  while (outcome.kind !== "secrets") {
+    const rec = recoverImplementation({ config, alreadyTriedModels: alreadyTried, budget, state });
+    state = rec.state ?? state;
+    if (!rec.nextModel) break;
+    const stop = await stopRequested(config, ROOT);
+    if (stop) {
+      await finalizeBlocked(config, issue, outcome.kind, {
+        branch,
+        worktreePath: worktree.path,
+        runId,
+        stderr: outcome.stderr,
+        stdout: outcome.stdout,
+        decision: outcome.decision,
+        findings: outcome.findings,
+        recovery: summarizeRecovery(state, {
+          outcome: "stopped",
+          reason: `Stop requested (${stop}) before recovery re-run.`,
+        }),
+      });
+      return null;
+    }
+    // branchStrategy "incremental-after-pr": no PR exists yet, so the worktree
+    // is disposable and safe to reset clean before the next model runs. We never
+    // hard-reset or force-push once a PR or human/non-bot commits exist.
+    await git(["reset", "--hard"], worktree.path);
+    await git(["clean", "-fd"], worktree.path);
+    alreadyTried.push(rec.nextModel);
+    await setDurablePhaseStatus(ROOT, issue, "implementation", "running", {
+      branch,
+      worktreePath: worktree.path,
+      reason: `Recovery: re-running implementer with ${rec.nextModel} (attempt ${alreadyTried.length}).`,
     });
-    return null;
+    outcome = await attemptImplementation(config, issue, { ...attemptCtx, modelOverride: rec.nextModel });
+    state = completeRecoveryAttempt(state, rec.attemptId, {
+      proceed: outcome.ok,
+      reason: outcome.ok ? "implementer produced changes" : `implementer ${outcome.kind}`,
+    });
+    if (outcome.ok) {
+      await setDurablePhaseStatus(ROOT, issue, "implementation", "complete", {
+        prNumber: outcome.value.pr.number,
+        headSha: outcome.value.headSha,
+        recovery: summarizeRecovery(state, {
+          outcome: "proceed",
+          proceed: true,
+          changed: true,
+          tier: "sequentialRetry",
+        }),
+      });
+      return outcome.value;
+    }
+  }
+
+  await finalizeBlocked(config, issue, outcome.kind, {
+    branch,
+    worktreePath: worktree.path,
+    runId,
+    stderr: outcome.stderr,
+    stdout: outcome.stdout,
+    decision: outcome.decision,
+    findings: outcome.findings,
+    recovery: summarizeRecovery(state, {
+      outcome: outcome.kind === "secrets" ? "veto" : "exhausted",
+      reason:
+        outcome.kind === "secrets"
+          ? "Secret-like text in diff; recovery not permitted."
+          : "Implementation recovery exhausted.",
+    }),
+  });
+  return null;
+}
+
+// Single implementer attempt. Returns a discriminated result and performs the
+// success-path side effects (commit/push/PR/artifact) but NEVER persists a
+// terminal "blocked" status — the caller does that via finalizeBlocked so the
+// recovery-disabled path stays byte-identical to the original driver.
+async function attemptImplementation(
+  config,
+  issue,
+  { worktree, branch, specPath, specContent, reviewContent, runId, modelOverride },
+) {
+  const runOpts = {
+    role: "implementer",
+    worktree: worktree.path,
+    prompt: implementerPrompt(issue, path.relative(worktree.path, specPath), specContent, reviewContent, config.projectName),
+  };
+  if (modelOverride) runOpts.modelOverride = modelOverride;
+  const result = await runCopilot(config, runOpts);
+  // A timeout (exit 124) is not necessarily a failed run: the implementer often has
+  // already written substantial, valid work. Throwing it away wasted the whole run
+  // and forced a from-scratch retry. Salvage it instead - the result still faces the
+  // secret scan, agent PR review, verification and the required human merge, and it
+  // lands as a DRAFT PR, so preserving partial work is safe.
+  const timedOut = result.code === 124 || /\[timed out after \d+ms\]/.test(String(result.stderr ?? "") + String(result.stdout ?? ""));
+  if (result.code !== 0 && !timedOut) {
+    return { ok: false, kind: "error", stderr: result.stderr };
+  }
+
+  const decision = parseDecisionLine(result.stdout, "IMPLEMENTATION_DECISION", ["ready", "blocked"]);
+  if (decision !== "ready" && !timedOut) {
+    return { ok: false, kind: "blocked", stdout: result.stdout, decision };
+  }
+  if (timedOut) {
+    // Only salvage a timeout that actually produced changes; otherwise report it.
+    await git(["add", "-A"], worktree.path);
+    const pending = await git(["diff", "--cached", "--name-only"], worktree.path);
+    if (!pending.trim()) {
+      return { ok: false, kind: "error", stderr: "Implementer timed out with no file changes." };
+    }
+    console.log(
+      `Issue #${issue.number}: implementer timed out but produced changes in ${pending.trim().split("\n").length} file(s); preserving them as a draft PR for review.`,
+    );
   }
 
   await git(["add", "-A"], worktree.path);
   const stagedFiles = await git(["diff", "--cached", "--name-only"], worktree.path);
   if (!stagedFiles.trim()) {
-    await setDurablePhaseStatus(ROOT, issue, "implementation", "blocked", {
-      reason: "Implementer completed without file changes.",
-      branch,
-      worktreePath: worktree.path,
-    });
-    return null;
+    return { ok: false, kind: "no-changes" };
   }
 
   const diff = await git(["diff", "--cached"], worktree.path);
   const secretFindings = findSecretLikeText(diff);
   if (secretFindings.length) {
-    await setDurablePhaseStatus(ROOT, issue, "implementation", "blocked", {
-      reason: "Secret-like text found in implementation diff.",
-      branch,
-      worktreePath: worktree.path,
-      findings: secretFindings,
-    });
-    return null;
+    return { ok: false, kind: "secrets", findings: secretFindings };
   }
 
   await git(["diff", "--cached", "--check"], worktree.path);
@@ -594,6 +1141,7 @@ async function runImplementationPhase(config, issue, { branch, specDir, specPath
     specPath,
     worktreePath: worktree.path,
     headSha,
+    partial: timedOut,
   });
   const files = stagedFiles
     .split("\n")
@@ -634,7 +1182,73 @@ async function runImplementationPhase(config, issue, { branch, specDir, specPath
     prNumber: pr.number,
     headSha,
   });
-  return { pr, worktreePath: worktree.path, headSha };
+  return { ok: true, value: { pr, worktreePath: worktree.path, headSha } };
+}
+
+// Persist a terminal "implementation blocked" outcome, replicating the exact
+// per-failure-kind side effects of the original driver. A redacted `recovery`
+// summary is attached ONLY when recovery ran (undefined on the default path).
+async function finalizeBlocked(config, issue, kind, ctx) {
+  const { branch, worktreePath, runId, stderr, stdout, decision, findings, recovery } = ctx;
+  const withRecovery = (details) => (recovery ? { ...details, recovery } : details);
+  if (kind === "error") {
+    await setDurablePhaseStatus(
+      ROOT,
+      issue,
+      "implementation",
+      "blocked",
+      withRecovery({
+        reason: truncateForComment(stderr, 1000),
+        branch,
+        worktreePath,
+      }),
+    );
+    return;
+  }
+  if (kind === "blocked") {
+    await recordArtifact({
+      root: ROOT,
+      issue,
+      phase: "implementation",
+      agent: "implementer",
+      title: "Implementation blocked",
+      summary: "Implementer reported that the spec could not be implemented safely.",
+      body: stdout,
+      runId,
+      status: "blocked",
+      decision: decision ?? "blocked",
+      metadata: withRecovery({ branch, worktreePath }),
+    });
+    return;
+  }
+  if (kind === "no-changes") {
+    await setDurablePhaseStatus(
+      ROOT,
+      issue,
+      "implementation",
+      "blocked",
+      withRecovery({
+        reason: "Implementer completed without file changes.",
+        branch,
+        worktreePath,
+      }),
+    );
+    return;
+  }
+  if (kind === "secrets") {
+    await setDurablePhaseStatus(
+      ROOT,
+      issue,
+      "implementation",
+      "blocked",
+      withRecovery({
+        reason: "Secret-like text found in implementation diff.",
+        branch,
+        worktreePath,
+        findings,
+      }),
+    );
+  }
 }
 
 async function runImplementationRevisionPhase(
@@ -657,7 +1271,7 @@ async function runImplementationRevisionPhase(
   const result = await runCopilot(config, {
     role: "implementer",
     worktree: worktreePath,
-    prompt: implementerPrompt(issue, path.relative(worktreePath, specPath), specContent, reviewContent),
+    prompt: implementerPrompt(issue, path.relative(worktreePath, specPath), specContent, reviewContent, config.projectName),
   });
   if (result.code !== 0) {
     await setDurablePhaseStatus(ROOT, issue, "implementation", "blocked", {
@@ -758,12 +1372,14 @@ async function runImplementationRevisionPhase(
   return { headSha };
 }
 
-async function createDraftPr(config, issue, { branch, specPath, worktreePath, headSha }) {
-  const title = `Implement issue #${issue.number}: ${issue.title}`;
+async function createDraftPr(config, issue, { branch, specPath, worktreePath, headSha, partial = false }) {
+  const title = `${partial ? "[partial] " : ""}Implement issue #${issue.number}: ${issue.title}`;
   const body = [
     `Closes #${issue.number}`,
     "",
-    "Automation draft PR.",
+    partial
+      ? "Automation draft PR (PARTIAL). The implementer hit its time budget before signalling completion, so this contains the work it had produced. Treat it as a starting point: agent PR review and verification still run, and it must not be merged until complete."
+      : "Automation draft PR.",
     "",
     `Spec: ${path.relative(ROOT, specPath)}`,
     `Head SHA: ${headSha}`,
@@ -815,7 +1431,7 @@ async function runAgentPrReviewPhase(config, issue, { pr, worktreePath, specPath
   const result = await runCopilot(config, {
     role: "agentPrReviewer",
     worktree: worktreePath,
-    prompt: prReviewPrompt(issue, pr, diff, specContent),
+    prompt: prReviewPrompt(issue, pr, diff, specContent, config.projectName),
   });
   if (result.code !== 0) {
     await setDurablePhaseStatus(ROOT, issue, "agent-pr-review", "blocked", {
@@ -852,7 +1468,146 @@ async function runAgentPrReviewPhase(config, issue, { pr, worktreePath, specPath
   return { decision: decision ?? "needs-changes", body: result.stdout };
 }
 
-async function runVerificationPhase(config, issue, { pr, worktreePath, runId }) {
+async function runVerificationPhase(config, issue, { pr, worktreePath, specPath, branch, runId }) {
+  let result = await verifyOnce(config, issue, { pr, worktreePath, runId });
+  if (result.ok) return result;
+
+  // DEFAULT (recovery disabled): identical to the original single-pass verifier.
+  if (!recoveryEnabled(config, "verification") || config.dryRun) return result;
+  // The implementer can never fix a host sandbox refusal — don't waste repairs.
+  if (isSandboxRefusal(result)) return result;
+
+  const budget = createBudget(config.recovery.budgets);
+  let state = emptyRecoveryState();
+  let attemptsSoFar = 0;
+
+  for (;;) {
+    const stop = await stopRequested(config, ROOT);
+    if (stop) {
+      await setDurablePhaseStatus(ROOT, issue, "verification", "blocked", {
+        prNumber: pr.number,
+        headSha: result.headSha,
+        reason: `Stop requested (${stop}) before verifier repair.`,
+        recovery: summarizeRecovery(state, { outcome: "stopped", reason: `Stop requested (${stop}).` }),
+      });
+      return result;
+    }
+    const rec = recoverVerification({ config, budget, attemptsSoFar, state });
+    state = rec.state ?? state;
+    if (!rec.shouldRepair || !rec.model) break;
+    attemptsSoFar += 1;
+
+    const repaired = await repairForVerification(config, issue, {
+      worktreePath,
+      specPath,
+      branch,
+      model: rec.model,
+      failureText: verificationReport(result),
+    });
+    // The verifier stays authoritative: a repair is NEVER treated as "proceed".
+    state = completeRecoveryAttempt(state, rec.attemptId, {
+      proceed: false,
+      reason: repaired.committed ? "repair committed" : `repair no-op (${repaired.reason})`,
+    });
+    if (repaired.blockedBySecret) {
+      await setDurablePhaseStatus(ROOT, issue, "verification", "blocked", {
+        prNumber: pr.number,
+        headSha: result.headSha,
+        reason: "Secret-like text found in verifier repair diff; repair rejected.",
+        recovery: summarizeRecovery(state, { outcome: "veto", reason: "Secret-like text in repair diff." }),
+      });
+      return result;
+    }
+    if (!repaired.committed) break;
+
+    // Re-run the REAL verifier (authoritative) on the repaired head.
+    result = await verifyOnce(config, issue, { pr, worktreePath, runId });
+    if (result.ok) {
+      await setDurablePhaseStatus(ROOT, issue, "verification", "pass", {
+        prNumber: pr.number,
+        headSha: result.headSha,
+        recovery: summarizeRecovery(state, {
+          outcome: "proceed",
+          proceed: true,
+          changed: true,
+          tier: "repairOnly",
+        }),
+      });
+      return result;
+    }
+  }
+
+  // Exhausted. The last verifyOnce already persisted the failing state; attach a
+  // redacted recovery summary. Never mark a failing verification as passing.
+  await setDurablePhaseStatus(ROOT, issue, "verification", "blocked", {
+    prNumber: pr.number,
+    headSha: result.headSha,
+    reason: "Verifier repair loop exhausted; verification still failing.",
+    recovery: summarizeRecovery(state, { outcome: "exhausted", reason: "Verifier repair exhausted." }),
+  });
+  return result;
+}
+
+// True when a verification report is a host-sandbox refusal (fail-closed
+// preflight), which reflects host configuration, not fixable spec/code failures.
+function isSandboxRefusal(report) {
+  const results = Array.isArray(report?.results) ? report.results : [];
+  return results.length === 1 && results[0]?.command === "sandbox preflight";
+}
+
+// Re-run the implementer to FIX verification failures, then commit + push
+// incrementally (never force-push). Rejects and unstages any secret-like diff.
+async function repairForVerification(config, issue, { worktreePath, specPath, branch, model, failureText }) {
+  const specContent = await fs.readFile(specPath, "utf8").catch(() => "");
+  const prompt = implementerPrompt(
+    issue,
+    path.relative(worktreePath, specPath),
+    specContent,
+    [
+      "The automated verifier FAILED. Fix the failing lint/tests/build below WITHOUT weakening,",
+      "skipping, or disabling any check, and WITHOUT introducing secrets. Make the smallest change",
+      "that makes verification pass.",
+      "",
+      "Verifier output:",
+      redactSecrets(truncateForComment(failureText, 4000)),
+    ].join("\n"),
+    config.projectName,
+  );
+  const result = await runCopilot(config, {
+    role: "implementer",
+    worktree: worktreePath,
+    prompt,
+    modelOverride: model,
+  });
+  if (result.code !== 0) {
+    return { committed: false, reason: "implementer error", blockedBySecret: false };
+  }
+  await git(["add", "-A"], worktreePath);
+  const staged = await git(["diff", "--cached", "--name-only"], worktreePath);
+  if (!staged.trim()) {
+    return { committed: false, reason: "no changes", blockedBySecret: false };
+  }
+  const diff = await git(["diff", "--cached"], worktreePath);
+  if (findSecretLikeText(diff).length) {
+    await git(["reset"], worktreePath);
+    return { committed: false, reason: "secret findings", blockedBySecret: true };
+  }
+  await git(["diff", "--cached", "--check"], worktreePath);
+  await git(
+    [
+      "commit",
+      "-m",
+      `Repair verification for issue #${issue.number}`,
+      "-m",
+      "Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>",
+    ],
+    worktreePath,
+  );
+  await git(["push", "origin", branch], worktreePath);
+  return { committed: true, reason: "committed", blockedBySecret: false };
+}
+
+async function verifyOnce(config, issue, { pr, worktreePath, runId }) {
   await setDurablePhaseStatus(ROOT, issue, "verification", "running", {
     prNumber: pr.number,
     worktreePath,

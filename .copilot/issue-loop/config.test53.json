@@ -1,0 +1,26 @@
+{
+  "enabled": true,
+  "dryRun": false,
+  "reviewers": [
+    "GitHubCJ123"
+  ],
+  "maxIssuesPerTick": 1,
+  "maxConcurrentIssues": 1,
+  "copilot": {
+    "timeoutMinutes": 45
+  },
+  "verification": {
+    "installCommand": "pnpm install --frozen-lockfile --ignore-scripts",
+    "commands": [
+      "pnpm lint",
+      "pnpm exec tsc --noEmit"
+    ],
+    "runHeavyCommands": false,
+    "allowHostExecution": true,
+    "sandboxCommand": ""
+  },
+  "requiredLabels": [
+    "automate",
+    "automation-test"
+  ]
+}

@@ -8,6 +8,9 @@ Hold a global hotkey, speak, release — Verbatim AI transcribes your audio, pol
 
 See [`plan.md`](./plan.md) for the full product, architecture, and roadmap.
 
+Coding agents should start with the canonical [`AGENTS.md`](./AGENTS.md) contract
+for current implementation boundaries, applicable checks and privacy/release gates.
+
 ## Features
 
 - **Global push-to-talk hotkey** — default `Ctrl+Space`, fully rebindable.

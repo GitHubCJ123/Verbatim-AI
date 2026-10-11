@@ -97,6 +97,22 @@ describe("recording bridge cancel-shortcut lifecycle", () => {
     );
   });
 
+  it("includes nativeSessionId in the recording:start payload when provided (issue #53)", async () => {
+    await startRecording("Default", null, Date.now(), 123);
+    expect(emit).toHaveBeenCalledWith(
+      "recording:start",
+      expect.objectContaining({ modeName: "Default", nativeSessionId: 123 }),
+    );
+  });
+
+  it("omits nativeSessionId (undefined) for a normal, non-adopted start", async () => {
+    await startRecording("Default", null, Date.now());
+    expect(emit).toHaveBeenCalledWith(
+      "recording:start",
+      expect.objectContaining({ nativeSessionId: undefined }),
+    );
+  });
+
   it("rejects and disarms when the overlay reports the mic failed to open", async () => {
     ackConfig.mode = "error";
     await expect(startRecording("Default", null, Date.now())).rejects.toThrow(

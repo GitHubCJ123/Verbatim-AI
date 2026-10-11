@@ -5,7 +5,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // against an in-flight async startup).
 const h = vi.hoisted(() => ({
   listeners: new Map<string, (e: unknown) => void>(),
-  startRecording: vi.fn(() => Promise.resolve()),
+  startRecording: vi.fn(
+    (_modeName?: string, _modeId?: string | null, _pressedAt?: number, _nativeSessionId?: number) =>
+      Promise.resolve(),
+  ),
   stopRecording: vi.fn(() => Promise.resolve()),
   cancelRecording: vi.fn(() => Promise.resolve()),
   resolveModeAtPress: vi.fn(),
@@ -118,6 +121,10 @@ describe("installHotkeyListeners — serialized recording state machine", () => 
 
   const down = () => h.listeners.get("hotkey:down")!(undefined);
   const up = () => h.listeners.get("hotkey:up")!(undefined);
+  /** Simulate a `hotkey:down` where Rust's push-to-talk hot path (issue #53)
+   * already started native capture before this event fired. */
+  const downNativeStarted = (sessionId: number) =>
+    h.listeners.get("hotkey:down")!({ payload: { sessionId, nativeStarted: true } });
 
   beforeEach(() => {
     store = new Map<string, string>();
@@ -328,5 +335,43 @@ describe("installHotkeyListeners — serialized recording state machine", () => 
     start2.resolve();
     await flush();
     expect(h.stopRecording).toHaveBeenCalledTimes(1);
+  });
+
+  // ── Rust-first push-to-talk hot path adoption (issue #53) ──────────────
+
+  it("adopts a Rust-started native session id and threads it into startRecording", async () => {
+    setConfig("Fn", true); // hold
+    await installHotkeyListeners();
+
+    downNativeStarted(77);
+    await flush();
+
+    expect(h.startRecording).toHaveBeenCalledTimes(1);
+    // startRecording(modeName, modeId, pressedAt, nativeSessionId)
+    expect(h.startRecording.mock.calls[0][3]).toBe(77);
+  });
+
+  it("passes undefined as the native session id for a normal (non-native-started) press", async () => {
+    setConfig("Control+Shift+Space", true); // hold
+    await installHotkeyListeners();
+
+    down(); // plain down(), no payload — mirrors an event the hot path declined
+    await flush();
+
+    expect(h.startRecording).toHaveBeenCalledTimes(1);
+    expect(h.startRecording.mock.calls[0][3]).toBeUndefined();
+  });
+
+  it("ignores a stale sessionId when nativeStarted is false", async () => {
+    setConfig("Control+Shift+Space", true); // hold
+    await installHotkeyListeners();
+
+    // Defensive: a payload could theoretically carry a leftover sessionId
+    // without nativeStarted — must not be treated as an adoption signal.
+    h.listeners.get("hotkey:down")!({ payload: { sessionId: 99, nativeStarted: false } });
+    await flush();
+
+    expect(h.startRecording).toHaveBeenCalledTimes(1);
+    expect(h.startRecording.mock.calls[0][3]).toBeUndefined();
   });
 });

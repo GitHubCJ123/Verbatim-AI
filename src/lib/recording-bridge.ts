@@ -110,6 +110,14 @@ export async function startRecording(
   modeName = "Default",
   modeId: string | null = null,
   pressedAt: number = Date.now(),
+  /**
+   * Set when Rust's push-to-talk hot path (issue #53) already started native
+   * capture before this call — the overlay must adopt this session instead
+   * of arming/starting a new one. `undefined` preserves the existing
+   * JS-orchestrated start for Standard/WebAudio and any native session the
+   * hot path didn't start.
+   */
+  nativeSessionId?: number,
 ): Promise<void> {
   const overlay = await getOverlay();
   if (!overlay) throw new Error("overlay window unavailable");
@@ -128,7 +136,7 @@ export async function startRecording(
   // product) — and re-emit on an interval until the overlay acks, so a
   // dropped or throttled event can't strand the recording.
   const emitStart = () =>
-    void emit("recording:start", { modeName, modeId, pressedAt, sessionId });
+    void emit("recording:start", { modeName, modeId, pressedAt, sessionId, nativeSessionId });
   emitStart();
   const retry = setInterval(() => {
     // Stop retrying the moment this session is superseded (a newer start, a

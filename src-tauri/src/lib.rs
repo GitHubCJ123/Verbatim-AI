@@ -24,9 +24,10 @@ use commands::{
         rescan_local_models, transcribe_local_pcm,
     },
     native_audio::{
-        arm_native_capture, cancel_native_session, disarm_native_capture, is_native_capture_armed,
-        start_native_capture, start_native_session, stop_native_capture, stop_native_session,
-        take_native_recording, NativeCaptureState,
+        arm_native_capture, cancel_native_session, configure_native_ptt_hotpath,
+        disarm_native_capture, is_native_capture_armed, start_native_capture,
+        start_native_session, stop_native_capture, stop_native_session, take_native_recording,
+        NativeCaptureState,
     },
     parakeet::{
         delete_parakeet_model, download_parakeet_model, install_parakeet_runtime,
@@ -162,6 +163,7 @@ pub fn run() {
             stop_streaming_session,
             arm_native_capture,
             disarm_native_capture,
+            configure_native_ptt_hotpath,
             start_native_session,
             stop_native_session,
             take_native_recording,

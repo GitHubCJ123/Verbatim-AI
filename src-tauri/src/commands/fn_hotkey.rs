@@ -83,7 +83,9 @@ mod macos {
     use std::cell::{Cell, RefCell};
     use std::rc::{Rc, Weak};
     use std::sync::mpsc;
-    use tauri::{AppHandle, Emitter, Runtime};
+    use tauri::{AppHandle, Emitter};
+
+    use crate::commands::native_audio;
 
     /// Virtual keycode of the Right ⌘ key (`kVK_RightCommand`).
     const RIGHT_COMMAND_KEYCODE: i64 = 54;
@@ -105,9 +107,30 @@ mod macos {
         pub trigger: Trigger,
     }
 
+    /// Issue #53: before emitting either event, the tap calls
+    /// `native_audio::notify_ptt_down` / `notify_ptt_up` so native
+    /// Fast/Instant capture starts/stops in Rust with no JS on the critical
+    /// path. `sessionId` + `nativeStarted`/`nativeStopped` are set only when
+    /// that actually happened; otherwise the frontend's existing
+    /// JS-orchestrated start/stop runs unchanged.
     #[derive(Serialize, Clone)]
-    struct HotkeyPayload<'a> {
+    #[serde(rename_all = "camelCase")]
+    struct HotkeyDownPayload<'a> {
         spec: &'a str,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        session_id: Option<u64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        native_started: Option<bool>,
+    }
+
+    #[derive(Serialize, Clone)]
+    #[serde(rename_all = "camelCase")]
+    struct HotkeyUpPayload<'a> {
+        spec: &'a str,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        session_id: Option<u64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        native_stopped: Option<bool>,
     }
 
     extern "C" {
@@ -115,8 +138,8 @@ mod macos {
         fn CGRequestListenEventAccess() -> bool;
     }
 
-    pub fn start<R: Runtime>(
-        app: AppHandle<R>,
+    pub fn start(
+        app: AppHandle,
         state: &FnHotkeyState,
         trigger: Trigger,
     ) -> Result<(), String> {
@@ -195,7 +218,15 @@ mod macos {
                             // on — synthesize an up if we were mid-hold.
                             if is_down.get() {
                                 is_down.set(false);
-                                let _ = app.emit("hotkey:up", HotkeyPayload { spec });
+                                let outcome = native_audio::notify_ptt_up(&app);
+                                let _ = app.emit(
+                                    "hotkey:up",
+                                    HotkeyUpPayload {
+                                        spec,
+                                        session_id: outcome.session_id,
+                                        native_stopped: outcome.stopped.then_some(true),
+                                    },
+                                );
                             }
                             return CallbackResult::Keep;
                         }
@@ -225,8 +256,30 @@ mod macos {
                         };
                         if now != is_down.get() {
                             is_down.set(now);
-                            let name = if now { "hotkey:down" } else { "hotkey:up" };
-                            let _ = app.emit(name, HotkeyPayload { spec });
+                            if now {
+                                // Rust-first hot path (issue #53): start
+                                // native capture, if armed, *before* any JS
+                                // sees this event.
+                                let outcome = native_audio::notify_ptt_down(&app);
+                                let _ = app.emit(
+                                    "hotkey:down",
+                                    HotkeyDownPayload {
+                                        spec,
+                                        session_id: outcome.session_id,
+                                        native_started: outcome.started.then_some(true),
+                                    },
+                                );
+                            } else {
+                                let outcome = native_audio::notify_ptt_up(&app);
+                                let _ = app.emit(
+                                    "hotkey:up",
+                                    HotkeyUpPayload {
+                                        spec,
+                                        session_id: outcome.session_id,
+                                        native_stopped: outcome.stopped.then_some(true),
+                                    },
+                                );
+                            }
                         }
                         CallbackResult::Keep
                     },
@@ -291,7 +344,7 @@ mod macos {
     /// Unlike [`start`], this NEVER calls `CGRequestListenEventAccess` —
     /// the recorder shows its own guidance and the explicit
     /// `request_input_monitoring` command owns the TCC prompt.
-    pub fn start_capture<R: Runtime>(
+    pub fn start_capture<R: tauri::Runtime>(
         app: AppHandle<R>,
         state: &HotkeyCaptureState,
     ) -> Result<(), String> {
@@ -435,8 +488,8 @@ mod macos {
 }
 
 #[cfg(target_os = "macos")]
-pub fn start<R: tauri::Runtime>(
-    app: tauri::AppHandle<R>,
+pub fn start(
+    app: tauri::AppHandle,
     state: &FnHotkeyState,
     trigger: Trigger,
 ) -> Result<(), String> {
@@ -444,8 +497,8 @@ pub fn start<R: tauri::Runtime>(
 }
 
 #[cfg(not(target_os = "macos"))]
-pub fn start<R: tauri::Runtime>(
-    _app: tauri::AppHandle<R>,
+pub fn start(
+    _app: tauri::AppHandle,
     _state: &FnHotkeyState,
     _trigger: Trigger,
 ) -> Result<(), String> {

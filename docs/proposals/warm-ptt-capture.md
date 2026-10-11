@@ -4,6 +4,15 @@ Design of record. Synthesized from a 3-model design council (GPT-5.5, Gemini
 3.1 Pro, Claude Opus 4.7) comparing Verbatim AI against the open-source app
 Handy. Clean-room: design-level adoption only, no Handy code copied.
 
+**Status:** Wave 1 (T-ENGINE, T-FNTAP, T-MODEPATH, T-UI) and Wave 2's
+T-JSWIRE/T-OVERLAY/T-SETTINGS landed in #51/#52 (native Fast/Instant capture,
+default-on). **T-COORD — the Rust-first `notify_ptt_down/up` hot path — landed
+in #53**: the `fn`/Right-⌘ tap and the global-shortcut handler now call into
+`native_audio.rs` synchronously *before* emitting `hotkey:down`/`hotkey:up`,
+so native capture starts with no JS on the critical path; JS adopts the
+already-started session via `sessionId`/`nativeStarted` on the event instead
+of calling `start_native_session` again.
+
 ## Problem
 
 Handy's `fn` push-to-talk wakes recording with near-zero latency and stays on

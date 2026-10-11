@@ -3,19 +3,30 @@
 //! The frontend listens for two events emitted on every recognized
 //! shortcut state change:
 //!
-//!   `hotkey:down` { spec: String }
-//!   `hotkey:up`   { spec: String }
+//!   `hotkey:down` { spec: String, sessionId?: number, nativeStarted?: bool }
+//!   `hotkey:up`   { spec: String, sessionId?: number, nativeStopped?: bool }
 //!
 //! For toggle-style modes the frontend can ignore `up` events.
+//!
+//! Issue #53 (Rust-first push-to-talk hot path): before emitting either
+//! event, this calls into `native_audio::notify_ptt_down` /
+//! `notify_ptt_up`, which synchronously start/stop native Fast/Instant
+//! capture when armed. When it does, `sessionId` + `nativeStarted` /
+//! `nativeStopped` are set so the frontend adopts the already-running
+//! session instead of starting a second one. When the hot path doesn't
+//! apply (Standard mode, not armed, etc.) those fields are simply absent
+//! and the existing JS-orchestrated start/stop path runs exactly as before.
 
 use std::str::FromStr;
 use std::sync::Mutex;
 
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager, Runtime, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_global_shortcut::{
     GlobalShortcutExt, Shortcut, ShortcutEvent, ShortcutState,
 };
+
+use super::native_audio;
 
 #[derive(Default)]
 pub struct HotkeyState {
@@ -23,11 +34,26 @@ pub struct HotkeyState {
 }
 
 #[derive(Debug, Clone, Serialize)]
-struct HotkeyPayload<'a> {
+#[serde(rename_all = "camelCase")]
+struct HotkeyDownPayload<'a> {
     spec: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    session_id: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    native_started: Option<bool>,
 }
 
-pub fn handle_event<R: Runtime>(app: &AppHandle<R>, shortcut: &Shortcut, event: ShortcutEvent) {
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct HotkeyUpPayload<'a> {
+    spec: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    session_id: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    native_stopped: Option<bool>,
+}
+
+pub fn handle_event(app: &AppHandle, shortcut: &Shortcut, event: ShortcutEvent) {
     // The cancel shortcut (Escape) is armed only while recording. Route
     // its press to `hotkey:cancel` and never emit down/up for it, so the
     // recording pipeline can discard the in-progress dictation.
@@ -41,10 +67,26 @@ pub fn handle_event<R: Runtime>(app: &AppHandle<R>, shortcut: &Shortcut, event: 
     let spec = shortcut.into_string();
     match event.state() {
         ShortcutState::Pressed => {
-            let _ = app.emit("hotkey:down", HotkeyPayload { spec: &spec });
+            let outcome = native_audio::notify_ptt_down(app);
+            let _ = app.emit(
+                "hotkey:down",
+                HotkeyDownPayload {
+                    spec: &spec,
+                    session_id: outcome.session_id,
+                    native_started: outcome.started.then_some(true),
+                },
+            );
         }
         ShortcutState::Released => {
-            let _ = app.emit("hotkey:up", HotkeyPayload { spec: &spec });
+            let outcome = native_audio::notify_ptt_up(app);
+            let _ = app.emit(
+                "hotkey:up",
+                HotkeyUpPayload {
+                    spec: &spec,
+                    session_id: outcome.session_id,
+                    native_stopped: outcome.stopped.then_some(true),
+                },
+            );
         }
     }
 }
@@ -56,8 +98,8 @@ pub fn handle_event<R: Runtime>(app: &AppHandle<R>, shortcut: &Shortcut, event: 
 /// function keys in particular — parse and register the same way on every
 /// platform, so no special handling is needed here.
 #[tauri::command]
-pub fn set_hotkey<R: Runtime>(
-    app: AppHandle<R>,
+pub fn set_hotkey(
+    app: AppHandle,
     state: State<'_, HotkeyState>,
     fn_state: State<'_, super::fn_hotkey::FnHotkeyState>,
     spec: String,
@@ -124,8 +166,8 @@ pub fn set_hotkey<R: Runtime>(
 }
 
 #[tauri::command]
-pub fn clear_hotkey<R: Runtime>(
-    app: AppHandle<R>,
+pub fn clear_hotkey(
+    app: AppHandle,
     state: State<'_, HotkeyState>,
     fn_state: State<'_, super::fn_hotkey::FnHotkeyState>,
 ) -> Result<(), String> {
@@ -139,7 +181,7 @@ pub fn clear_hotkey<R: Runtime>(
 }
 
 /// Register the default Ctrl+Space shortcut at startup. Idempotent.
-pub fn install_default<R: Runtime>(app: &AppHandle<R>) {
+pub fn install_default(app: &AppHandle) {
     let Ok(parsed) = Shortcut::from_str("CommandOrControl+Space") else {
         return;
     };

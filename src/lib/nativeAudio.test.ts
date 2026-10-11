@@ -2,24 +2,28 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Tauri IPC surface. `start_native_capture` resolves; `stop_native_capture`
 // returns a canned PCM buffer we can assert gets wrapped into a WAV blob.
-const { invoke, listen } = vi.hoisted(() => ({
-  invoke: vi.fn((cmd: string) => {
+const { invoke, listen, defaultInvokeImpl } = vi.hoisted(() => {
+  const defaultInvokeImpl = (cmd: string): Promise<unknown> => {
     if (cmd === "stop_native_capture") {
       // 16000 samples == 1s at 16 kHz.
       return Promise.resolve(Array.from({ length: 16000 }, () => 0.1));
     }
     return Promise.resolve();
-  }),
-  // Capture registered listeners by event name so tests can drive events.
-  listen: vi.fn((_event?: string, _cb?: (e: unknown) => void) => Promise.resolve(() => {})),
-}));
+  };
+  return {
+    defaultInvokeImpl,
+    invoke: vi.fn(defaultInvokeImpl),
+    // Capture registered listeners by event name so tests can drive events.
+    listen: vi.fn((_event?: string, _cb?: (e: unknown) => void) => Promise.resolve(() => {})),
+  };
+});
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 vi.mock("@tauri-apps/api/event", () => ({ listen }));
 // Avoid pulling the tauri autostart plugin (and localStorage) via preferences.
 vi.mock("./preferences", () => ({ isPerfDebugEnabled: () => false }));
 
-import { decodeFrame, startNativeRecording } from "./nativeAudio";
+import { adoptNativeRecording, decodeFrame, startNativeRecording } from "./nativeAudio";
 import { VAD_FRAME_SAMPLES } from "./vad/vad";
 
 /** Base64-encode a Float32Array as little-endian bytes (mirrors Rust). */
@@ -36,7 +40,8 @@ describe("nativeAudio capture controller", () => {
   beforeEach(() => {
     invoke.mockClear();
     listen.mockClear();
-    // Restore the default no-op listener; individual tests may override it.
+    // Restore the default implementations; individual tests may override them.
+    invoke.mockImplementation(defaultInvokeImpl);
     listen.mockImplementation((_event?: string, _cb?: (e: unknown) => void) =>
       Promise.resolve(() => {}),
     );
@@ -161,5 +166,81 @@ describe("nativeAudio capture controller", () => {
     for (let i = 0; i < original.length; i++) {
       expect(decoded[i]).toBeCloseTo(original[i], 3);
     }
+  });
+
+  // ── adoptNativeRecording (issue #53: Rust-first push-to-talk hot path) ──
+
+  it("adopts an already-started session without arming or starting a new one", async () => {
+    const controller = await adoptNativeRecording(42, { deviceId: "mic-1" });
+    const calledCommands = invoke.mock.calls.map((c) => c[0]);
+    // Adoption only ever re-arms (to fix up `streamFrames` after mode
+    // resolution) — it must never start a second session on top of the one
+    // Rust's hot path already started.
+    expect(calledCommands).toContain("arm_native_capture");
+    expect(calledCommands).not.toContain("start_native_session");
+    expect(calledCommands).not.toContain("start_native_capture");
+    expect(invoke).toHaveBeenCalledWith("arm_native_capture", {
+      deviceName: "USB Mic",
+      keepWarm: false,
+      streamFrames: false,
+    });
+    expect(controller.getFrameCount()).toBe(0);
+  });
+
+  it("adopted session's stop() takes the given session id", async () => {
+    invoke.mockImplementation((cmd: string, args?: Record<string, unknown>) => {
+      if (cmd === "take_native_recording" && args?.sessionId === 42) {
+        return Promise.resolve(Array.from({ length: 8000 }, () => 0.1));
+      }
+      return Promise.resolve();
+    });
+    const controller = await adoptNativeRecording(42, {});
+    invoke.mockClear(); // mockClear only resets call history, not the implementation above
+    const result = await controller.stop();
+    expect(invoke).toHaveBeenCalledWith("stop_native_session", { sessionId: 42 });
+    expect(invoke).toHaveBeenCalledWith("take_native_recording", { sessionId: 42 });
+    expect(result).not.toBeNull();
+    expect(Math.round(result!.durationMs)).toBe(500); // 8000 / 16000 Hz
+  });
+
+  it("adoption re-arm failure does not prevent the controller from being usable", async () => {
+    invoke.mockImplementation((cmd: string) => {
+      if (cmd === "arm_native_capture") return Promise.reject(new Error("device busy"));
+      return Promise.resolve();
+    });
+    // Must not throw — the re-arm is best-effort; the session Rust already
+    // started keeps recording either way.
+    const controller = await adoptNativeRecording(7, {});
+    expect(controller.getFrameCount()).toBe(0);
+  });
+
+  // ── native_audio:error (issue #53, S2) ──────────────────────────────
+
+  it("surfaces a mid-session native_audio:error via onError and stops cleanly", async () => {
+    let errorHandler: ((event: { payload: { sessionId?: number; message: string } }) => void) | null =
+      null;
+    listen.mockImplementation((event?: string, cb?: (e: unknown) => void) => {
+      if (event === "native_audio:error") {
+        errorHandler = cb as typeof errorHandler;
+      }
+      return Promise.resolve(() => {});
+    });
+
+    const onError = vi.fn();
+    const controller = await startNativeRecording({ onError });
+    invoke.mockClear();
+
+    errorHandler!({ payload: { sessionId: 0, message: "The input device is no longer available." } });
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onError.mock.calls[0][0]).toBeInstanceOf(Error);
+    expect((onError.mock.calls[0][0] as Error).message).toBe(
+      "The input device is no longer available.",
+    );
+
+    // stop() must be a safe no-op afterward — no second take/stop call, and
+    // no result that could be mistaken for a successful recording.
+    const result = await controller.stop();
+    expect(result).toBeNull();
+    expect(invoke).not.toHaveBeenCalled();
   });
 });

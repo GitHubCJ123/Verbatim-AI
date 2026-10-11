@@ -14,7 +14,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { RecordingPill } from "../components/recording/RecordingPill";
 import { ReviewPanel } from "../components/recording/ReviewPanel";
-import { startRecording, type AudioController } from "../lib/audio";
+import { adoptNativeRecording, startRecording, type AudioController } from "../lib/audio";
 import { decodeToMonoF32_16k } from "../lib/ai/audioDecode";
 import { encodeWavBlob } from "../lib/audio/wav";
 import { trimSilence } from "../lib/vad/trim";
@@ -136,6 +136,11 @@ export default function Overlay() {
   // Dedup guard: the bridge re-emits recording:start until we ack, so ignore
   // duplicate deliveries for a session we're already handling.
   const handledSessionRef = useRef(0);
+  // Set when a mid-session `native_audio:error` (issue #53, S2) already put
+  // a visible error state up via `onError`. Guards `stop()` so it can't
+  // clobber that with "processing" and then a silent reset to idle — the
+  // user has already seen the failure.
+  const hasFatalErrorRef = useRef(false);
 
   const hideAfter = async (ms: number) => {
     const request = ++hideRequestRef.current;
@@ -332,7 +337,13 @@ export default function Overlay() {
     sinks.push((frame) => segmenter.push(frame));
   };
 
-  const start = async (mode: string, modeId: string | null, pressedAt?: number, sessionId = 0) => {
+  const start = async (
+    mode: string,
+    modeId: string | null,
+    pressedAt?: number,
+    sessionId = 0,
+    nativeSessionId?: number,
+  ) => {
     cancelPendingHide();
     setError(null);
     setErrorPresentation(null);
@@ -344,6 +355,7 @@ export default function Overlay() {
     setModeName(mode);
     modeRef.current = getModeById(modeId) ?? getDefaultMode();
     setPrivacy(getPrivacyStatus(modeRef.current).overall);
+    hasFatalErrorRef.current = false;
     try {
       // Frame sinks fan out the real-time PCM frames (Phase 3) to any
       // opt-in consumers. Each is independent and default-off, so the
@@ -390,18 +402,35 @@ export default function Overlay() {
               for (const sink of sinks) sink(frame);
             }
           : undefined;
+      const onError = (e: Error) => {
+        // A mid-session failure (issue #53, S2 `native_audio:error`) arrives
+        // after `controllerRef.current` is already assigned below; a
+        // start-time failure always rejects the promise instead (never
+        // calls this). Flag it so `stop()` doesn't clobber this visible
+        // error with "processing" and then a silent reset.
+        if (controllerRef.current) hasFatalErrorRef.current = true;
+        setError(e.message);
+        setErrorPresentation(null);
+        setState("error");
+      };
       // The bridge shows this window concurrently — don't wait for it.
       // Opening the mic immediately is what keeps the first syllable
       // from being lost (docs/improvement-plan/04-performance-latency.md).
-      const starting = startRecording({
-        deviceId: getMicDeviceId() || undefined,
-        onFrame,
-        onError: (e) => {
-          setError(e.message);
-          setErrorPresentation(null);
-          setState("error");
-        },
-      });
+      // Issue #53: when Rust's push-to-talk hot path already started native
+      // capture (before this function even ran), adopt that session instead
+      // of arming/starting a new one.
+      const starting =
+        nativeSessionId != null
+          ? adoptNativeRecording(nativeSessionId, {
+              deviceId: getMicDeviceId() || undefined,
+              onFrame,
+              onError,
+            })
+          : startRecording({
+              deviceId: getMicDeviceId() || undefined,
+              onFrame,
+              onError,
+            });
       startingRef.current = starting;
       const controller = await starting;
       if (startingRef.current === starting) {
@@ -427,6 +456,7 @@ export default function Overlay() {
       void hideAfter(2500);
     }
   };
+
 
   const runCleanup = async (raw: string, activeMode: Mode, vocab: string[]): Promise<string> => {
     const provider = getActiveProvider(activeMode);
@@ -652,6 +682,14 @@ export default function Overlay() {
       void reset();
       return;
     }
+    if (hasFatalErrorRef.current) {
+      // A mid-session `native_audio:error` (issue #53, S2) already put a
+      // visible error up. Don't overwrite it with "processing" and then a
+      // silent `reset()` — just release the (already-errored) controller.
+      hasFatalErrorRef.current = false;
+      c.cancel();
+      return;
+    }
     setState("processing");
     const result = await c.stop();
     if (!result || result.durationMs < 300) {
@@ -765,6 +803,7 @@ export default function Overlay() {
           modeId?: string | null;
           pressedAt?: number;
           sessionId?: number;
+          nativeSessionId?: number;
         }>("recording:start", (e) => {
           const sessionId = e.payload?.sessionId ?? 0;
           // The bridge re-emits until we ack; ignore duplicate deliveries and
@@ -777,6 +816,7 @@ export default function Overlay() {
             e.payload?.modeId ?? null,
             e.payload?.pressedAt,
             sessionId,
+            e.payload?.nativeSessionId,
           );
         }),
         listen("recording:stop", () => {

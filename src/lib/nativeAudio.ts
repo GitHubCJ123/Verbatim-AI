@@ -48,6 +48,16 @@ interface FrameEvent {
   data: string;
 }
 
+/** Sanitized mid-session capture failure (issue #53, S2). Never contains
+ * paths, device unique ids, transcripts, or raw audio — see
+ * `native_audio.rs`'s `sanitize_stream_error_message`. */
+interface NativeErrorEvent {
+  sessionId?: number;
+  code: string;
+  message: string;
+  recoverable?: boolean;
+}
+
 /**
  * Decode a base64 `native_audio:frame` payload into a 16 kHz mono Float32
  * frame. Bytes are little-endian f32 (matching Rust `f32::to_le_bytes`); we
@@ -121,9 +131,35 @@ function isPerfDebugEnabled(): boolean {
  * Low-latency mode keeps the mic persistently warm before the first press;
  * default native capture remains on-demand so the OS mic indicator stays off
  * until recording actually starts.
+ *
+ * Issue #53: also pushes the Rust-first push-to-talk hot-path config
+ * (`configure_native_ptt_hotpath`) so a `fn`/hotkey press can start native
+ * capture synchronously in Rust, before any JS runs. Called at boot
+ * (`hotkey.ts`) and whenever the recording-engine setting, pre-roll, or mic
+ * device changes (`Settings.tsx`) — never at key-down time.
  */
 export async function syncNativeCaptureArm(): Promise<void> {
-  if (!isNativeCaptureEnabled()) {
+  const enabled = isNativeCaptureEnabled();
+  const keepWarm = enabled && isLowLatencyModeEnabled();
+  const deviceName = enabled ? await resolveDeviceLabel(getStoredMicDeviceId()) : undefined;
+
+  try {
+    await invoke("configure_native_ptt_hotpath", {
+      enabled,
+      preRollMs: enabled ? getPreRollMs() : 0,
+      deviceName: deviceName ?? null,
+      keepWarm,
+      // The hot path can't yet know whether the resolved mode wants live
+      // partials/VAD frames (mode resolution runs after it starts capture),
+      // so it always arms with frames off; `adoptNativeRecording` re-arms
+      // with the resolved value right after adopting the session.
+      streamFrames: false,
+    });
+  } catch {
+    /* best-effort */
+  }
+
+  if (!enabled) {
     try {
       await invoke("disarm_native_capture");
     } catch {
@@ -132,10 +168,9 @@ export async function syncNativeCaptureArm(): Promise<void> {
     return;
   }
 
-  if (!isLowLatencyModeEnabled()) return;
+  if (!keepWarm) return;
 
   try {
-    const deviceName = await resolveDeviceLabel(getStoredMicDeviceId());
     await invoke("arm_native_capture", {
       deviceName: deviceName ?? null,
       keepWarm: true,
@@ -147,26 +182,47 @@ export async function syncNativeCaptureArm(): Promise<void> {
 }
 
 /**
- * Start a native recording session over the warm Rust engine. Resolves once
- * Rust has marked the session active so callers can treat it like the default
- * `startRecording`.
+ * Shared controller machinery for both native start paths below. Registers
+ * level/frame/error listeners *before* awaiting `resolveSession` (which
+ * either arms + starts a brand new session — `startNativeRecording` — or is
+ * already resolved by Rust — `adoptNativeRecording`, issue #53) so a fast
+ * event during any async round-trip can't be missed. On a resolve failure,
+ * listeners are torn down and the error surfaces via `opts.onError` before
+ * rethrowing, exactly as `startNativeRecording` did previously.
  */
-export async function startNativeRecording(
-  opts: AudioControllerOptions = {},
+async function attachNativeController(
+  opts: AudioControllerOptions,
+  resolveSession: () => Promise<{ sessionId: number; legacyCapture: boolean }>,
 ): Promise<AudioController> {
-  const deviceName = await resolveDeviceLabel(opts.deviceId);
-  const keepWarm = isLowLatencyModeEnabled();
-  const preRollMs = keepWarm ? getPreRollMs() : 0;
-  const streamFrames = !!opts.onFrame;
+  const startedAt = performance.now();
 
   // Latest smoothed level, driven by throttled RMS events from Rust.
   let smoothedLevel = 0;
   const smoothing = 0.65;
   let latestRms = 0;
-  let sessionId: number | null = null;
+  let stopped = false;
+  let frameCount = 0;
+  let sessionId = 0;
   let legacyCapture = false;
 
   let unlisten: UnlistenFn | null = null;
+  let frameUnlisten: UnlistenFn | null = null;
+  let errorUnlisten: UnlistenFn | null = null;
+  const detach = () => {
+    if (unlisten) {
+      unlisten();
+      unlisten = null;
+    }
+    if (frameUnlisten) {
+      frameUnlisten();
+      frameUnlisten = null;
+    }
+    if (errorUnlisten) {
+      errorUnlisten();
+      errorUnlisten = null;
+    }
+  };
+
   try {
     unlisten = await listen<LevelEvent>("native_audio:level", (event) => {
       if (!legacyCapture && event.payload?.sessionId !== sessionId) return;
@@ -180,8 +236,6 @@ export async function startNativeRecording(
 
   // Per-frame streaming (VAD / live-partial parity). Only wired when a sink is
   // provided; Rust is told via `streamFrames` so it never emits otherwise.
-  let frameUnlisten: UnlistenFn | null = null;
-  let frameCount = 0;
   if (opts.onFrame) {
     const sink = opts.onFrame;
     try {
@@ -200,43 +254,34 @@ export async function startNativeRecording(
     }
   }
 
-  const startedAt = performance.now();
+  // Mid-session device loss / stream failure (issue #53, S2). Treated like a
+  // start failure — stop the controller and surface it through the same
+  // `onError` the caller already handles — instead of letting a later
+  // stop() silently return truncated/empty audio dressed up as success.
   try {
-    await invoke("arm_native_capture", {
-      deviceName: deviceName ?? null,
-      keepWarm,
-      streamFrames,
+    errorUnlisten = await listen<NativeErrorEvent>("native_audio:error", (event) => {
+      if (!legacyCapture && event.payload?.sessionId !== sessionId) return;
+      if (stopped) return;
+      stopped = true;
+      detach();
+      opts.onError?.(new Error(event.payload?.message || "native audio capture failed"));
     });
-    const startedSessionId = await invoke<number>("start_native_session", { preRollMs });
-    if (typeof startedSessionId === "number" && Number.isFinite(startedSessionId)) {
-      sessionId = startedSessionId;
-    } else {
-      // Defensive compatibility for stale test/mixed-version IPC mocks only;
-      // the Tauri 2 warm engine returns a numeric u64 session id.
-      await invoke("start_native_capture", { deviceName: deviceName ?? null, streamFrames });
-      legacyCapture = true;
-    }
+  } catch {
+    /* best-effort: a mid-session failure would otherwise only surface as a
+       truncated/empty result from a subsequent stop() */
+  }
+
+  try {
+    const resolved = await resolveSession();
+    sessionId = resolved.sessionId;
+    legacyCapture = resolved.legacyCapture;
   } catch (err) {
-    if (unlisten) unlisten();
-    if (frameUnlisten) frameUnlisten();
+    detach();
     const e = err instanceof Error ? err : new Error(String(err));
     opts.onError?.(e);
     throw e;
   }
   opts.onStart?.();
-
-  let stopped = false;
-
-  const detach = () => {
-    if (unlisten) {
-      unlisten();
-      unlisten = null;
-    }
-    if (frameUnlisten) {
-      frameUnlisten();
-      frameUnlisten = null;
-    }
-  };
 
   const getLevel = () => {
     smoothedLevel = smoothing * smoothedLevel + (1 - smoothing) * latestRms;
@@ -298,4 +343,66 @@ export async function startNativeRecording(
   };
 
   return { getLevel, getBars, getFrameCount: () => frameCount, stop, cancel };
+}
+
+/**
+ * Start a native recording session over the warm Rust engine. Resolves once
+ * Rust has marked the session active so callers can treat it like the default
+ * `startRecording`.
+ */
+export async function startNativeRecording(
+  opts: AudioControllerOptions = {},
+): Promise<AudioController> {
+  return attachNativeController(opts, async () => {
+    const deviceName = await resolveDeviceLabel(opts.deviceId);
+    const keepWarm = isLowLatencyModeEnabled();
+    const preRollMs = keepWarm ? getPreRollMs() : 0;
+    const streamFrames = !!opts.onFrame;
+
+    await invoke("arm_native_capture", {
+      deviceName: deviceName ?? null,
+      keepWarm,
+      streamFrames,
+    });
+    const startedSessionId = await invoke<number>("start_native_session", { preRollMs });
+    if (typeof startedSessionId === "number" && Number.isFinite(startedSessionId)) {
+      return { sessionId: startedSessionId, legacyCapture: false };
+    }
+    // Defensive compatibility for stale test/mixed-version IPC mocks only;
+    // the Tauri 2 warm engine returns a numeric u64 session id.
+    await invoke("start_native_capture", { deviceName: deviceName ?? null, streamFrames });
+    return { sessionId: 0, legacyCapture: true };
+  });
+}
+
+/**
+ * Adopt a native session Rust's push-to-talk hot path already started
+ * (issue #53) instead of arming + starting a new one — the caller must
+ * never also call `startNativeRecording` for this key-down.
+ *
+ * The hot path arms before mode resolution runs, so it always requests
+ * `streamFrames: false` (it can't yet know whether this mode wants live
+ * partials / VAD auto-stop). This re-arms with the resolved value right
+ * away; `set_stream_frames` wires the frame resampler onto the
+ * already-active session retroactively, so live frames start flowing
+ * without waiting for a new session.
+ */
+export async function adoptNativeRecording(
+  sessionId: number,
+  opts: AudioControllerOptions = {},
+): Promise<AudioController> {
+  return attachNativeController(opts, async () => {
+    try {
+      const deviceName = await resolveDeviceLabel(opts.deviceId);
+      await invoke("arm_native_capture", {
+        deviceName: deviceName ?? null,
+        keepWarm: isLowLatencyModeEnabled(),
+        streamFrames: !!opts.onFrame,
+      });
+    } catch {
+      /* best-effort: the adopted session still records, just without live
+         frames — final-PCM transcription is unaffected either way */
+    }
+    return { sessionId, legacyCapture: false };
+  });
 }

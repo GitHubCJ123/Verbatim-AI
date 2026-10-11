@@ -88,6 +88,7 @@ import {
   listParakeetModels,
   downloadParakeetModel,
   deleteParakeetModel,
+  isLocalWhisperTranscribeActive,
 } from "../lib/ai";
 import { providerTestStatus, type ProviderTestStatus } from "../lib/ai/healthStatus";
 import { useTheme, type Theme } from "../lib/theme";
@@ -118,7 +119,10 @@ import {
   setMicDeviceId,
   isAiImproveDisabled,
   setAiImproveDisabled,
+  isTrueStreamingEnabled,
+  setTrueStreamingEnabled,
 } from "../lib/preferences";
+import { isStreamingSidecarAvailable } from "../lib/transcribe/streamingClient";
 import { pruneExpiredTranscriptions } from "../lib/history";
 
 interface RowProps {
@@ -402,6 +406,72 @@ function PasteMethodSelect() {
         <SelectItem value="direct">Direct type</SelectItem>
       </SelectContent>
     </Select>
+  );
+}
+
+/**
+ * True token-level streaming (issue #33, docs/proposals/streaming-sidecar.md).
+ * Opt-in, default off. The sidecar-availability probe runs once on mount so
+ * the badge reflects reality even before the user touches the switch — the
+ * feature can be toggled on ahead of the sidecar binary being bundled since
+ * the overlay always falls back gracefully when it's missing. The preview
+ * also only ever engages when Local Whisper is the active transcription
+ * engine (the sidecar is a whisper-stream process); the badge surfaces that
+ * requirement instead of silently no-op'ing when e.g. Cloud or Parakeet is
+ * selected.
+ */
+function TrueStreamingRow() {
+  const [enabled, setEnabled] = useState(() => isTrueStreamingEnabled());
+  const [available, setAvailable] = useState<boolean | null>(null);
+  const usesLocalWhisper = isLocalWhisperTranscribeActive();
+
+  useEffect(() => {
+    let cancelled = false;
+    isStreamingSidecarAvailable(getWhisperComputePreference())
+      .then((ok) => {
+        if (!cancelled) setAvailable(ok);
+      })
+      .catch(() => {
+        if (!cancelled) setAvailable(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  return (
+    <SettingRow
+      id="true-streaming"
+      title="True token-level streaming"
+      description="Experimental: stream live transcript tokens from a dedicated streaming engine while recording, instead of re-transcribing chunks. Requires Local Whisper as the transcription engine; falls back automatically to the existing live preview otherwise."
+    >
+      <div className="flex items-center gap-3">
+        {available === null ? (
+          <span className="inline-flex items-center gap-1 text-xs text-text-muted">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" /> Checking…
+          </span>
+        ) : available && usesLocalWhisper ? (
+          <span className="inline-flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
+            <CheckCircle2 className="h-3.5 w-3.5" /> Ready
+          </span>
+        ) : !available ? (
+          <span className="text-xs text-text-muted">
+            Not available yet — falls back to live preview
+          </span>
+        ) : (
+          <span className="text-xs text-text-muted">
+            Needs Local Whisper as the transcription engine — falls back to live preview
+          </span>
+        )}
+        <Switch
+          checked={enabled}
+          onCheckedChange={(v) => {
+            setTrueStreamingEnabled(v);
+            setEnabled(v);
+          }}
+        />
+      </div>
+    </SettingRow>
   );
 }
 
@@ -813,6 +883,7 @@ export default function Settings() {
               >
                 <OverlayPositionSelect />
               </SettingRow>
+              <TrueStreamingRow />
             </CardContent>
           </Card>
         </TabsContent>

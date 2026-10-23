@@ -12,9 +12,12 @@ import { cn } from "../../lib/utils";
 import {
   applyHotkey,
   clearHotkey,
+  hotkeyDisplayParts,
   isFunctionKey,
+  HOTKEY_PRESETS,
   IS_MAC,
 } from "../../lib/hotkey";
+import { ModifierHotkeyStatus } from "./ModifierHotkeyStatus";
 import { setHotkeyPaused } from "../../lib/preferences";
 import { toast } from "../ui/Toast";
 import { handleInputMonitoringError } from "./inputMonitoring";
@@ -22,6 +25,8 @@ import { handleInputMonitoringError } from "./inputMonitoring";
 interface HotkeyRecorderProps {
   value: string;
   onChange: (spec: string) => void;
+  /** Show one-click preset chips (fn, right ⌘, …). Default true. */
+  showPresets?: boolean;
 }
 
 const MODIFIER_LABEL: Record<string, string> = IS_MAC
@@ -313,7 +318,7 @@ export class HotkeyCaptureSession {
   }
 }
 
-export function HotkeyRecorder({ value, onChange }: HotkeyRecorderProps) {
+export function HotkeyRecorder({ value, onChange, showPresets = true }: HotkeyRecorderProps) {
   const [recording, setRecording] = useState(false);
   const [busy, setBusy] = useState(false);
   const [pendingModifiers, setPendingModifiers] = useState<string[]>([]);
@@ -394,11 +399,6 @@ export function HotkeyRecorder({ value, onChange }: HotkeyRecorderProps) {
     <p className="max-w-[320px] text-right text-[11px] leading-snug text-text-muted">
       Press a key or combination… Current shortcut is temporarily cleared.
     </p>
-  ) : displayed === "Fn" ? (
-    <p className="max-w-[280px] text-right text-[11px] leading-snug text-text-muted">
-      Hold <Kbd>fn</Kbd> to talk · If it opens the emoji picker, set System
-      Settings → Keyboard → &ldquo;Press 🌐 key to&rdquo; → Do Nothing.
-    </p>
   ) : displayed && parts(displayed).length === 1 ? (
     <p className="max-w-[280px] text-right text-[11px] leading-snug text-text-muted">
       Hold to talk.
@@ -467,7 +467,39 @@ export function HotkeyRecorder({ value, onChange }: HotkeyRecorderProps) {
         )}
       </div>
 
+      {showPresets && !recording && (
+        <div className="flex flex-wrap items-center justify-end gap-1.5">
+          <span className="text-[11px] text-text-muted">Quick pick:</span>
+          {HOTKEY_PRESETS.map((preset) => {
+            const active = displayed === preset.spec;
+            return (
+              <button
+                key={preset.spec}
+                type="button"
+                disabled={busy || active}
+                onClick={() => {
+                  setCommitted(preset.spec);
+                  onChangeRef.current(preset.spec);
+                }}
+                className={cn(
+                  "flex items-center gap-1 rounded-md border px-2 py-1 text-[11px] transition-colors",
+                  active
+                    ? "border-accent-solid/60 bg-accent-solid/10 text-text-primary"
+                    : "border-border-subtle bg-bg-base text-text-secondary hover:border-border-strong",
+                )}
+                aria-pressed={active}
+              >
+                {hotkeyDisplayParts(preset.spec).join(" ")}
+                {preset.note && <span className="text-text-muted">· {preset.note}</span>}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
       {helperContent}
+
+      {!recording && <ModifierHotkeyStatus spec={displayed} />}
 
       {recording && unsupportedKey && (
         <p className="max-w-[320px] text-right text-[11px] leading-snug text-text-muted">

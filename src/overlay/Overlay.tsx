@@ -55,6 +55,7 @@ import {
   isTrueStreamingEnabled,
 } from "../lib/preferences";
 import { applyInlinePostProcessing } from "../lib/postProcess";
+import { finalizeCleanup, sanitizeTranscript } from "../lib/transcriptQuality";
 import { getPrivacyStatus, type DataLocality } from "../lib/privacyStatus";
 import {
   classifyRecordingError,
@@ -301,6 +302,7 @@ export default function Overlay() {
         const wav = encodeWavBlob(payload.pcm, VAD_SAMPLE_RATE);
         const res = await provider.transcribe({
           audio: wav,
+          pcm: payload.pcm,
           language: activeMode.language || "auto",
           vocabularyHints: vocab,
         });
@@ -448,7 +450,12 @@ export default function Overlay() {
     return acc;
   };
 
-  const runPipeline = async (audio: Blob, durationMs: number, mode: string) => {
+  const runPipeline = async (
+    audio: Blob,
+    durationMs: number,
+    mode: string,
+    capturedPcm?: Float32Array,
+  ) => {
     const provider = getActiveProvider(modeRef.current);
     if (!provider) {
       setError("Configure Azure in Settings → AI to enable transcription.");
@@ -469,10 +476,15 @@ export default function Overlay() {
     // Post-hoc VAD silence trim (Phase 4a). Runs before transcription to
     // drop leading/trailing silence and pure-noise clips. Fails open: any
     // decode/trim error falls back to the original audio untouched.
+    // Native capture already hands us 16 kHz PCM; keep it alongside the blob
+    // so on-device engines never re-decode audio (no AudioContext on the hot
+    // path).
     let audioForTranscribe = audio;
+    let pcmForTranscribe = capturedPcm;
     if (isSilenceTrimEnabled()) {
       try {
-        const pcm = await decodeToMonoF32_16k(audio);
+        const pcm = capturedPcm ?? (await decodeToMonoF32_16k(audio));
+        pcmForTranscribe = pcm;
         // Prefer the Silero model (precomputed over the whole clip);
         // falls back to the energy VAD if it can't load.
         const model = await getTrimSpeechModel(pcm);
@@ -484,6 +496,7 @@ export default function Overlay() {
         }
         if (trim.trimmed) {
           audioForTranscribe = encodeWavBlob(trim.pcm, VAD_SAMPLE_RATE);
+          pcmForTranscribe = trim.pcm;
           if (isPerfDebugEnabled()) {
             console.info(
               `[perf] VAD trim -${Math.round(trim.leadingTrimmedMs)}ms lead / -${Math.round(
@@ -501,6 +514,7 @@ export default function Overlay() {
       setState("processing");
       const transcript = await provider.transcribe({
         audio: audioForTranscribe,
+        pcm: pcmForTranscribe,
         durationMs,
         language: activeMode.language || "auto",
         vocabularyHints: vocabularyTerms,
@@ -512,7 +526,15 @@ export default function Overlay() {
       // near-miss vocab terms are corrected upfront.
       // Both features are OFF by default; zero output change unless the
       // user explicitly enables them in Settings.
-      const processedText = applyInlinePostProcessing(transcript.text, {
+      // Always-on ASR hygiene: drop "[BLANK_AUDIO]"-style annotations,
+      // subtitle hallucinations and decoder repetition loops.
+      const sanitized = sanitizeTranscript(transcript.text);
+      if (!sanitized) {
+        // Only noise was recognized — nothing to paste.
+        void reset();
+        return;
+      }
+      const processedText = applyInlinePostProcessing(sanitized, {
         fillerFilter: isFillerFilterEnabled(),
         fuzzyVocab: isFuzzyVocabEnabled(),
         vocabularyTerms: vocabularyAll,
@@ -533,9 +555,14 @@ export default function Overlay() {
         setStreamingCleaned(cleaned);
       } else {
         setState("polishing");
-        const cleanedRaw = await runCleanup(processedText, activeMode, vocabularyTerms);
+        const streamed = await runCleanup(processedText, activeMode, vocabularyTerms);
+        // Strip chat wrapper text, and fall back to the transcript if the
+        // model answered/continued the dictation instead of editing it.
+        const { text: cleanedRaw } = finalizeCleanup(processedText, streamed, {
+          translating: !!activeMode.targetLanguage,
+        });
         cleaned = applyVocabReplacements(cleanedRaw, vocabularyAll);
-        if (cleaned !== cleanedRaw) setStreamingCleaned(cleaned);
+        if (cleaned !== streamed) setStreamingCleaned(cleaned);
       }
 
       // Transcript content is only ever logged in dev builds — release
@@ -659,7 +686,7 @@ export default function Overlay() {
       void reset();
       return;
     }
-    await runPipeline(result.blob, result.durationMs, modeName);
+    await runPipeline(result.blob, result.durationMs, modeName, result.pcm);
   };
 
   const cancelActive = () => {
@@ -741,9 +768,12 @@ export default function Overlay() {
     const vocab = vocabAll.map((t) => t.term);
     setState("polishing");
     try {
-      const cleanedRaw = await runCleanup(rawText, activeMode, vocab);
+      const streamed = await runCleanup(rawText, activeMode, vocab);
+      const { text: cleanedRaw } = finalizeCleanup(rawText, streamed, {
+        translating: !!activeMode.targetLanguage,
+      });
       const cleaned = applyVocabReplacements(cleanedRaw, vocabAll);
-      if (cleaned !== cleanedRaw) setStreamingCleaned(cleaned);
+      if (cleaned !== streamed) setStreamingCleaned(cleaned);
       setState("idle");
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));

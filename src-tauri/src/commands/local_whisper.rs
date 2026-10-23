@@ -9,13 +9,13 @@
 //!   whisper-bin/whisper-cli.exe   (+ supporting DLLs)
 //!   whisper-models/ggml-*.bin
 
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use super::runtime_assets::{
-    clear_dir_contents, download_with_progress, extract_archive, locate_executable,
-    make_executables, strip_quarantine, verify_minisign, verify_sha256, ArchiveKind,
+    clear_dir_contents, download_with_progress, encode_wav_pcm16, extract_archive,
+    inference_threads, locate_executable, make_executables, pcm_from_le_bytes, strip_quarantine,
+    unique_tmp_stem, verify_minisign, verify_sha256, ArchiveKind,
     DownloadProgress as RuntimeAssetProgress,
 };
 use serde::{Deserialize, Serialize};
@@ -906,8 +906,43 @@ pub struct TranscribeArgs {
     pub language: Option<String>,
     pub translate: Option<bool>,
     pub compute_preference: Option<String>,
+    /// Initial prompt (e.g. the user's vocabulary) to bias spelling.
+    pub prompt: Option<String>,
     /// 16 kHz mono Float32 PCM samples.
     pub pcm: Vec<f32>,
+}
+
+/// Decode a `%XX`-escaped header value (`encodeURIComponent` on the JS side;
+/// header values must be ASCII). Invalid escapes are kept verbatim.
+fn percent_decode(v: &str) -> String {
+    let bytes = v.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            let hex = std::str::from_utf8(&bytes[i + 1..i + 3]).ok();
+            if let Some(b) = hex.and_then(|h| u8::from_str_radix(h, 16).ok()) {
+                out.push(b);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// Whisper's initial prompt is limited to ~224 tokens and an overlong one
+/// hurts accuracy; keep it to a short glossary.
+const MAX_PROMPT_CHARS: usize = 400;
+
+fn sanitize_prompt(raw: Option<String>) -> Option<String> {
+    let p = raw?.trim().to_string();
+    if p.is_empty() {
+        return None;
+    }
+    Some(p.chars().take(MAX_PROMPT_CHARS).collect())
 }
 
 fn request_header(request: &Request<'_>, name: &str) -> Option<String> {
@@ -933,17 +968,7 @@ pub(crate) fn transcribe_args_from_pcm_request(
         InvokeBody::Raw(bytes) => bytes,
         InvokeBody::Json(_) => return Err("PCM audio must be sent as raw bytes".into()),
     };
-    if bytes.is_empty() {
-        return Err("Empty audio buffer".into());
-    }
-    if bytes.len() % std::mem::size_of::<f32>() != 0 {
-        return Err("PCM byte length must be divisible by 4".into());
-    }
-
-    let pcm = bytes
-        .chunks_exact(4)
-        .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
-        .collect();
+    let pcm = pcm_from_le_bytes(bytes)?;
 
     let tier = request_header(request, "x-verbatim-tier")
         .ok_or_else(|| "Missing Whisper tier header".to_string())?;
@@ -951,12 +976,16 @@ pub(crate) fn transcribe_args_from_pcm_request(
     let compute_preference = request_header(request, "x-verbatim-compute-preference");
     let translate = request_header(request, "x-verbatim-translate")
         .map(|v| matches!(v.as_str(), "1" | "true" | "yes"));
+    let prompt = sanitize_prompt(
+        request_header(request, "x-verbatim-prompt").map(|v| percent_decode(&v)),
+    );
 
     Ok(TranscribeArgs {
         tier,
         language,
         translate,
         compute_preference,
+        prompt,
         pcm,
     })
 }
@@ -974,60 +1003,14 @@ struct WhisperRunError {
     code: Option<i32>,
 }
 
-/// Write 16 kHz mono f32 PCM to a fresh temp WAV under `whisper-tmp` and return
-/// its path. Shared by the CLI path and the persistent whisper-server path.
+/// Write 16 kHz mono f32 PCM to a fresh, uniquely named temp WAV under
+/// `whisper-tmp` and return its path.
 pub(crate) fn write_pcm_wav(app: &AppHandle, samples: &[f32]) -> Result<PathBuf, String> {
     let tmp_dir = app_data(app)?.join("whisper-tmp");
     std::fs::create_dir_all(&tmp_dir).map_err(|e| e.to_string())?;
-    let wav_path = tmp_dir.join(format!(
-        "rec-{}.wav",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis())
-            .unwrap_or(0)
-    ));
-    write_wav(&wav_path, samples)?;
+    let wav_path = tmp_dir.join(format!("{}.wav", unique_tmp_stem("rec")));
+    std::fs::write(&wav_path, encode_wav_pcm16(samples, 16_000)).map_err(|e| e.to_string())?;
     Ok(wav_path)
-}
-
-fn write_wav(path: &Path, samples: &[f32]) -> Result<(), String> {
-    let sample_rate: u32 = 16000;
-    let bits_per_sample: u16 = 16;
-    let num_channels: u16 = 1;
-    let byte_rate = sample_rate * (bits_per_sample as u32 / 8) * num_channels as u32;
-    let block_align = num_channels * bits_per_sample / 8;
-    let data_bytes = (samples.len() * 2) as u32;
-    let chunk_size = 36 + data_bytes;
-
-    let mut f = std::fs::File::create(path).map_err(|e| e.to_string())?;
-    f.write_all(b"RIFF").map_err(|e| e.to_string())?;
-    f.write_all(&chunk_size.to_le_bytes())
-        .map_err(|e| e.to_string())?;
-    f.write_all(b"WAVE").map_err(|e| e.to_string())?;
-    f.write_all(b"fmt ").map_err(|e| e.to_string())?;
-    f.write_all(&16u32.to_le_bytes()).map_err(|e| e.to_string())?;
-    f.write_all(&1u16.to_le_bytes()).map_err(|e| e.to_string())?;
-    f.write_all(&num_channels.to_le_bytes())
-        .map_err(|e| e.to_string())?;
-    f.write_all(&sample_rate.to_le_bytes())
-        .map_err(|e| e.to_string())?;
-    f.write_all(&byte_rate.to_le_bytes())
-        .map_err(|e| e.to_string())?;
-    f.write_all(&block_align.to_le_bytes())
-        .map_err(|e| e.to_string())?;
-    f.write_all(&bits_per_sample.to_le_bytes())
-        .map_err(|e| e.to_string())?;
-    f.write_all(b"data").map_err(|e| e.to_string())?;
-    f.write_all(&data_bytes.to_le_bytes())
-        .map_err(|e| e.to_string())?;
-    let mut buf = Vec::with_capacity(samples.len() * 2);
-    for s in samples {
-        let clamped = s.clamp(-1.0, 1.0);
-        let v = (clamped * i16::MAX as f32) as i16;
-        buf.extend_from_slice(&v.to_le_bytes());
-    }
-    f.write_all(&buf).map_err(|e| e.to_string())?;
-    Ok(())
 }
 
 async fn run_whisper_cli(
@@ -1044,6 +1027,16 @@ async fn run_whisper_cli(
     cmd.arg("-m").arg(&model_path);
     cmd.arg("-f").arg(&wav_path);
     cmd.arg("-nt");
+    cmd.arg("-t").arg(inference_threads().to_string());
+    // whisper-cli defaults to 5-wide beam search; greedy (what whisper-server
+    // uses) is several times faster for dictation-length clips.
+    cmd.arg("-bs").arg("1");
+    // No `-sns` here: a legacy whisper-cli (pre-variant layout) may not know
+    // it and would exit with usage. The frontend's transcript sanitizer
+    // removes "[Music]"-style tags instead.
+    if let Some(prompt) = args.prompt.as_deref() {
+        cmd.arg("--prompt").arg(prompt);
+    }
     if matches!(variant, WhisperRuntimeVariant::Cuda | WhisperRuntimeVariant::Metal) {
         cmd.arg("-fa");
     }
@@ -1200,16 +1193,7 @@ pub async fn transcribe_local(
             )
         })?;
 
-    let tmp_dir = app_data(&app)?.join("whisper-tmp");
-    std::fs::create_dir_all(&tmp_dir).map_err(|e| e.to_string())?;
-    let wav_path = tmp_dir.join(format!(
-        "rec-{}.wav",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis())
-            .unwrap_or(0)
-    ));
-    write_wav(&wav_path, &args.pcm)?;
+    let wav_path = write_pcm_wav(&app, &args.pcm)?;
     let json_stem = wav_path.with_extension("");
 
     let output: Result<TranscribeOutput, String> = async {
@@ -1257,6 +1241,21 @@ pub async fn transcribe_local(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn percent_decoding_handles_utf8_and_bad_escapes() {
+        assert_eq!(percent_decode("Kubernetes%2C%20Zo%C3%AB"), "Kubernetes, Zoë");
+        assert_eq!(percent_decode("100%"), "100%");
+        assert_eq!(percent_decode("%zz%4"), "%zz%4");
+    }
+
+    #[test]
+    fn prompt_is_trimmed_and_capped() {
+        assert_eq!(sanitize_prompt(Some("  ".into())), None);
+        assert_eq!(sanitize_prompt(None), None);
+        let long = "x".repeat(MAX_PROMPT_CHARS + 50);
+        assert_eq!(sanitize_prompt(Some(long)).unwrap().len(), MAX_PROMPT_CHARS);
+    }
 
     #[test]
     fn builtin_catalogue_round_trips() {

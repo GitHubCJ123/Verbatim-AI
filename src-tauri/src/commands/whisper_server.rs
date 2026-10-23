@@ -20,9 +20,10 @@ use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
 
 use super::local_whisper::{
-    resolve_whisper_server_launch, transcribe_args_from_pcm_request, write_pcm_wav, TranscribeArgs,
-    TranscribeOutput, WhisperServerLaunch,
+    resolve_whisper_server_launch, transcribe_args_from_pcm_request, transcribe_local,
+    TranscribeArgs, TranscribeOutput, WhisperServerLaunch,
 };
+use super::runtime_assets::{encode_wav_pcm16, inference_threads};
 
 fn perf_enabled() -> bool {
     std::env::var("VERBATIM_PERF").ok().as_deref() == Some("1")
@@ -30,7 +31,9 @@ fn perf_enabled() -> bool {
 
 const HEALTH_TIMEOUT: Duration = Duration::from_secs(120);
 const HEALTH_POLL: Duration = Duration::from_millis(150);
-const DEFAULT_IDLE: Duration = Duration::from_secs(5 * 60);
+/// A cold model reload costs seconds (the dominant dictation latency), so keep
+/// the model resident for a long idle stretch instead of 5 minutes.
+const DEFAULT_IDLE: Duration = Duration::from_secs(30 * 60);
 const IDLE_CHECK: Duration = Duration::from_secs(30);
 
 struct ServerHandle {
@@ -166,7 +169,9 @@ impl WhisperServerState {
             .arg("--host")
             .arg("127.0.0.1")
             .arg("--port")
-            .arg(port.to_string());
+            .arg(port.to_string())
+            .arg("-t")
+            .arg(inference_threads().to_string());
         if launch.flash_attn {
             cmd.arg("-fa");
         }
@@ -335,7 +340,16 @@ pub async fn transcribe_local_server_pcm(
     transcribe_local_server(app, state, args).await
 }
 
-/// Transcribe via the persistent server. Output matches `transcribe_local`.
+/// Deadline for one inference request: generous fixed overhead plus a multiple
+/// of the audio length, so a wedged server can't hang a dictation forever.
+fn inference_timeout(samples: usize) -> Duration {
+    Duration::from_secs(60 + (samples as u64 / 16_000) * 4)
+}
+
+/// Transcribe via the persistent server, falling back to the one-shot
+/// `whisper-cli` if the server can't start, errors, crashes or times out — a
+/// server problem then costs latency for one utterance instead of failing the
+/// dictation. Output matches `transcribe_local`.
 // Internal implementation, invoked via the `transcribe_local_server_pcm`
 // command; intentionally not registered as its own Tauri command.
 pub async fn transcribe_local_server(
@@ -346,13 +360,27 @@ pub async fn transcribe_local_server(
     if args.pcm.is_empty() {
         return Err("Empty audio buffer".into());
     }
+    match server_inference(&app, &state, &args).await {
+        Ok(out) => Ok(out),
+        Err(server_err) => {
+            eprintln!("[whisper-server] {server_err}; falling back to whisper-cli");
+            state.unload().await;
+            transcribe_local(app, args).await
+        }
+    }
+}
+
+async fn server_inference(
+    app: &AppHandle,
+    state: &WhisperServerState,
+    args: &TranscribeArgs,
+) -> Result<TranscribeOutput, String> {
     let base_url = state
-        .ensure(&app, &args.tier, args.compute_preference.as_deref())
+        .ensure(app, &args.tier, args.compute_preference.as_deref())
         .await?;
 
-    let wav_path = write_pcm_wav(&app, &args.pcm)?;
-    let wav_bytes = tokio::fs::read(&wav_path).await.map_err(|e| e.to_string())?;
-    let _ = tokio::fs::remove_file(&wav_path).await;
+    // Encode in memory — no temp-file write + read-back on the hot path.
+    let wav_bytes = encode_wav_pcm16(&args.pcm, 16_000);
 
     let language = args.language.clone().unwrap_or_else(|| "auto".to_string());
     let translate = args.translate.unwrap_or(false);
@@ -367,9 +395,14 @@ pub async fn transcribe_local_server(
         )
         .text("response_format", "verbose_json")
         .text("no_timestamps", "true")
+        // Drop "[Music]" / "(applause)"-style non-speech tokens.
+        .text("suppress_nst", "true")
         .text("language", language.clone());
     if translate {
         form = form.text("translate", "true");
+    }
+    if let Some(prompt) = args.prompt.clone() {
+        form = form.text("prompt", prompt);
     }
 
     let client = reqwest::Client::new();
@@ -377,6 +410,7 @@ pub async fn transcribe_local_server(
     let resp = client
         .post(format!("{base_url}/inference"))
         .multipart(form)
+        .timeout(inference_timeout(args.pcm.len()))
         .send()
         .await
         .map_err(|e| format!("whisper-server request failed: {e}"))?;
@@ -398,6 +432,9 @@ pub async fn transcribe_local_server(
     }
     let value: serde_json::Value =
         serde_json::from_str(&body).map_err(|e| format!("invalid whisper-server response: {e}"))?;
+    if let Some(err) = value.get("error").and_then(|v| v.as_str()) {
+        return Err(format!("whisper-server error: {err}"));
+    }
 
     let text = value
         .get("text")

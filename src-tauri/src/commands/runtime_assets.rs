@@ -296,6 +296,108 @@ pub(crate) fn clear_dir_contents(dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// CPU threads for an on-device inference sidecar (whisper.cpp / sherpa-onnx).
+///
+/// The engines' own defaults are conservative (whisper-server: 4, sherpa: 2).
+/// Half the logical cores approximates the physical/performance core count on
+/// SMT x86 and hybrid Apple Silicon; more than that tends to slow these
+/// engines down rather than speed them up.
+pub(crate) fn inference_threads() -> usize {
+    let logical = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4);
+    (logical / 2).clamp(4, 8).min(logical.max(1))
+}
+
+/// Encode 16 kHz mono f32 PCM as an in-memory 16-bit PCM WAV file.
+pub(crate) fn encode_wav_pcm16(samples: &[f32], sample_rate: u32) -> Vec<u8> {
+    let data_bytes = (samples.len() * 2) as u32;
+    let mut out = Vec::with_capacity(44 + samples.len() * 2);
+    out.extend_from_slice(b"RIFF");
+    out.extend_from_slice(&(36 + data_bytes).to_le_bytes());
+    out.extend_from_slice(b"WAVE");
+    out.extend_from_slice(b"fmt ");
+    out.extend_from_slice(&16u32.to_le_bytes());
+    out.extend_from_slice(&1u16.to_le_bytes()); // PCM
+    out.extend_from_slice(&1u16.to_le_bytes()); // mono
+    out.extend_from_slice(&sample_rate.to_le_bytes());
+    out.extend_from_slice(&(sample_rate * 2).to_le_bytes()); // byte rate
+    out.extend_from_slice(&2u16.to_le_bytes()); // block align
+    out.extend_from_slice(&16u16.to_le_bytes()); // bits per sample
+    out.extend_from_slice(b"data");
+    out.extend_from_slice(&data_bytes.to_le_bytes());
+    for s in samples {
+        let v = (s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16;
+        out.extend_from_slice(&v.to_le_bytes());
+    }
+    out
+}
+
+/// A temp-file stem that is unique within this process, even for two calls in
+/// the same millisecond (e.g. a live-preview transcribe racing the final one).
+pub(crate) fn unique_tmp_stem(prefix: &str) -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
+    format!("{prefix}-{}-{millis}-{seq}", std::process::id())
+}
+
+/// Decode a raw little-endian f32 PCM IPC body.
+pub(crate) fn pcm_from_le_bytes(bytes: &[u8]) -> Result<Vec<f32>, String> {
+    if bytes.is_empty() {
+        return Err("Empty audio buffer".into());
+    }
+    if bytes.len() % std::mem::size_of::<f32>() != 0 {
+        return Err("PCM byte length must be divisible by 4".into());
+    }
+    Ok(bytes
+        .chunks_exact(4)
+        .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+        .collect())
+}
+
+#[cfg(test)]
+mod helper_tests {
+    use super::*;
+
+    #[test]
+    fn wav_header_and_length() {
+        let wav = encode_wav_pcm16(&[0.0, 1.0, -1.0, 2.0], 16_000);
+        assert_eq!(&wav[0..4], b"RIFF");
+        assert_eq!(&wav[8..12], b"WAVE");
+        assert_eq!(wav.len(), 44 + 8);
+        assert_eq!(u32::from_le_bytes(wav[40..44].try_into().unwrap()), 8);
+        // Clamped full-scale samples.
+        assert_eq!(i16::from_le_bytes([wav[46], wav[47]]), i16::MAX);
+        assert_eq!(i16::from_le_bytes([wav[50], wav[51]]), i16::MAX);
+    }
+
+    #[test]
+    fn tmp_stems_are_unique() {
+        let a = unique_tmp_stem("rec");
+        let b = unique_tmp_stem("rec");
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn pcm_round_trip_and_validation() {
+        let bytes: Vec<u8> = [0.5f32, -0.25].iter().flat_map(|v| v.to_le_bytes()).collect();
+        assert_eq!(pcm_from_le_bytes(&bytes).unwrap(), vec![0.5, -0.25]);
+        assert!(pcm_from_le_bytes(&[]).is_err());
+        assert!(pcm_from_le_bytes(&[0, 0, 0]).is_err());
+    }
+
+    #[test]
+    fn threads_are_bounded() {
+        let n = inference_threads();
+        assert!((1..=8).contains(&n));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

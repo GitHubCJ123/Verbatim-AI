@@ -325,6 +325,32 @@ export async function pullOllamaModel(
   }
 }
 
+const OLLAMA_KEEP_ALIVE = "30m";
+const WARM_DEBOUNCE_MS = 60_000;
+const lastWarmAt = new Map<string, number>();
+
+/**
+ * Ask Ollama to load `model` into memory without generating anything (an
+ * empty prompt only loads the weights). Fired on hotkey press so the cold
+ * load overlaps with the user speaking. Best-effort and debounced.
+ */
+export async function warmOllamaModel(host: string, model: string): Promise<void> {
+  if (!model) return;
+  const key = `${normalizeHost(host)}|${model}`;
+  const now = Date.now();
+  if (now - (lastWarmAt.get(key) ?? 0) < WARM_DEBOUNCE_MS) return;
+  lastWarmAt.set(key, now);
+  try {
+    await fetch(`${normalizeHost(host)}/api/generate`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model, prompt: "", keep_alive: OLLAMA_KEEP_ALIVE, stream: false }),
+    });
+  } catch {
+    lastWarmAt.delete(key);
+  }
+}
+
 export interface OllamaConfig {
   host: string;
   model: string;
@@ -360,8 +386,13 @@ export class OllamaProvider implements Cleaner {
       // the polished answer directly. Models without thinking mode just
       // ignore this field.
       think: false,
+      // Keep the model resident between dictations; Ollama's 5-minute default
+      // means a multi-second reload whenever you pause for a coffee.
+      keep_alive: OLLAMA_KEEP_ALIVE,
       options: {
-        temperature: input.temperature ?? 0.3,
+        // Cleanup is an editing task, not creative writing: stay close to
+        // deterministic so the output doesn't drift from what was said.
+        temperature: input.temperature ?? 0.2,
       },
     };
     let res: Response;

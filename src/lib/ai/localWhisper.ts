@@ -6,7 +6,7 @@
  */
 import { invoke } from "@tauri-apps/api/core";
 import { isPerfDebugEnabled } from "../preferences";
-import { decodeToMonoF32_16k } from "./audioDecode";
+import { pcm16kFor, pcmToBytes, vocabularyPromptHeader } from "./audioDecode";
 import { CLOUD_FEATURES_ENABLED } from "../features";
 import type {
   ProviderHealth,
@@ -337,13 +337,11 @@ export class LocalWhisperProvider implements Transcriber {
 
   async transcribe(input: TranscribeInput): Promise<TranscribeResult> {
     const totalStarted = performance.now();
-    const samples = await decodeToMonoF32_16k(input.audio);
+    const samples = await pcm16kFor(input);
     const decodeMs = Math.round(performance.now() - totalStarted);
     const command = await resolveWhisperCommand();
     const perf = isPerfDebugEnabled();
-    const pcmView = new Uint8Array(samples.buffer, samples.byteOffset, samples.byteLength);
-    const pcmBytes = new Uint8Array(pcmView.byteLength);
-    pcmBytes.set(pcmView);
+    const pcmBytes = pcmToBytes(samples);
     const headers = {
       "content-type": "application/octet-stream",
       "x-verbatim-pcm-format": "f32le-16000-mono",
@@ -351,6 +349,7 @@ export class LocalWhisperProvider implements Transcriber {
       "x-verbatim-language": input.language ?? "",
       "x-verbatim-translate": "false",
       "x-verbatim-compute-preference": getWhisperComputePreference(),
+      "x-verbatim-prompt": vocabularyPromptHeader(input.vocabularyHints),
     };
     const ipcPayloadBytes = pcmBytes.byteLength;
     const invokeStarted = performance.now();

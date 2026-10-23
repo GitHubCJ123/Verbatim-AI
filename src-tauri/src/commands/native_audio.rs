@@ -872,11 +872,22 @@ pub fn stop_native_session(
 pub fn take_native_recording(
     state: State<'_, NativeCaptureState>,
     session_id: u64,
-) -> Result<Vec<f32>, String> {
-    match state.existing_client() {
-        Some(client) => client.request(|reply| EngineCommand::TakeSession { session_id, reply }),
-        None => Ok(Vec::new()),
+) -> Result<tauri::ipc::Response, String> {
+    let pcm = match state.existing_client() {
+        Some(client) => client.request(|reply| EngineCommand::TakeSession { session_id, reply })?,
+        None => Vec::new(),
+    };
+    // Raw little-endian f32 bytes instead of a JSON number array: a minute of
+    // audio is ~1M floats, which is slow to serialize and parse as JSON.
+    Ok(tauri::ipc::Response::new(pcm_to_le_bytes(&pcm)))
+}
+
+fn pcm_to_le_bytes(pcm: &[f32]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(pcm.len() * 4);
+    for s in pcm {
+        out.extend_from_slice(&s.to_le_bytes());
     }
+    out
 }
 
 /// Drop a session buffer without returning audio.

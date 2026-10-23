@@ -10,8 +10,9 @@ use commands::{
     cancel_hotkey::{disable_cancel_shortcut, enable_cancel_shortcut, CancelHotkeyState},
     devtools::{open_devtools, open_main_devtools},
     fn_hotkey::{
-        open_input_monitoring_settings, request_input_monitoring, start_hotkey_capture,
-        stop_hotkey_capture, FnHotkeyState, HotkeyCaptureState,
+        get_modifier_hotkey_status, open_input_monitoring_settings, open_keyboard_settings,
+        request_input_monitoring, start_hotkey_capture, stop_hotkey_capture, FnHotkeyState,
+        HotkeyCaptureState,
     },
     hotkey::{clear_hotkey, handle_event as handle_hotkey_event, install_default, set_hotkey, HotkeyState},
     llama_cpp::{
@@ -29,10 +30,11 @@ use commands::{
         take_native_recording, NativeCaptureState,
     },
     parakeet::{
-        delete_parakeet_model, download_parakeet_model, install_parakeet_runtime,
-        is_parakeet_model_installed, is_parakeet_runtime_installed, list_parakeet_models,
-        transcribe_parakeet,
+        delete_parakeet_model, download_parakeet_model, ensure_parakeet_ready,
+        install_parakeet_runtime, is_parakeet_model_installed, is_parakeet_runtime_installed,
+        list_parakeet_models, transcribe_parakeet, transcribe_parakeet_pcm,
     },
+    parakeet_server::ParakeetServerState,
     paste::{
         capture_target_window, clear_target_window, insert_text_to_target, paste_to_target,
         TargetWindowState,
@@ -91,6 +93,7 @@ pub fn run() {
         .manage(CancelHotkeyState::default())
         .manage(TargetWindowState::default())
         .manage(WhisperServerState::default())
+        .manage(ParakeetServerState::default())
         .manage(StreamingSidecarState::default())
         .manage(NativeCaptureState::default())
         .plugin(tauri_plugin_opener::init())
@@ -138,6 +141,8 @@ pub fn run() {
             download_parakeet_model,
             delete_parakeet_model,
             transcribe_parakeet,
+            transcribe_parakeet_pcm,
+            ensure_parakeet_ready,
             is_llama_cpp_runtime_installed,
             install_llama_cpp_runtime,
             cleanup_llama_cpp,
@@ -147,6 +152,8 @@ pub fn run() {
             start_hotkey_capture,
             stop_hotkey_capture,
             request_input_monitoring,
+            get_modifier_hotkey_status,
+            open_keyboard_settings,
             check_accessibility_permission,
             request_accessibility_permission,
             open_accessibility_settings,
@@ -174,6 +181,7 @@ pub fn run() {
             install_default(&app.handle());
             tray::install(&app.handle())?;
             commands::whisper_server::init(&app.handle());
+            commands::parakeet_server::init(&app.handle());
             // Close-to-hide for the main window (plan §5 lifecycle).
             if let Some(window) = app.get_webview_window("main") {
                 // Fit the window to the available monitor so all UI is visible.
@@ -220,6 +228,7 @@ pub fn run() {
             }
             if let tauri::RunEvent::Exit = event {
                 commands::whisper_server::shutdown(app_handle);
+                commands::parakeet_server::shutdown(app_handle);
                 commands::streaming_sidecar::shutdown(app_handle);
             }
         });

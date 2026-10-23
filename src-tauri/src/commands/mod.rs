@@ -8,6 +8,7 @@ pub mod llama_cpp;
 pub mod local_whisper;
 pub mod native_audio;
 pub mod parakeet;
+pub mod parakeet_server;
 pub mod paste;
 pub mod process_list;
 pub mod relay;

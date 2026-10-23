@@ -4,7 +4,7 @@
  * of the pipeline.
  */
 import { invoke } from "@tauri-apps/api/core";
-import { decodeToMonoF32_16k } from "./audioDecode";
+import { pcm16kFor, pcmToBytes } from "./audioDecode";
 import type {
   ProviderHealth,
   Transcriber,
@@ -135,6 +135,11 @@ export function downloadParakeetModel(variant: ParakeetVariant): Promise<void> {
   return invoke("download_parakeet_model", { variant });
 }
 
+/** Load the model into the resident Parakeet server ahead of the first use. */
+export function ensureParakeetReady(variant: ParakeetVariant): Promise<void> {
+  return invoke("ensure_parakeet_ready", { variant });
+}
+
 export function deleteParakeetModel(variant: ParakeetVariant): Promise<void> {
   return invoke("delete_parakeet_model", { variant });
 }
@@ -151,18 +156,20 @@ export class ParakeetProvider implements Transcriber {
   }
 
   async transcribe(input: TranscribeInput): Promise<TranscribeResult> {
-    const samples = await decodeToMonoF32_16k(input.audio);
+    const samples = await pcm16kFor(input);
     const started = performance.now();
     const language = input.language ?? this.cfg.language;
+    // Raw f32 bytes, not a JSON number array (which is slow for long clips).
     const out = await invoke<{
       text: string;
       language_detected: string;
       duration_ms: number;
-    }>("transcribe_parakeet", {
-      args: {
-        variant: this.cfg.variant,
-        pcm: Array.from(samples),
-        language: language === "auto" ? null : language,
+    }>("transcribe_parakeet_pcm", pcmToBytes(samples), {
+      headers: {
+        "content-type": "application/octet-stream",
+        "x-verbatim-pcm-format": "f32le-16000-mono",
+        "x-verbatim-parakeet-variant": this.cfg.variant,
+        "x-verbatim-language": language === "auto" ? "" : language,
       },
     });
     const wallMs = Math.round(performance.now() - started);

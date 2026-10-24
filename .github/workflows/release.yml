@@ -185,10 +185,10 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $vkVersion = "1.3.290.0"
-          $vkInstaller = "VulkanSDK-$vkVersion-Installer.exe"
+          $vkVersion = "1.4.363.0"
+          $vkInstaller = "vulkansdk-windows-X64-$vkVersion.exe"
           $vkUrl = "https://sdk.lunarg.com/sdk/download/$vkVersion/windows/$vkInstaller"
-          $vkSha256 = "0ba0392a78157b82354157c5c988d74ddc6bc15573cc9c8653aa60245355fe8a"
+          $vkSha256 = "94a82d378f7a5e3e54c9db7d2fb7016af136e14ac0a18dbf0f2f67a36352d141"
           Invoke-WebRequest $vkUrl -OutFile $vkInstaller
           $actualSha256 = (Get-FileHash -Algorithm SHA256 -Path $vkInstaller).Hash.ToLower()
           if ($actualSha256 -ne $vkSha256) {

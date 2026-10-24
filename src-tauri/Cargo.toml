@@ -1,6 +1,6 @@
 [package]
 name = "verbatim-ai"
-version = "0.5.15"
+version = "0.5.16"
 description = "Verbatim AI — voice transcription for Windows"
 authors = ["Verbatim AI contributors"]
 edition = "2021"
@@ -30,7 +30,9 @@ serde_json = "1"
 # files into the app data dir, and shell out to it per transcription.
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "multipart"] }
 futures-util = "0.3"
-tokio = { version = "1", features = ["fs", "io-util", "sync", "macros", "process", "time"] }
+tokio = { version = "1", features = ["fs", "io-util", "sync", "macros", "process", "time", "net"] }
+# Loopback websocket client for the resident Parakeet (sherpa-onnx) server.
+tokio-tungstenite = { version = "0.26", default-features = false, features = ["connect"] }
 zip = { version = "2", default-features = false, features = ["deflate"] }
 
 # Parakeet transcription via sherpa-onnx CPU sidecar (Windows x64 + macOS arm64).

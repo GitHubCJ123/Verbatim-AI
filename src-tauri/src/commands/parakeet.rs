@@ -1,26 +1,32 @@
 //! Parakeet TDT v3 transcription via the sherpa-onnx CPU sidecar.
 //!
-//! Mirrors `local_whisper.rs`: we download a prebuilt `sherpa-onnx-offline`
-//! binary plus a Parakeet ONNX model bundle into the app data dir and shell
-//! out per transcription. CPU-only — no CUDA/CoreML providers in this build.
+//! Mirrors `local_whisper.rs`: we download the prebuilt sherpa-onnx runtime
+//! plus a Parakeet ONNX model bundle into the app data dir. Transcription runs
+//! on the resident `sherpa-onnx-offline-websocket-server` (see
+//! `parakeet_server.rs`) and falls back to the one-shot `sherpa-onnx-offline`
+//! CLI. CPU-only — no CUDA/CoreML providers in this build.
 //!
 //! Layout under `app_data_dir`:
-//!   parakeet-bin/sherpa-onnx-offline(.exe)   (+ supporting DLLs/dylibs)
+//!   parakeet-bin/sherpa-onnx-offline(.exe)   (+ websocket server, DLLs/dylibs)
 //!   parakeet-models/v3/encoder.int8.onnx
 //!   parakeet-models/v3/decoder.int8.onnx
 //!   parakeet-models/v3/joiner.int8.onnx
 //!   parakeet-models/v3/tokens.txt
 
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+use super::parakeet_server::{recognize, request_timeout, ParakeetServerLaunch, ParakeetServerState};
 use super::runtime_assets::{
-    clear_dir_contents, download_with_progress, extract_archive, locate_executable,
-    make_executables, strip_quarantine, ArchiveKind, DownloadProgress as RuntimeAssetProgress,
+    clear_dir_contents, download_with_progress, encode_wav_pcm16, extract_archive,
+    inference_threads, locate_executable, make_executables, pcm_from_le_bytes, strip_quarantine,
+    unique_tmp_stem, ArchiveKind, DownloadProgress as RuntimeAssetProgress,
 };
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{
+    ipc::{InvokeBody, Request},
+    AppHandle, Emitter, Manager, State,
+};
 use tokio::fs;
 use tokio::process::Command;
 
@@ -172,9 +178,14 @@ pub async fn is_parakeet_runtime_installed(app: AppHandle) -> Result<bool, Strin
 }
 
 #[tauri::command]
-pub async fn install_parakeet_runtime(app: AppHandle) -> Result<(), String> {
+pub async fn install_parakeet_runtime(
+    app: AppHandle,
+    state: State<'_, ParakeetServerState>,
+) -> Result<(), String> {
     let url = runtime_archive_url()?;
     let dir = bin_dir(&app)?;
+    // The resident server runs out of this directory (and locks it on Windows).
+    state.unload().await;
 
     // Wipe any previous extraction so we pick up version changes.
     clear_dir_contents(&dir)?;
@@ -185,7 +196,7 @@ pub async fn install_parakeet_runtime(app: AppHandle) -> Result<(), String> {
     let tmp_for_extract = tmp_archive.clone();
     tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
         extract_archive(&tmp_for_extract, &extract_dir, ArchiveKind::TarBz2)?;
-        make_executables(&extract_dir, &["sherpa-onnx-offline"]);
+        make_executables(&extract_dir, &["sherpa-onnx-offline", server_name()]);
         strip_quarantine(&extract_dir);
         Ok(())
     })
@@ -318,8 +329,14 @@ pub async fn download_parakeet_model(app: AppHandle, variant: String) -> Result<
 }
 
 #[tauri::command]
-pub async fn delete_parakeet_model(app: AppHandle, variant: String) -> Result<(), String> {
+pub async fn delete_parakeet_model(
+    app: AppHandle,
+    state: State<'_, ParakeetServerState>,
+    variant: String,
+) -> Result<(), String> {
     let v = parse_variant(&variant)?;
+    // Release the model files the resident server holds open.
+    state.unload().await;
     let dir = models_dir(&app, v)?;
     for f in model_files() {
         let p = dir.join(f);
@@ -351,46 +368,20 @@ pub struct TranscribeOutput {
     duration_ms: u64,
 }
 
-fn write_wav(path: &Path, samples: &[f32]) -> Result<(), String> {
-    let sample_rate: u32 = 16000;
-    let bits_per_sample: u16 = 16;
-    let num_channels: u16 = 1;
-    let byte_rate = sample_rate * (bits_per_sample as u32 / 8) * num_channels as u32;
-    let block_align = num_channels * bits_per_sample / 8;
-    let data_bytes = (samples.len() * 2) as u32;
-    let chunk_size = 36 + data_bytes;
-
-    let mut f = std::fs::File::create(path).map_err(|e| e.to_string())?;
-    f.write_all(b"RIFF").map_err(|e| e.to_string())?;
-    f.write_all(&chunk_size.to_le_bytes()).map_err(|e| e.to_string())?;
-    f.write_all(b"WAVE").map_err(|e| e.to_string())?;
-    f.write_all(b"fmt ").map_err(|e| e.to_string())?;
-    f.write_all(&16u32.to_le_bytes()).map_err(|e| e.to_string())?;
-    f.write_all(&1u16.to_le_bytes()).map_err(|e| e.to_string())?;
-    f.write_all(&num_channels.to_le_bytes()).map_err(|e| e.to_string())?;
-    f.write_all(&sample_rate.to_le_bytes()).map_err(|e| e.to_string())?;
-    f.write_all(&byte_rate.to_le_bytes()).map_err(|e| e.to_string())?;
-    f.write_all(&block_align.to_le_bytes()).map_err(|e| e.to_string())?;
-    f.write_all(&bits_per_sample.to_le_bytes()).map_err(|e| e.to_string())?;
-    f.write_all(b"data").map_err(|e| e.to_string())?;
-    f.write_all(&data_bytes.to_le_bytes()).map_err(|e| e.to_string())?;
-    let mut buf = Vec::with_capacity(samples.len() * 2);
-    for s in samples {
-        let clamped = s.clamp(-1.0, 1.0);
-        let v = (clamped * i16::MAX as f32) as i16;
-        buf.extend_from_slice(&v.to_le_bytes());
+fn server_name() -> &'static str {
+    #[cfg(windows)]
+    {
+        "sherpa-onnx-offline-websocket-server.exe"
     }
-    f.write_all(&buf).map_err(|e| e.to_string())?;
-    Ok(())
+    #[cfg(not(windows))]
+    {
+        "sherpa-onnx-offline-websocket-server"
+    }
 }
 
-#[tauri::command]
-pub async fn transcribe_parakeet(
-    app: AppHandle,
-    args: TranscribeArgs,
-) -> Result<TranscribeOutput, String> {
-    let v = parse_variant(&args.variant)?;
-    let dir = models_dir(&app, v)?;
+/// Model dir for `v` with every required file present, or a user-facing error.
+fn installed_model_dir(app: &AppHandle, v: ParakeetVariant) -> Result<PathBuf, String> {
+    let dir = models_dir(app, v)?;
     for fname in model_files() {
         if !dir.join(fname).exists() {
             return Err(format!(
@@ -400,43 +391,159 @@ pub async fn transcribe_parakeet(
             ));
         }
     }
-    let cli = locate_cli(&app)?.ok_or_else(|| {
+    Ok(dir)
+}
+
+/// Launch spec for the resident websocket server, or `None` when this runtime
+/// install doesn't include it (we then use the one-shot CLI).
+fn server_launch(
+    app: &AppHandle,
+    v: ParakeetVariant,
+    dir: &Path,
+) -> Result<Option<ParakeetServerLaunch>, String> {
+    let bin_root = bin_dir(app)?;
+    let Some(server_bin) = locate_executable(&bin_root, server_name()) else {
+        return Ok(None);
+    };
+    // Runtimes installed before the server was used only had the CLI marked
+    // executable (tar extraction doesn't keep modes); fix that up lazily.
+    make_executables(&bin_root, &[server_name()]);
+    let log_dir = app_data(app)?.join("parakeet-tmp");
+    std::fs::create_dir_all(&log_dir).map_err(|e| e.to_string())?;
+    Ok(Some(ParakeetServerLaunch {
+        server_bin,
+        encoder: dir.join("encoder.int8.onnx"),
+        decoder: dir.join("decoder.int8.onnx"),
+        joiner: dir.join("joiner.int8.onnx"),
+        tokens: dir.join("tokens.txt"),
+        log_file: log_dir.join("parakeet-server.log"),
+        key: v.tag().to_string(),
+        threads: inference_threads(),
+    }))
+}
+
+/// Load the model into the resident server ahead of time (hotkey press /
+/// app start) so the first transcription doesn't pay the multi-second load.
+#[tauri::command]
+pub async fn ensure_parakeet_ready(
+    app: AppHandle,
+    state: State<'_, ParakeetServerState>,
+    variant: String,
+) -> Result<(), String> {
+    let v = parse_variant(&variant)?;
+    let dir = installed_model_dir(&app, v)?;
+    if locate_cli(&app)?.is_none() {
+        return Err("sherpa-onnx runtime is not installed.".into());
+    }
+    match server_launch(&app, v, &dir)? {
+        Some(launch) => state.ensure_launch(launch).await.map(|_| ()),
+        None => Ok(()),
+    }
+}
+
+/// Raw-PCM transcription: the body is little-endian f32 16 kHz mono samples
+/// (no JSON number array), with the variant/language in headers.
+#[tauri::command]
+pub async fn transcribe_parakeet_pcm(
+    app: AppHandle,
+    state: State<'_, ParakeetServerState>,
+    request: Request<'_>,
+) -> Result<TranscribeOutput, String> {
+    let header = |name: &str| {
+        request
+            .headers()
+            .get(name)
+            .and_then(|v| v.to_str().ok())
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .map(ToOwned::to_owned)
+    };
+    if header("x-verbatim-pcm-format").as_deref() != Some("f32le-16000-mono") {
+        return Err("Unsupported or missing PCM format header".into());
+    }
+    let pcm = match request.body() {
+        InvokeBody::Raw(bytes) => pcm_from_le_bytes(bytes)?,
+        InvokeBody::Json(_) => return Err("PCM audio must be sent as raw bytes".into()),
+    };
+    let variant = header("x-verbatim-parakeet-variant").unwrap_or_else(|| "v3".into());
+    let language = header("x-verbatim-language").filter(|l| l != "auto");
+    transcribe_impl(&app, &state, &variant, pcm, language).await
+}
+
+#[tauri::command]
+pub async fn transcribe_parakeet(
+    app: AppHandle,
+    state: State<'_, ParakeetServerState>,
+    args: TranscribeArgs,
+) -> Result<TranscribeOutput, String> {
+    transcribe_impl(&app, &state, &args.variant, args.pcm, args.language).await
+}
+
+async fn transcribe_impl(
+    app: &AppHandle,
+    state: &ParakeetServerState,
+    variant: &str,
+    pcm: Vec<f32>,
+    language: Option<String>,
+) -> Result<TranscribeOutput, String> {
+    let v = parse_variant(variant)?;
+    let dir = installed_model_dir(app, v)?;
+    let cli = locate_cli(app)?.ok_or_else(|| {
         "sherpa-onnx runtime is not installed. Click 'Install runtime' in Settings → AI model."
             .to_string()
     })?;
-
-    if args.pcm.is_empty() {
+    if pcm.is_empty() {
         return Err("Empty audio buffer".into());
     }
-
-    let tmp_dir = app_data(&app)?.join("parakeet-tmp");
-    std::fs::create_dir_all(&tmp_dir).map_err(|e| e.to_string())?;
-    let wav_path = tmp_dir.join(format!(
-        "rec-{}.wav",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis())
-            .unwrap_or(0)
-    ));
-    write_wav(&wav_path, &args.pcm)?;
-
+    let language_detected = language.unwrap_or_else(|| "auto".into());
     let started = Instant::now();
-    let mut cmd = Command::new(&cli);
-    cmd.arg(format!(
-        "--encoder={}",
-        dir.join("encoder.int8.onnx").display()
-    ));
-    cmd.arg(format!(
-        "--decoder={}",
-        dir.join("decoder.int8.onnx").display()
-    ));
-    cmd.arg(format!(
-        "--joiner={}",
-        dir.join("joiner.int8.onnx").display()
-    ));
+
+    // Fast path: the warm resident server. Any failure (missing binary,
+    // startup error, crash mid-request, timeout) falls back to the one-shot
+    // CLI for this utterance, so a server problem costs latency, not the
+    // dictation. The next request respawns the server.
+    match server_launch(app, v, &dir) {
+        Ok(Some(launch)) => match state.ensure_launch(launch).await {
+            Ok(port) => match recognize(port, &pcm, request_timeout(pcm.len())).await {
+                Ok(text) => {
+                    return Ok(TranscribeOutput {
+                        text,
+                        language_detected,
+                        duration_ms: started.elapsed().as_millis() as u64,
+                    })
+                }
+                Err(e) => {
+                    eprintln!("[parakeet] warm server request failed, using CLI: {e}");
+                    state.unload().await;
+                }
+            },
+            Err(e) => eprintln!("[parakeet] warm server unavailable, using CLI: {e}"),
+        },
+        Ok(None) => {}
+        Err(e) => eprintln!("[parakeet] warm server launch failed, using CLI: {e}"),
+    }
+
+    let text = run_cli(app, &cli, &dir, &pcm).await?;
+    Ok(TranscribeOutput {
+        text,
+        language_detected,
+        duration_ms: started.elapsed().as_millis() as u64,
+    })
+}
+
+async fn run_cli(app: &AppHandle, cli: &Path, dir: &Path, pcm: &[f32]) -> Result<String, String> {
+    let tmp_dir = app_data(app)?.join("parakeet-tmp");
+    std::fs::create_dir_all(&tmp_dir).map_err(|e| e.to_string())?;
+    let wav_path = tmp_dir.join(format!("{}.wav", unique_tmp_stem("rec")));
+    std::fs::write(&wav_path, encode_wav_pcm16(pcm, 16_000)).map_err(|e| e.to_string())?;
+
+    let mut cmd = Command::new(cli);
+    cmd.arg(format!("--encoder={}", dir.join("encoder.int8.onnx").display()));
+    cmd.arg(format!("--decoder={}", dir.join("decoder.int8.onnx").display()));
+    cmd.arg(format!("--joiner={}", dir.join("joiner.int8.onnx").display()));
     cmd.arg(format!("--tokens={}", dir.join("tokens.txt").display()));
     cmd.arg("--model-type=nemo_transducer");
-    cmd.arg("--num-threads=4");
+    cmd.arg(format!("--num-threads={}", inference_threads()));
     cmd.arg(&wav_path);
 
     #[cfg(windows)]
@@ -446,14 +553,9 @@ pub async fn transcribe_parakeet(
         cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
     }
 
-    let output = cmd.output().await.map_err(|e| e.to_string())?;
+    let output = cmd.output().await.map_err(|e| e.to_string());
     let _ = fs::remove_file(&wav_path).await;
-    if !output.stderr.is_empty() {
-        eprintln!(
-            "[sherpa-onnx] {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        );
-    }
+    let output = output?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(format!(
@@ -466,14 +568,7 @@ pub async fn transcribe_parakeet(
     // sherpa-onnx prints diagnostics + a JSON object on stdout.
     // Locate the last `{...}` block and parse it.
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    let text = extract_transcript(&stdout).unwrap_or_else(|| stdout.trim().to_string());
-
-    let duration_ms = started.elapsed().as_millis() as u64;
-    Ok(TranscribeOutput {
-        text,
-        language_detected: args.language.unwrap_or_else(|| "auto".into()),
-        duration_ms,
-    })
+    Ok(extract_transcript(&stdout).unwrap_or_else(|| stdout.trim().to_string()))
 }
 
 /// Parse sherpa-onnx stdout to extract the transcript `text` field.

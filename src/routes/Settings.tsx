@@ -1,7 +1,15 @@
 import { useEffect, useState } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { listen } from "@tauri-apps/api/event";
-import { Download, Trash2, CheckCircle2, Loader2, RefreshCw, ExternalLink } from "lucide-react";
+import {
+  CheckCircle2,
+  ChevronRight,
+  Download,
+  ExternalLink,
+  Loader2,
+  RefreshCw,
+  Trash2,
+} from "lucide-react";
 import { toast } from "../components/ui/Toast";
 import { PageContainer, PageHeader } from "../components/layout/PageHeader";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "../components/ui/Tabs";
@@ -18,7 +26,14 @@ import {
   SelectItem,
 } from "../components/ui/Select";
 import { HotkeyRecorder } from "../components/settings/HotkeyRecorder";
-import { applyHotkey, isForcedHoldSpec, loadHotkeyConfig, saveHotkeyConfig } from "../lib/hotkey";
+import { SpeechModelPicker } from "../components/settings/SpeechModelPicker";
+import {
+  applyHotkey,
+  hotkeyDisplayParts,
+  isForcedHoldSpec,
+  loadHotkeyConfig,
+  saveHotkeyConfig,
+} from "../lib/hotkey";
 import { handleInputMonitoringError } from "../components/settings/inputMonitoring";
 import {
   isAutostartEnabled,
@@ -696,11 +711,23 @@ export default function Settings() {
   }, []);
 
   const handleHotkeyChange = async (spec: string) => {
+    const save = () =>
+      setHotkey((h) => ({ ...h, spec, pushToTalk: h.pushToTalk || isForcedHoldSpec(spec) }));
     try {
       await applyHotkey(spec);
-      setHotkey((h) => ({ ...h, spec, pushToTalk: h.pushToTalk || isForcedHoldSpec(spec) }));
-      toast.success("Hotkey updated", { description: `Now using ${spec}` });
+      save();
+      toast.success("Hotkey updated", {
+        description: `Now using ${hotkeyDisplayParts(spec).join(" ")}`,
+      });
     } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      if (message.includes("needs-input-monitoring")) {
+        // Keep the choice: the status panel under the recorder walks the user
+        // through the permission and activates fn / right ⌘ once granted (and
+        // the saved spec is re-registered on every launch).
+        save();
+        return;
+      }
       if (!handleInputMonitoringError(e)) {
         toast.error("Couldn't register that shortcut", {
           description: e instanceof Error ? e.message : String(e),
@@ -937,6 +964,7 @@ function ModelTab() {
   >({} as Record<WhisperTier, { downloaded: number; total: number } | undefined>);
   const [transcriptionTest, setTranscriptionTest] = useState<ProviderTestStatus | null>(null);
   const [testingTranscription, setTestingTranscription] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   const refresh = async () => {
     try {
@@ -1016,6 +1044,14 @@ function ModelTab() {
         });
       });
     }
+  };
+
+  // The curated picker changed the engine/model: resync the advanced view.
+  const onPickerChange = () => {
+    setKind(getAiProviderKind());
+    setSelectedTier(getLocalWhisperTier());
+    setTranscriptionTest(null);
+    void refresh();
   };
 
   const handleTierChange = (tier: WhisperModelId) => {
@@ -1114,45 +1150,12 @@ function ModelTab() {
         <CardContent className="p-5 pt-5">
           <StageHeader
             eyebrow="Step 1"
-            title="Transcription"
-            description="Turn audio into text. Pick the engine first, then tune the model options that belong to that engine."
+            title="Speech model"
+            description="Turns your voice into text, entirely on this computer. Pick one — it downloads what it needs and switches over when ready."
           />
-          <SettingRow
-            id="transcription-provider"
-            title="Transcription engine"
-            description={
-              CLOUD_FEATURES_ENABLED
-                ? "Where speech-to-text runs. Cloud is the default. Local engines keep audio on this machine once a model is downloaded."
-                : "Where speech-to-text runs. Whisper and Parakeet keep audio on this machine once a model is downloaded."
-            }
-          >
-            <Select value={kind} onValueChange={(v) => handleProviderChange(v as AiProviderKind)}>
-              <SelectTrigger className="w-56">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {CLOUD_FEATURES_ENABLED && (
-                  <SelectItem value="cloud">Cloud — Azure Whisper</SelectItem>
-                )}
-                <SelectItem value="local-whisper">Local — Whisper</SelectItem>
-                <SelectItem value="local-parakeet">Local — Parakeet</SelectItem>
-              </SelectContent>
-            </Select>
-          </SettingRow>
-
-          <div className="pt-3 text-xs text-text-muted">
-            Cleanup and tone polish are configured separately in the next section.
+          <div className="mt-3">
+            <SpeechModelPicker onChange={onPickerChange} />
           </div>
-
-          {kind === "cloud" && (
-            <div className="mt-5 rounded-md border border-border-subtle bg-bg-base/40 p-4">
-              <div className="text-sm font-medium">Azure Whisper</div>
-              <div className="mt-1 text-xs leading-relaxed text-text-muted">
-                No local model download is needed. Audio is sent to the Verbatim cloud just long
-                enough to transcribe it.
-              </div>
-            </div>
-          )}
 
           <ProviderTestControl
             id="test-transcription"
@@ -1162,223 +1165,273 @@ function ModelTab() {
             onTest={handleTestTranscription}
           />
 
-          {kind === "local-whisper" && (
-            <div className="mt-5 border-t border-border-subtle pt-5">
-              <div className="mb-3 text-sm font-medium">Whisper.cpp models</div>
-              <div className="mb-4 text-xs text-text-muted">
-                Local Whisper uses whisper.cpp, the ggml speech-to-text runtime. Pick a tier based
-                on your machine. Larger = more accurate, slower. The runtime is set up automatically
-                with your first download.
-              </div>
+          <button
+            type="button"
+            onClick={() => setShowAdvanced((v) => !v)}
+            className="mt-4 inline-flex items-center gap-1 text-xs text-text-muted hover:text-text-secondary"
+            aria-expanded={showAdvanced}
+          >
+            <ChevronRight
+              className={`h-3.5 w-3.5 transition-transform ${showAdvanced ? "rotate-90" : ""}`}
+            />
+            Advanced options — every model, compute device, custom models
+          </button>
+
+          {showAdvanced && (
+            <div className="mt-3 border-t border-border-subtle pt-3">
               <SettingRow
-                title="Compute device"
-                description={`Auto currently resolves to ${
-                  activeRuntime
-                    ? whisperRuntimeVariantLabel(activeRuntime)
-                    : "the best available backend"
-                }.`}
+                id="transcription-provider"
+                title="Transcription engine"
+                description={
+                  CLOUD_FEATURES_ENABLED
+                    ? "Where speech-to-text runs. Cloud is the default. Local engines keep audio on this machine once a model is downloaded."
+                    : "Where speech-to-text runs. Whisper and Parakeet keep audio on this machine once a model is downloaded."
+                }
               >
-                <Select
-                  value={computePreference}
-                  onValueChange={(v) => handleComputeChange(v as WhisperComputePreference)}
-                >
-                  <SelectTrigger className="w-48">
+                <Select value={kind} onValueChange={(v) => handleProviderChange(v as AiProviderKind)}>
+                  <SelectTrigger className="w-56">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {(["auto", "cuda", "vulkan", "cpu"] as WhisperComputePreference[]).map((v) => (
-                      <SelectItem key={v} value={v}>
-                        {whisperComputePreferenceLabel(v)}
-                      </SelectItem>
-                    ))}
+                    {CLOUD_FEATURES_ENABLED && (
+                      <SelectItem value="cloud">Cloud — Azure Whisper</SelectItem>
+                    )}
+                    <SelectItem value="local-whisper">Local — Whisper</SelectItem>
+                    <SelectItem value="local-parakeet">Local — Parakeet</SelectItem>
                   </SelectContent>
                 </Select>
               </SettingRow>
-              {installingRuntime && (
-                <div className="mb-3 rounded-md border border-border-subtle bg-bg-elevated/40 p-3">
-                  <div className="mb-1 flex items-center gap-2 text-xs text-text-secondary">
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    Setting up the on-device engine (one time, ~5 MB)…
+
+
+              {kind === "cloud" && (
+                <div className="mt-5 rounded-md border border-border-subtle bg-bg-base/40 p-4">
+                  <div className="text-sm font-medium">Azure Whisper</div>
+                  <div className="mt-1 text-xs leading-relaxed text-text-muted">
+                    No local model download is needed. Audio is sent to the Verbatim cloud just long
+                    enough to transcribe it.
                   </div>
-                  {installingRuntime.total > 0 && (
-                    <ProgressBar
-                      value={Math.round(
-                        (installingRuntime.downloaded / installingRuntime.total) * 100,
-                      )}
-                    />
-                  )}
                 </div>
               )}
-              <RuntimeRow
-                title="Runtime"
-                description={`Downloads the ${
-                  activeRuntime ? whisperRuntimeVariantLabel(activeRuntime) : "selected"
-                } whisper.cpp sidecar used for local speech-to-text.`}
-                installed={runtimeInstalled}
-                installing={!!installingRuntime}
-                onInstall={handleInstallRuntime}
-              />
-              <div className="flex flex-col gap-2">
-                {WHISPER_TIERS.map((meta) => {
-                  const info = models.find((m) => m.tier === meta.tier);
-                  const installed = !!info?.installed;
-                  const isSelected = selectedTier === meta.tier;
-                  const dl = downloading[meta.tier];
-                  const dlPct =
-                    dl && dl.total > 0 ? Math.round((dl.downloaded / dl.total) * 100) : undefined;
-                  return (
-                    <div
-                      key={meta.tier}
-                      className={`flex flex-col gap-2 rounded-md border p-3 ${
-                        isSelected ? "border-accent bg-accent/5" : "border-border-subtle"
-                      }`}
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="flex flex-col gap-0.5">
-                          <div className="flex items-center gap-2">
-                            <span className="text-sm font-medium">{meta.label}</span>
-                            <span className="text-xs text-text-muted">·</span>
-                            <span className="text-xs text-text-muted">{meta.tier}</span>
-                            <span className="text-xs text-text-muted">·</span>
-                            <span className="text-xs text-text-muted">
-                              {formatSize(meta.approxSizeMB)}
-                            </span>
-                            {installed && (
-                              <span className="inline-flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
-                                <CheckCircle2 className="h-3.5 w-3.5" /> installed
-                              </span>
-                            )}
-                          </div>
-                          <div className="text-xs text-text-muted">{meta.blurb}</div>
-                          <div className="text-xs text-text-muted">
-                            Best for: {meta.recommendedFor}
-                          </div>
-                        </div>
-                        <div className="flex shrink-0 items-center gap-2">
-                          {installed ? (
-                            <>
-                              <Button
-                                variant={isSelected ? "primary" : "secondary"}
-                                size="sm"
-                                onClick={() => handleTierChange(meta.tier)}
-                                disabled={isSelected}
-                              >
-                                {isSelected ? "In use" : "Use this"}
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => handleDelete(meta.tier)}
-                                title="Remove model file"
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </Button>
-                            </>
-                          ) : dl ? (
-                            <Button variant="secondary" size="sm" disabled>
-                              <Loader2 className="mr-1 h-4 w-4 animate-spin" />
-                              {dlPct !== undefined ? `${dlPct}%` : "Starting…"}
-                            </Button>
-                          ) : (
-                            <Button
-                              variant="secondary"
-                              size="sm"
-                              onClick={() => handleDownload(meta.tier)}
-                            >
-                              <Download className="mr-1 h-4 w-4" />
-                              Download
-                            </Button>
-                          )}
-                        </div>
-                      </div>
-                      {dl && dlPct !== undefined && <ProgressBar value={dlPct} />}
-                    </div>
-                  );
-                })}
-              </div>
 
-              <div className="mt-5 border-t border-border-subtle pt-5">
-                <div className="mb-1 flex items-center justify-between gap-3">
-                  <div className="text-sm font-medium">Custom models</div>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={handleRescan}
-                    disabled={rescanning}
-                  >
-                    {rescanning ? (
-                      <Loader2 className="mr-1 h-4 w-4 animate-spin" />
-                    ) : (
-                      <RefreshCw className="mr-1 h-4 w-4" />
-                    )}
-                    Rescan
-                  </Button>
-                </div>
-                <div className="mb-3 text-xs text-text-muted">
-                  Bring your own model: drop a <code>.bin</code> or <code>.gguf</code> whisper.cpp
-                  model into the models folder, then Rescan to select it here.
-                </div>
-                {customModels.length === 0 ? (
-                  <div className="rounded-md border border-dashed border-border-subtle p-3 text-xs text-text-muted">
-                    No custom models found. Add a <code>.bin</code>/<code>.gguf</code> file to the
-                    whisper-models folder and press Rescan.
+              {kind === "local-whisper" && (
+                <div className="mt-5 border-t border-border-subtle pt-5">
+                  <div className="mb-3 text-sm font-medium">Whisper.cpp models</div>
+                  <div className="mb-4 text-xs text-text-muted">
+                    Local Whisper uses whisper.cpp, the ggml speech-to-text runtime. Pick a tier based
+                    on your machine. Larger = more accurate, slower. The runtime is set up automatically
+                    with your first download.
                   </div>
-                ) : (
+                  <SettingRow
+                    title="Compute device"
+                    description={`Auto currently resolves to ${
+                      activeRuntime
+                        ? whisperRuntimeVariantLabel(activeRuntime)
+                        : "the best available backend"
+                    }.`}
+                  >
+                    <Select
+                      value={computePreference}
+                      onValueChange={(v) => handleComputeChange(v as WhisperComputePreference)}
+                    >
+                      <SelectTrigger className="w-48">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {(["auto", "cuda", "vulkan", "cpu"] as WhisperComputePreference[]).map((v) => (
+                          <SelectItem key={v} value={v}>
+                            {whisperComputePreferenceLabel(v)}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </SettingRow>
+                  {installingRuntime && (
+                    <div className="mb-3 rounded-md border border-border-subtle bg-bg-elevated/40 p-3">
+                      <div className="mb-1 flex items-center gap-2 text-xs text-text-secondary">
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        Setting up the on-device engine (one time, ~5 MB)…
+                      </div>
+                      {installingRuntime.total > 0 && (
+                        <ProgressBar
+                          value={Math.round(
+                            (installingRuntime.downloaded / installingRuntime.total) * 100,
+                          )}
+                        />
+                      )}
+                    </div>
+                  )}
+                  <RuntimeRow
+                    title="Runtime"
+                    description={`Downloads the ${
+                      activeRuntime ? whisperRuntimeVariantLabel(activeRuntime) : "selected"
+                    } whisper.cpp sidecar used for local speech-to-text.`}
+                    installed={runtimeInstalled}
+                    installing={!!installingRuntime}
+                    onInstall={handleInstallRuntime}
+                  />
                   <div className="flex flex-col gap-2">
-                    {customModels.map((cm) => {
-                      const isSelected = selectedTier === cm.id;
+                    {WHISPER_TIERS.map((meta) => {
+                      const info = models.find((m) => m.tier === meta.tier);
+                      const installed = !!info?.installed;
+                      const isSelected = selectedTier === meta.tier;
+                      const dl = downloading[meta.tier];
+                      const dlPct =
+                        dl && dl.total > 0 ? Math.round((dl.downloaded / dl.total) * 100) : undefined;
                       return (
                         <div
-                          key={cm.id}
-                          className={`flex items-start justify-between gap-3 rounded-md border p-3 ${
+                          key={meta.tier}
+                          className={`flex flex-col gap-2 rounded-md border p-3 ${
                             isSelected ? "border-accent bg-accent/5" : "border-border-subtle"
                           }`}
                         >
-                          <div className="flex min-w-0 flex-col gap-0.5">
-                            <div className="flex items-center gap-2">
-                              <span className="truncate text-sm font-medium">
-                                {cm.displayName}
-                              </span>
-                              <span className="text-xs text-text-muted">·</span>
-                              <span className="text-xs text-text-muted">Custom</span>
-                              <span className="text-xs text-text-muted">·</span>
-                              <span className="text-xs text-text-muted">
-                                {formatBytes(cm.sizeBytes)}
-                              </span>
-                              <span className="inline-flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
-                                <CheckCircle2 className="h-3.5 w-3.5" /> installed
-                              </span>
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="flex flex-col gap-0.5">
+                              <div className="flex items-center gap-2">
+                                <span className="text-sm font-medium">{meta.label}</span>
+                                <span className="text-xs text-text-muted">·</span>
+                                <span className="text-xs text-text-muted">{meta.tier}</span>
+                                <span className="text-xs text-text-muted">·</span>
+                                <span className="text-xs text-text-muted">
+                                  {formatSize(meta.approxSizeMB)}
+                                </span>
+                                {installed && (
+                                  <span className="inline-flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
+                                    <CheckCircle2 className="h-3.5 w-3.5" /> installed
+                                  </span>
+                                )}
+                              </div>
+                              <div className="text-xs text-text-muted">{meta.blurb}</div>
+                              <div className="text-xs text-text-muted">
+                                Best for: {meta.recommendedFor}
+                              </div>
                             </div>
-                            <div className="truncate text-xs text-text-muted">{cm.fileName}</div>
+                            <div className="flex shrink-0 items-center gap-2">
+                              {installed ? (
+                                <>
+                                  <Button
+                                    variant={isSelected ? "primary" : "secondary"}
+                                    size="sm"
+                                    onClick={() => handleTierChange(meta.tier)}
+                                    disabled={isSelected}
+                                  >
+                                    {isSelected ? "In use" : "Use this"}
+                                  </Button>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => handleDelete(meta.tier)}
+                                    title="Remove model file"
+                                  >
+                                    <Trash2 className="h-4 w-4" />
+                                  </Button>
+                                </>
+                              ) : dl ? (
+                                <Button variant="secondary" size="sm" disabled>
+                                  <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+                                  {dlPct !== undefined ? `${dlPct}%` : "Starting…"}
+                                </Button>
+                              ) : (
+                                <Button
+                                  variant="secondary"
+                                  size="sm"
+                                  onClick={() => handleDownload(meta.tier)}
+                                >
+                                  <Download className="mr-1 h-4 w-4" />
+                                  Download
+                                </Button>
+                              )}
+                            </div>
                           </div>
-                          <div className="flex shrink-0 items-center gap-2">
-                            <Button
-                              variant={isSelected ? "primary" : "secondary"}
-                              size="sm"
-                              onClick={() => handleTierChange(cm.id)}
-                              disabled={isSelected}
-                            >
-                              {isSelected ? "In use" : "Use this"}
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => handleDelete(cm.id)}
-                              title="Remove model file"
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
-                          </div>
+                          {dl && dlPct !== undefined && <ProgressBar value={dlPct} />}
                         </div>
                       );
                     })}
                   </div>
-                )}
-              </div>
+
+                  <div className="mt-5 border-t border-border-subtle pt-5">
+                    <div className="mb-1 flex items-center justify-between gap-3">
+                      <div className="text-sm font-medium">Custom models</div>
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={handleRescan}
+                        disabled={rescanning}
+                      >
+                        {rescanning ? (
+                          <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+                        ) : (
+                          <RefreshCw className="mr-1 h-4 w-4" />
+                        )}
+                        Rescan
+                      </Button>
+                    </div>
+                    <div className="mb-3 text-xs text-text-muted">
+                      Bring your own model: drop a <code>.bin</code> or <code>.gguf</code> whisper.cpp
+                      model into the models folder, then Rescan to select it here.
+                    </div>
+                    {customModels.length === 0 ? (
+                      <div className="rounded-md border border-dashed border-border-subtle p-3 text-xs text-text-muted">
+                        No custom models found. Add a <code>.bin</code>/<code>.gguf</code> file to the
+                        whisper-models folder and press Rescan.
+                      </div>
+                    ) : (
+                      <div className="flex flex-col gap-2">
+                        {customModels.map((cm) => {
+                          const isSelected = selectedTier === cm.id;
+                          return (
+                            <div
+                              key={cm.id}
+                              className={`flex items-start justify-between gap-3 rounded-md border p-3 ${
+                                isSelected ? "border-accent bg-accent/5" : "border-border-subtle"
+                              }`}
+                            >
+                              <div className="flex min-w-0 flex-col gap-0.5">
+                                <div className="flex items-center gap-2">
+                                  <span className="truncate text-sm font-medium">
+                                    {cm.displayName}
+                                  </span>
+                                  <span className="text-xs text-text-muted">·</span>
+                                  <span className="text-xs text-text-muted">Custom</span>
+                                  <span className="text-xs text-text-muted">·</span>
+                                  <span className="text-xs text-text-muted">
+                                    {formatBytes(cm.sizeBytes)}
+                                  </span>
+                                  <span className="inline-flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
+                                    <CheckCircle2 className="h-3.5 w-3.5" /> installed
+                                  </span>
+                                </div>
+                                <div className="truncate text-xs text-text-muted">{cm.fileName}</div>
+                              </div>
+                              <div className="flex shrink-0 items-center gap-2">
+                                <Button
+                                  variant={isSelected ? "primary" : "secondary"}
+                                  size="sm"
+                                  onClick={() => handleTierChange(cm.id)}
+                                  disabled={isSelected}
+                                >
+                                  {isSelected ? "In use" : "Use this"}
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => handleDelete(cm.id)}
+                                  title="Remove model file"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {kind === "local-parakeet" && <ParakeetSection />}
             </div>
           )}
-
-          {kind === "local-parakeet" && <ParakeetSection />}
         </CardContent>
       </Card>
 
@@ -1825,14 +1878,14 @@ function CleanupSection() {
     <Card>
       <CardContent className="p-5 pt-5">
         <StageHeader
-          eyebrow="Step 2"
-          title="Cleanup"
-          description="Turn the transcript into the final text. Pick the cleanup engine first, then choose the model or raw-output behavior inside the same section."
+          eyebrow="Step 2 · optional"
+          title="AI polish"
+          description="A local language model rewrites the transcript in each Mode's tone — grammar, fillers, formatting. Off pastes exactly what you said, with no extra delay."
         />
         <SettingRow
           id="cleanup-provider"
-          title="Cleanup engine"
-          description="Where tone polish and grammar fixes run. This is text cleanup only, independent from transcription."
+          title="Polish with"
+          description="Ollama is recommended (install it once from ollama.com). llama.cpp runs a model without Ollama."
         >
           <Select value={kind} onValueChange={(v) => handleKind(v as CleanupChoice)}>
             <SelectTrigger className="w-56">
@@ -1840,9 +1893,9 @@ function CleanupSection() {
             </SelectTrigger>
             <SelectContent>
               {CLOUD_FEATURES_ENABLED && <SelectItem value="cloud">Cloud — Azure GPT</SelectItem>}
-              <SelectItem value="local-ollama">Local — Ollama</SelectItem>
-              <SelectItem value="local-llama-cpp">Local — llama.cpp</SelectItem>
-              <SelectItem value="none">None — raw transcript</SelectItem>
+              <SelectItem value="none">Off — paste what I said</SelectItem>
+              <SelectItem value="local-ollama">Ollama (recommended)</SelectItem>
+              <SelectItem value="local-llama-cpp">llama.cpp</SelectItem>
             </SelectContent>
           </Select>
         </SettingRow>

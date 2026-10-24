@@ -41,6 +41,9 @@ import {
   SelectItem,
 } from "../../components/ui/Select";
 import { HotkeyRecorder } from "../../components/settings/HotkeyRecorder";
+import { SpeechModelPicker } from "../../components/settings/SpeechModelPicker";
+import { speechChoiceById } from "../../lib/ai/speechChoices";
+import { prewarmEngines } from "../../lib/ai";
 import {
   applyOnboarding,
   COMMON_APPS,
@@ -56,6 +59,7 @@ import {
   hotkeyDisplayParts,
   DEFAULT_SPEC,
   IS_MAC,
+  isForcedHoldSpec,
 } from "../../lib/hotkey";
 import { cn } from "../../lib/utils";
 import { useAuth } from "../../lib/store/useAuth";
@@ -78,16 +82,10 @@ import { useTheme, type Theme } from "../../lib/theme";
 import {
   getAiProviderKind,
   setAiProviderKind,
-  getLocalWhisperTier,
   setLocalWhisperTier,
-  isCustomModelId,
-  listLocalModels,
   downloadLocalModel,
   isWhisperRuntimeInstalled,
   installWhisperRuntime,
-  WHISPER_TIERS,
-  type AiProviderKind,
-  type LocalModelInfo,
   type WhisperTier,
   getCleanupProviderKind,
   setCleanupProviderKind,
@@ -101,19 +99,11 @@ import {
   type OllamaModelInfo,
   isParakeetRuntimeInstalled,
   installParakeetRuntime,
-  listParakeetModels,
   downloadParakeetModel,
-  getParakeetVariant,
   setParakeetVariant,
-  PARAKEET_VARIANTS,
-  type ParakeetVariant,
 } from "../../lib/ai";
-import { listen } from "@tauri-apps/api/event";
 import {
-  Cloud,
-  Cpu,
   ShieldCheck,
-  Download,
   CheckCircle2,
   Wand2,
   ExternalLink,
@@ -125,7 +115,6 @@ import {
   Briefcase,
   ClipboardList,
 } from "lucide-react";
-import { ProgressBar } from "../../components/ui/ProgressBar";
 
 const TOTAL_STEPS = 13;
 
@@ -278,10 +267,10 @@ async function applyQuickDefaults() {
   await applyHotkey(cfg.spec);
   saveHotkeyConfig({ spec: cfg.spec, pushToTalk: true });
   if (isLocalMode()) {
-    setAiProviderKind("local-whisper");
+    // The speech model itself is chosen once its download finishes (see
+    // setupLocalModelInBackground) so we never point at a missing model.
     setCleanupProviderKind("local-ollama");
     setAiImproveDisabled(true);
-    setLocalWhisperTier("tiny");
   } else {
     setAiProviderKind("cloud");
     setCleanupProviderKind("cloud");
@@ -300,20 +289,37 @@ async function applyQuickDefaults() {
 // surface as a toast with a retry pointer instead of leaving the user with a
 // silent, unusable app.
 async function setupLocalModelInBackground() {
-  try {
-    toast.success("Setting up local dictation…", {
-      description: "Downloading a small on-device model so dictation works offline.",
-    });
-    if (!(await isWhisperRuntimeInstalled())) await installWhisperRuntime();
-    await downloadLocalModel("tiny");
-    toast.success("Local model ready", { description: "You can dictate now." });
-  } catch (e) {
-    toast.error("Couldn't finish local model setup", {
-      description:
-        (e instanceof Error ? e.message : String(e)) +
-        " — retry from Settings → AI model.",
-    });
+  toast.success("Setting up local dictation…", {
+    description: "Downloading the on-device speech model so dictation works offline.",
+  });
+  // Parakeet v3 is the fast, accurate default; if it can't be installed on
+  // this machine (e.g. an Intel Mac), fall back to Whisper Base.
+  let lastError: unknown = null;
+  for (const id of ["parakeet-v3", "whisper-base"] as const) {
+    const choice = speechChoiceById(id);
+    try {
+      if (choice.engine === "local-parakeet") {
+        if (!(await isParakeetRuntimeInstalled())) await installParakeetRuntime();
+        await downloadParakeetModel(choice.variant ?? "v3");
+        setParakeetVariant(choice.variant ?? "v3");
+      } else {
+        if (!(await isWhisperRuntimeInstalled())) await installWhisperRuntime();
+        await downloadLocalModel((choice.tier ?? "base") as WhisperTier);
+        setLocalWhisperTier(choice.tier ?? "base");
+      }
+      setAiProviderKind(choice.engine);
+      prewarmEngines(null);
+      toast.success("Local model ready", { description: "You can dictate now." });
+      return;
+    } catch (e) {
+      lastError = e;
+    }
   }
+  toast.error("Couldn't finish local model setup", {
+    description:
+      (lastError instanceof Error ? lastError.message : String(lastError)) +
+      " — retry from Settings → AI model.",
+  });
 }
 
 function Welcome() {
@@ -550,21 +556,30 @@ function HotkeyStep() {
   const commit = async () => {
     try {
       await applyHotkey(hotkey);
-      saveHotkeyConfig({ spec: hotkey, pushToTalk: ptt });
-      setOverlayPosition(pos);
-      next();
     } catch (e) {
-      toast.error("Couldn't register that shortcut", {
-        description: e instanceof Error ? e.message : String(e),
-      });
+      const message = e instanceof Error ? e.message : String(e);
+      // fn / right ⌘ without Input Monitoring yet: keep the choice (it is
+      // re-registered on every launch) — the status panel above explains
+      // the remaining step. Any other failure means the shortcut is unusable.
+      if (!message.includes("needs-input-monitoring")) {
+        toast.error("Couldn't register that shortcut", { description: message });
+        return;
+      }
     }
+    saveHotkeyConfig({ spec: hotkey, pushToTalk: ptt || isForcedHoldSpec(hotkey) });
+    setOverlayPosition(pos);
+    next();
   };
 
   return (
     <div>
       <StepHeading
         title="Pick your shortcut"
-        subtitle={`Hold this anywhere on ${osName()} to start dictating.`}
+        subtitle={
+          IS_MAC
+            ? "Hold it anywhere to dictate, release to paste. Most people use fn."
+            : `Hold this anywhere on ${osName()} to start dictating.`
+        }
       />
       <Card className="mt-8">
         <CardContent className="flex flex-col gap-5 p-6 pt-6">
@@ -876,56 +891,11 @@ function TestRecording() {
 
 // ─── Step: AI model ──────────────────────────────────────────────────────
 
-interface ProviderOption {
-  kind: AiProviderKind;
-  title: string;
-  subtitle: string;
-  Icon: typeof Cloud;
-  bullets: string[];
-}
-
-const PROVIDER_OPTIONS: ProviderOption[] = [
-  {
-    kind: "cloud",
-    title: "Cloud (recommended)",
-    subtitle: "Azure Whisper · zero setup",
-    Icon: Cloud,
-    bullets: [
-      "Fast, accurate, no download",
-      "Audio is processed then immediately discarded",
-      "Needs internet",
-    ],
-  },
-  {
-    kind: "local-whisper",
-    title: "Local Whisper",
-    subtitle: "On-device · whisper.cpp",
-    Icon: Cpu,
-    bullets: [
-      "Audio never leaves your machine",
-      "Works fully offline once downloaded",
-      "Quality scales with model size and your CPU/GPU",
-    ],
-  },
-  {
-    kind: "local-parakeet",
-    title: "Parakeet TDT",
-    subtitle: "On-device · CPU",
-    Icon: Cpu,
-    bullets: [
-      "Audio never leaves your machine",
-      "Pick v2 (English) or v3 (25 European languages)",
-      "Runs on CPU — no GPU required",
-    ],
-  },
-];
-
 type CleanupChoice = CleanupProviderKind | "none";
 
 function AIStep() {
   const back = useOnboarding((s) => s.back);
   const next = useOnboarding((s) => s.next);
-  const [kind, setKind] = useState<AiProviderKind>(getAiProviderKind());
   const [cleanup, setCleanup] = useState<CleanupChoice>(() =>
     isAiImproveDisabled() ? "none" : getCleanupProviderKind(),
   );
@@ -933,17 +903,11 @@ function AIStep() {
   useEffect(() => {
     if (isLocalMode() && getAiProviderKind() === "cloud") {
       setAiProviderKind("local-whisper");
-      setKind("local-whisper");
       setCleanupProviderKind("local-ollama");
       setAiImproveDisabled(true);
       setCleanup("none");
     }
   }, []);
-
-  const choose = (k: AiProviderKind) => {
-    setAiProviderKind(k);
-    setKind(k);
-  };
 
   const chooseCleanup = (k: CleanupChoice) => {
     if (k === "none") {
@@ -980,63 +944,15 @@ function AIStep() {
       </Card>
 
       <div className="mt-4 text-xs font-medium uppercase tracking-wide text-text-muted">
-        Transcription
+        Speech model
       </div>
-      <div className="mt-2 flex flex-col gap-2">
-        {PROVIDER_OPTIONS.filter((opt) => CLOUD_FEATURES_ENABLED || opt.kind !== "cloud").map(
-          (opt) => {
-            const selected = kind === opt.kind;
-            return (
-              <button
-                key={opt.kind}
-                type="button"
-                onClick={() => choose(opt.kind)}
-                className={cn(
-                  "flex items-start gap-3 rounded-md border px-4 py-3 text-left transition-all",
-                  selected
-                    ? "border-accent-solid/60 bg-accent-solid/10"
-                    : "border-border-subtle bg-bg-elevated hover:border-border-strong",
-                )}
-              >
-                <span
-                  className={cn(
-                    "flex h-9 w-9 shrink-0 items-center justify-center rounded-md",
-                    selected
-                      ? "bg-accent-solid/20 text-accent-solid"
-                      : "bg-bg-base text-text-secondary",
-                  )}
-                >
-                  <opt.Icon className="h-4 w-4" />
-                </span>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <div className="text-sm font-medium">{opt.title}</div>
-                    <div className="text-[11px] text-text-muted">{opt.subtitle}</div>
-                  </div>
-                  <ul className="mt-1 flex flex-col gap-0.5 text-[11px] text-text-muted">
-                    {opt.bullets.map((b) => (
-                      <li key={b}>• {b}</li>
-                    ))}
-                  </ul>
-                </div>
-                <span
-                  className={cn(
-                    "mt-1 flex h-4 w-4 shrink-0 items-center justify-center rounded-pill border",
-                    selected
-                      ? "border-transparent bg-accent-solid text-white"
-                      : "border-border-strong",
-                  )}
-                >
-                  {selected && <Check className="h-3 w-3" strokeWidth={3} />}
-                </span>
-              </button>
-            );
-          },
-        )}
+      <div className="mt-2">
+        <SpeechModelPicker />
       </div>
-
-      {kind === "local-whisper" && <LocalWhisperInstaller />}
-      {kind === "local-parakeet" && <LocalParakeetInstaller />}
+      <p className="mt-2 text-[11px] text-text-muted">
+        More models (every Whisper size, Parakeet English-only, your own files) are in Settings →
+        AI model → Advanced options.
+      </p>
 
       <div className="mt-5 text-xs font-medium uppercase tracking-wide text-text-muted">
         Cleanup (tone polish)
@@ -1233,364 +1149,6 @@ function OllamaConfig() {
         </div>
       </CardContent>
     </Card>
-  );
-}
-
-function LocalWhisperInstaller() {
-  const [tier, setTier] = useState<WhisperTier>(() => {
-    const id = getLocalWhisperTier();
-    return isCustomModelId(id) ? "turbo" : id;
-  });
-  const [models, setModels] = useState<LocalModelInfo[]>([]);
-  const [runtimeInstalled, setRuntimeInstalled] = useState(false);
-  const [rtProgress, setRtProgress] = useState<{ downloaded: number; total: number } | null>(null);
-  const [dlProgress, setDlProgress] = useState<{ downloaded: number; total: number } | null>(null);
-
-  const refresh = async () => {
-    try {
-      const [m, rt] = await Promise.all([listLocalModels(), isWhisperRuntimeInstalled()]);
-      setModels(m);
-      setRuntimeInstalled(rt);
-    } catch {
-      /* ignore */
-    }
-  };
-
-  useEffect(() => {
-    void refresh();
-    const offRtP = listen<{ downloaded: number; total: number }>(
-      "local-whisper:runtime:progress",
-      (e) => setRtProgress(e.payload),
-    );
-    const offRtD = listen<string>("local-whisper:runtime:complete", () => {
-      setRtProgress(null);
-      void refresh();
-    });
-    const offDlP = listen<{ tier: WhisperTier; downloaded: number; total: number }>(
-      "local-whisper:download:progress",
-      (e) => {
-        if (e.payload.tier === tier) {
-          setDlProgress({ downloaded: e.payload.downloaded, total: e.payload.total });
-        }
-      },
-    );
-    const offDlD = listen<string>("local-whisper:download:complete", () => {
-      setDlProgress(null);
-      void refresh();
-    });
-    return () => {
-      void offRtP.then((f) => f());
-      void offRtD.then((f) => f());
-      void offDlP.then((f) => f());
-      void offDlD.then((f) => f());
-    };
-  }, [tier]);
-
-  const installed = !!models.find((m) => m.tier === tier)?.installed;
-
-  const installRuntime = async () => {
-    setRtProgress({ downloaded: 0, total: 0 });
-    try {
-      await installWhisperRuntime();
-      toast.success("Runtime installed");
-    } catch (e) {
-      toast.error("Couldn't install runtime", {
-        description: e instanceof Error ? e.message : String(e),
-      });
-      setRtProgress(null);
-    }
-  };
-
-  const downloadModel = async () => {
-    setDlProgress({ downloaded: 0, total: 0 });
-    try {
-      // The runtime is an implementation detail — set it up silently
-      // as part of the first model download.
-      if (!runtimeInstalled) await installWhisperRuntime();
-      await downloadLocalModel(tier);
-      toast.success(`Downloaded ${tier}`);
-    } catch (e) {
-      toast.error("Download failed", { description: e instanceof Error ? e.message : String(e) });
-      setDlProgress(null);
-    }
-  };
-
-  const pickTier = (t: WhisperTier) => {
-    setLocalWhisperTier(t);
-    setTier(t);
-  };
-
-  return (
-    <Card className="mt-3">
-      <CardContent className="flex flex-col gap-4 p-4">
-        <div>
-          <div className="flex items-center justify-between gap-3">
-            <div className="min-w-0">
-              <div className="text-sm font-medium">whisper.cpp runtime</div>
-              <div className="text-xs text-text-muted">
-                Tiny native binary (~5 MB) that runs the model on your hardware.
-              </div>
-            </div>
-            {runtimeInstalled ? (
-              <Badge variant="success" className="inline-flex items-center gap-1">
-                <CheckCircle2 className="h-3 w-3" /> Installed
-              </Badge>
-            ) : rtProgress ? (
-              <Button variant="secondary" size="sm" disabled>
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                {rtProgress.total > 0
-                  ? `${Math.round((rtProgress.downloaded / rtProgress.total) * 100)}%`
-                  : "Starting…"}
-              </Button>
-            ) : (
-              <Button variant="primary" size="sm" onClick={() => void installRuntime()}>
-                <Download className="h-3.5 w-3.5" /> Install
-              </Button>
-            )}
-          </div>
-          {rtProgress && rtProgress.total > 0 && (
-            <div className="pt-2">
-              <ProgressBar value={Math.round((rtProgress.downloaded / rtProgress.total) * 100)} />
-            </div>
-          )}
-        </div>
-
-        <div className="border-t border-border-subtle pt-3">
-          <div className="text-sm font-medium">Model</div>
-          <div className="text-xs text-text-muted">
-            Bigger = more accurate, slower. Download once, use forever.
-          </div>
-          <div className="mt-3 grid grid-cols-2 gap-1.5">
-            {WHISPER_TIERS.map((meta) => {
-              const isInstalled = !!models.find((m) => m.tier === meta.tier)?.installed;
-              const selected = tier === meta.tier;
-              return (
-                <button
-                  key={meta.tier}
-                  type="button"
-                  onClick={() => pickTier(meta.tier)}
-                  className={cn(
-                    "flex items-center justify-between rounded-md border px-3 py-2 text-left text-xs transition-all",
-                    selected
-                      ? "border-accent-solid/60 bg-accent-solid/10"
-                      : "border-border-subtle bg-bg-elevated hover:border-border-strong",
-                  )}
-                >
-                  <div>
-                    <div className="text-[12px] font-medium">{meta.label}</div>
-                    <div className="text-[10px] text-text-muted">
-                      {meta.approxSizeMB >= 1024
-                        ? `${(meta.approxSizeMB / 1024).toFixed(1)} GB`
-                        : `${meta.approxSizeMB} MB`}
-                    </div>
-                  </div>
-                  {isInstalled && <Check className="h-3 w-3 text-success" strokeWidth={3} />}
-                </button>
-              );
-            })}
-          </div>
-          <div className="mt-3 flex items-center justify-between gap-3 rounded-md border border-border-subtle bg-bg-elevated px-3 py-2">
-            <div className="min-w-0 text-xs">
-              <div className="font-medium">{WHISPER_TIERS.find((t) => t.tier === tier)?.blurb}</div>
-              <div className="text-text-muted">
-                Best for: {WHISPER_TIERS.find((t) => t.tier === tier)?.recommendedFor}
-              </div>
-            </div>
-            {installed ? (
-              <Badge variant="success" className="inline-flex items-center gap-1">
-                <CheckCircle2 className="h-3 w-3" /> Ready
-              </Badge>
-            ) : dlProgress ? (
-              <Button variant="secondary" size="sm" disabled>
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                {dlProgress.total > 0
-                  ? `${Math.round((dlProgress.downloaded / dlProgress.total) * 100)}%`
-                  : "Starting…"}
-              </Button>
-            ) : (
-              <Button variant="primary" size="sm" onClick={() => void downloadModel()}>
-                <Download className="h-3.5 w-3.5" /> Download
-              </Button>
-            )}
-          </div>
-          {dlProgress && dlProgress.total > 0 && (
-            <div className="pt-2">
-              <ProgressBar value={Math.round((dlProgress.downloaded / dlProgress.total) * 100)} />
-            </div>
-          )}
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-function LocalParakeetInstaller() {
-  const [runtimeInstalled, setRuntimeInstalled] = useState(false);
-  const [models, setModels] = useState<Array<{ variant: ParakeetVariant; installed: boolean }>>([]);
-  const [variant, setVariantState] = useState<ParakeetVariant>(getParakeetVariant());
-  const [rtProgress, setRtProgress] = useState<{ downloaded: number; total: number } | null>(null);
-  const [dlProgress, setDlProgress] = useState<{ downloaded: number; total: number } | null>(null);
-
-  const refresh = async () => {
-    try {
-      const [rt, m] = await Promise.all([isParakeetRuntimeInstalled(), listParakeetModels()]);
-      setRuntimeInstalled(rt);
-      setModels(m.map((x) => ({ variant: x.variant, installed: x.installed })));
-    } catch {
-      /* ignore */
-    }
-  };
-
-  useEffect(() => {
-    void refresh();
-    const offRtP = listen<{ downloaded: number; total: number }>("parakeet:runtime:progress", (e) =>
-      setRtProgress(e.payload),
-    );
-    const offRtD = listen<string>("parakeet:runtime:complete", () => {
-      setRtProgress(null);
-      void refresh();
-    });
-    const offDlP = listen<{ downloaded: number; total: number }>(
-      "parakeet:download:progress",
-      (e) => setDlProgress(e.payload),
-    );
-    const offDlD = listen<string>("parakeet:download:complete", () => {
-      setDlProgress(null);
-      void refresh();
-    });
-    return () => {
-      void offRtP.then((f) => f());
-      void offRtD.then((f) => f());
-      void offDlP.then((f) => f());
-      void offDlD.then((f) => f());
-    };
-  }, []);
-
-  const installRuntime = async () => {
-    setRtProgress({ downloaded: 0, total: 0 });
-    try {
-      await installParakeetRuntime();
-      toast.success("Sherpa-onnx runtime installed");
-    } catch (e) {
-      toast.error("Couldn't install runtime", {
-        description: e instanceof Error ? e.message : String(e),
-      });
-      setRtProgress(null);
-    }
-  };
-
-  const changeVariant = (v: ParakeetVariant) => {
-    setParakeetVariant(v);
-    setVariantState(v);
-  };
-
-  const downloadModel = async () => {
-    setDlProgress({ downloaded: 0, total: 0 });
-    try {
-      // The runtime is an implementation detail — set it up silently
-      // as part of the first model download.
-      if (!runtimeInstalled) await installParakeetRuntime();
-      await downloadParakeetModel(variant);
-      toast.success(`Parakeet ${variant} model downloaded`);
-    } catch (e) {
-      toast.error("Download failed", { description: e instanceof Error ? e.message : String(e) });
-      setDlProgress(null);
-    }
-  };
-
-  const selectedMeta = PARAKEET_VARIANTS.find((v) => v.variant === variant);
-  const modelInstalled = !!models.find((m) => m.variant === variant)?.installed;
-
-  return (
-    <Card className="mt-3">
-      <CardContent className="flex flex-col gap-3 p-4">
-        <InstallRow
-          title="Sherpa-onnx runtime"
-          subtitle="Native binary that runs Parakeet on your machine (~50 MB, CPU)."
-          installed={runtimeInstalled}
-          progress={rtProgress}
-          onInstall={installRuntime}
-        />
-        <div className="flex flex-col gap-2">
-          <div className="text-sm font-medium">Model variant</div>
-          <div className="flex gap-2">
-            {PARAKEET_VARIANTS.map((meta) => {
-              const isActive = variant === meta.variant;
-              return (
-                <button
-                  key={meta.variant}
-                  type="button"
-                  onClick={() => changeVariant(meta.variant)}
-                  className={`flex-1 rounded-md border p-2 text-left text-xs transition ${
-                    isActive
-                      ? "border-accent bg-accent/5"
-                      : "border-border-subtle hover:border-border"
-                  }`}
-                >
-                  <div className="text-sm font-medium">{meta.label}</div>
-                  <div className="text-text-muted">{meta.blurb}</div>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-        <InstallRow
-          title={`Parakeet ${variant} model`}
-          subtitle={`~${selectedMeta?.approxSizeMB ?? 640} MB · ${selectedMeta?.recommendedFor ?? ""}`}
-          installed={modelInstalled}
-          progress={dlProgress}
-          onInstall={downloadModel}
-        />
-      </CardContent>
-    </Card>
-  );
-}
-
-function InstallRow({
-  title,
-  subtitle,
-  installed,
-  progress,
-  onInstall,
-  disabled,
-}: {
-  title: string;
-  subtitle: string;
-  installed: boolean;
-  progress: { downloaded: number; total: number } | null;
-  onInstall: () => void;
-  disabled?: boolean;
-}) {
-  return (
-    <div>
-      <div className="flex items-center justify-between gap-3">
-        <div className="min-w-0">
-          <div className="text-sm font-medium">{title}</div>
-          <div className="text-xs text-text-muted">{subtitle}</div>
-        </div>
-        {installed ? (
-          <Badge variant="success" className="inline-flex items-center gap-1">
-            <CheckCircle2 className="h-3 w-3" /> Installed
-          </Badge>
-        ) : progress ? (
-          <Button variant="secondary" size="sm" disabled>
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            {progress.total > 0
-              ? `${Math.round((progress.downloaded / progress.total) * 100)}%`
-              : "Starting…"}
-          </Button>
-        ) : (
-          <Button variant="primary" size="sm" onClick={onInstall} disabled={disabled}>
-            <Download className="h-3.5 w-3.5" /> Install
-          </Button>
-        )}
-      </div>
-      {progress && progress.total > 0 && (
-        <div className="pt-2">
-          <ProgressBar value={Math.round((progress.downloaded / progress.total) * 100)} />
-        </div>
-      )}
-    </div>
   );
 }
 

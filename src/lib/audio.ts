@@ -45,6 +45,8 @@ export interface RecordingResult {
   blob: Blob;
   mimeType: string;
   durationMs: number;
+  /** 16 kHz mono PCM of the same audio, when the capture path produced it. */
+  pcm?: Float32Array;
 }
 
 export interface AudioController {

@@ -19,7 +19,7 @@ vi.mock("@tauri-apps/api/event", () => ({ listen }));
 // Avoid pulling the tauri autostart plugin (and localStorage) via preferences.
 vi.mock("./preferences", () => ({ isPerfDebugEnabled: () => false }));
 
-import { decodeFrame, startNativeRecording } from "./nativeAudio";
+import { decodeFrame, pcmFromIpc, startNativeRecording } from "./nativeAudio";
 import { VAD_FRAME_SAMPLES } from "./vad/vad";
 
 /** Base64-encode a Float32Array as little-endian bytes (mirrors Rust). */
@@ -31,6 +31,28 @@ function encodeFrame(frame: Float32Array): string {
   for (const b of bytes) binary += String.fromCharCode(b);
   return btoa(binary);
 }
+
+describe("pcmFromIpc", () => {
+  it("decodes raw little-endian f32 bytes from take_native_recording", () => {
+    const src = new Float32Array([0.5, -0.25, 1]);
+    const bytes = new Uint8Array(src.length * 4);
+    const view = new DataView(bytes.buffer);
+    src.forEach((s, i) => view.setFloat32(i * 4, s, true));
+    expect(Array.from(pcmFromIpc(bytes.buffer))).toEqual([0.5, -0.25, 1]);
+    // A view into a larger buffer is honoured, not the whole backing buffer.
+    const padded = new Uint8Array(4 + bytes.length);
+    padded.set(bytes, 4);
+    expect(Array.from(pcmFromIpc(padded.subarray(4)))).toEqual([0.5, -0.25, 1]);
+  });
+
+  it("still accepts the legacy JSON number array and empty replies", () => {
+    expect(Array.from(pcmFromIpc([0.1, 0.2]))).toEqual([
+      Math.fround(0.1),
+      Math.fround(0.2),
+    ]);
+    expect(pcmFromIpc(null)).toHaveLength(0);
+  });
+});
 
 describe("nativeAudio capture controller", () => {
   beforeEach(() => {

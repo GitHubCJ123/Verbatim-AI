@@ -8,6 +8,12 @@
 
 export interface TranscribeInput {
   audio: Blob;
+  /**
+   * The same audio as 16 kHz mono PCM, when the caller already has it (native
+   * capture, VAD trim, live partials). On-device providers use it directly
+   * and skip decoding `audio`.
+   */
+  pcm?: Float32Array;
   /** Client-observed recording length; Edge Functions enforce a server-side cap. */
   durationMs?: number;
   /** BCP-47 code, or 'auto' to let the provider detect. */

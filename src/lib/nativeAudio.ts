@@ -6,9 +6,9 @@
  * (`cpal` + `rubato` → 16 kHz mono f32) rather than by the WebView
  * `MediaRecorder`. The Rust warm-capture engine keeps a cpal stream armed and
  * recording sessions are consumption markers over that warm stream. On stop,
- * we take the session PCM and re-package it as a WAV `Blob` so the rest of the
- * pipeline — every provider decodes the blob via `decodeToMonoF32_16k` — is
- * untouched.
+ * we take the session PCM (raw f32 bytes) and hand it to the pipeline directly
+ * (`RecordingResult.pcm`) so on-device engines skip any decode; a WAV `Blob`
+ * of the same audio is kept for the cloud path.
  *
  * This module exposes an {@link AudioController} that mirrors the shape of the
  * default `startRecording` controller, so the overlay can swap capture backends
@@ -60,6 +60,24 @@ export function decodeFrame(data: string): Float32Array {
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
   const view = new DataView(bytes.buffer);
   const out = new Float32Array(bytes.length >> 2);
+  for (let i = 0; i < out.length; i++) out[i] = view.getFloat32(i * 4, true);
+  return out;
+}
+
+/**
+ * `take_native_recording` returns raw little-endian f32 bytes (an
+ * `ArrayBuffer`); older builds and the legacy command return a JSON number
+ * array. Accept both.
+ */
+export function pcmFromIpc(raw: ArrayBuffer | ArrayBufferView | number[] | null | undefined): Float32Array {
+  if (!raw) return new Float32Array(0);
+  if (Array.isArray(raw)) return Float32Array.from(raw);
+  const bytes =
+    raw instanceof ArrayBuffer
+      ? new Uint8Array(raw)
+      : new Uint8Array(raw.buffer, raw.byteOffset, raw.byteLength);
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const out = new Float32Array(bytes.byteLength >> 2);
   for (let i = 0; i < out.length; i++) out[i] = view.getFloat32(i * 4, true);
   return out;
 }
@@ -259,13 +277,13 @@ export async function startNativeRecording(
     if (stopped) return null;
     stopped = true;
     try {
-      const pcmArray = legacyCapture
+      const raw = legacyCapture
         ? await invoke<number[]>("stop_native_capture")
         : await (async () => {
             await invoke("stop_native_session", { sessionId });
-            return invoke<number[]>("take_native_recording", { sessionId });
+            return invoke<ArrayBuffer | number[]>("take_native_recording", { sessionId });
           })();
-      const pcm = Float32Array.from(pcmArray);
+      const pcm = pcmFromIpc(raw);
       const durationMs = (pcm.length / VAD_SAMPLE_RATE) * 1000;
       if (isPerfDebugEnabled()) {
         console.info(
@@ -275,7 +293,7 @@ export async function startNativeRecording(
       }
       if (pcm.length === 0) return null;
       const blob = encodeWavBlob(pcm, VAD_SAMPLE_RATE);
-      return { blob, mimeType: "audio/wav", durationMs };
+      return { blob, mimeType: "audio/wav", durationMs, pcm };
     } finally {
       detach();
     }

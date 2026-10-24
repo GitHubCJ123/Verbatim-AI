@@ -19,6 +19,11 @@ vi.mock("../../lib/hotkey", () => ({
   applyHotkey: h.applyHotkey,
   clearHotkey: h.clearHotkey,
   isFunctionKey: (key: string) => /^F([1-9]|1[0-9]|2[0-4])$/.test(key),
+  hotkeyDisplayParts: (spec: string) =>
+    spec === "Fn" ? ["fn"] : spec === "RightCommand" ? ["right ⌘"] : spec.split("+"),
+  HOTKEY_PRESETS: [{ spec: "Fn", note: "hold" }, { spec: "Control+Shift+Space" }],
+  needsInputMonitoring: (spec: string) => spec === "Fn" || spec === "RightCommand",
+  getModifierHotkeyStatus: vi.fn(() => new Promise(() => {})),
   IS_MAC: true,
 }));
 vi.mock("../../lib/preferences", () => ({
@@ -252,6 +257,22 @@ describe("HotkeyRecorder capture transaction", () => {
 
     expect(h.applyHotkey.mock.calls).toEqual([["Control+Space"]]);
     expect(callbacks.onCommit).not.toHaveBeenCalled();
+  });
+
+  it("offers one-click presets including fn, marking the active one", () => {
+    const html = renderToStaticMarkup(
+      <HotkeyRecorder value="Control+Shift+Space" onChange={vi.fn()} />,
+    );
+    expect(html).toContain("Quick pick:");
+    expect(html).toMatch(/fn<span[^>]*>· hold<\/span>/);
+    expect(html).toContain('aria-pressed="true"');
+  });
+
+  it("hides presets when asked", () => {
+    const html = renderToStaticMarkup(
+      <HotkeyRecorder value="Control+Space" onChange={vi.fn()} showPresets={false} />,
+    );
+    expect(html).not.toContain("Quick pick:");
   });
 
   it("renders a legacy RightCommand value as right ⌘", () => {

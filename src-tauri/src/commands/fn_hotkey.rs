@@ -425,6 +425,16 @@ mod macos {
         }
     }
 
+    /// Silent Input Monitoring check (never prompts).
+    pub fn input_monitoring_granted() -> bool {
+        unsafe { CGPreflightListenEventAccess() }
+    }
+
+    /// Whether a modifier-hotkey tap is currently live.
+    pub fn listener_active(state: &FnHotkeyState) -> bool {
+        state.active.lock().map(|g| g.is_some()).unwrap_or(false)
+    }
+
     /// Explicit TCC path: show the Input Monitoring prompt (first time)
     /// and add the app to the System Settings list.
     pub fn request_input_monitoring() {
@@ -516,4 +526,100 @@ pub fn request_input_monitoring() -> Result<(), String> {
     #[cfg(target_os = "macos")]
     macos::request_input_monitoring();
     Ok(())
+}
+
+/// What the macOS 🌐/fn key does on its own (System Settings → Keyboard →
+/// "Press 🌐 key to"), from `AppleFnUsageType` in `com.apple.HIToolbox`.
+/// Anything but "do nothing" fires alongside a fn hotkey (emoji picker,
+/// input-source switch, or Apple Dictation), which is the most common reason
+/// fn dictation "doesn't work".
+pub fn fn_key_usage_from_defaults(value: Option<&str>) -> &'static str {
+    match value.map(str::trim) {
+        Some("0") => "none",
+        Some("1") => "input-source",
+        Some("2") => "emoji",
+        Some("3") => "dictation",
+        _ => "unknown",
+    }
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModifierHotkeyStatus {
+    /// `false` on platforms without modifier-only hotkeys.
+    supported: bool,
+    input_monitoring_granted: bool,
+    /// The fn / right ⌘ event tap is running right now.
+    listener_active: bool,
+    /// "none" | "input-source" | "emoji" | "dictation" | "unknown".
+    fn_key_usage: &'static str,
+}
+
+/// Status for the fn / right ⌘ hotkey UI. Never prompts for permission.
+#[tauri::command]
+pub fn get_modifier_hotkey_status(
+    state: tauri::State<'_, FnHotkeyState>,
+) -> ModifierHotkeyStatus {
+    #[cfg(target_os = "macos")]
+    {
+        let usage = std::process::Command::new("defaults")
+            .args(["read", "com.apple.HIToolbox", "AppleFnUsageType"])
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).into_owned());
+        ModifierHotkeyStatus {
+            supported: true,
+            input_monitoring_granted: macos::input_monitoring_granted(),
+            listener_active: macos::listener_active(state.inner()),
+            fn_key_usage: fn_key_usage_from_defaults(usage.as_deref()),
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = state;
+        ModifierHotkeyStatus {
+            supported: false,
+            input_monitoring_granted: false,
+            listener_active: false,
+            fn_key_usage: "unknown",
+        }
+    }
+}
+
+/// Open System Settings → Keyboard (where "Press 🌐 key to" lives).
+#[tauri::command]
+pub fn open_keyboard_settings() -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg("x-apple.systempreferences:com.apple.Keyboard-Settings.extension")
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+    #[cfg(not(target_os = "macos"))]
+    Err("macOS only.".into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn maps_fn_usage_defaults_values() {
+        assert_eq!(fn_key_usage_from_defaults(Some("0\n")), "none");
+        assert_eq!(fn_key_usage_from_defaults(Some("1")), "input-source");
+        assert_eq!(fn_key_usage_from_defaults(Some("2")), "emoji");
+        assert_eq!(fn_key_usage_from_defaults(Some("3")), "dictation");
+        assert_eq!(fn_key_usage_from_defaults(Some("7")), "unknown");
+        assert_eq!(fn_key_usage_from_defaults(None), "unknown");
+    }
+
+    #[test]
+    fn sentinel_specs_map_to_triggers() {
+        assert_eq!(trigger_for_spec("Fn"), Some(Trigger::Fn));
+        assert_eq!(trigger_for_spec("RightCommand"), Some(Trigger::RightCommand));
+        assert_eq!(trigger_for_spec("Control+Space"), None);
+    }
 }

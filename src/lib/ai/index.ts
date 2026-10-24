@@ -31,10 +31,14 @@ import {
 import { LlamaCppProvider, getLlamaCppModel } from "./llamaCpp";
 import {
   ParakeetProvider,
+  ensureParakeetReady,
   getParakeetLanguage,
   getParakeetVariant,
   type ParakeetVariant,
 } from "./parakeet";
+import { ensureWhisperEngineReady, getLocalWhisperEngine } from "./localWhisper";
+import { warmOllamaModel } from "./ollama";
+import { isAiImproveDisabled } from "../preferences";
 import { edgeAppSecretHeaders, serializeDurationMs } from "./edgeAuth";
 import type { Mode } from "../../types/mode";
 
@@ -296,6 +300,34 @@ function cleanupProvider(mode?: Mode | null): Cleaner {
     ollamaByKey.set(key, p);
   }
   return p;
+}
+
+/**
+ * Load the engines a dictation in `mode` will use, so model load overlaps with
+ * the user speaking instead of running after they stop. Called on hotkey
+ * press and once at startup; every step is best-effort and idempotent.
+ */
+export function prewarmEngines(mode?: Mode | null): void {
+  const quiet = (label: string) => (e: unknown) => {
+    if (import.meta.env.DEV) console.debug(`[Verbatim AI] ${label} prewarm skipped`, e);
+  };
+  const kind = effectiveTranscribeKind(mode?.transcribeProviderOverride ?? getAiProviderKind());
+  if (kind === "local-whisper" && getLocalWhisperEngine() !== "cli") {
+    const tier = (mode?.whisperTierOverride ?? getLocalWhisperTier()) as WhisperModelId;
+    void ensureWhisperEngineReady(tier).catch(quiet("whisper"));
+  } else if (kind === "local-parakeet") {
+    void ensureParakeetReady(getParakeetVariant()).catch(quiet("parakeet"));
+  }
+
+  if (mode?.skipCleanup || isAiImproveDisabled()) return;
+  const cleanupKind = effectiveCleanupKind(
+    mode?.cleanupProviderOverride ?? getCleanupProviderKind(),
+  );
+  if (cleanupKind === "local-ollama") {
+    void warmOllamaModel(getOllamaHost(), mode?.ollamaModelOverride ?? getOllamaModel()).catch(
+      quiet("ollama"),
+    );
+  }
 }
 
 export async function testTranscriptionProvider(mode?: Mode | null): Promise<ProviderHealth> {

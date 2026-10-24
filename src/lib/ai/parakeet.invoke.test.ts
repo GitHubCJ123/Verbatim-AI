@@ -9,7 +9,15 @@ const { decodeToMonoF32_16k } = vi.hoisted(() => ({
 }));
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
-vi.mock("./audioDecode", () => ({ decodeToMonoF32_16k }));
+vi.mock("./audioDecode", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./audioDecode")>();
+  return {
+    ...actual,
+    decodeToMonoF32_16k,
+    pcm16kFor: (input: { audio: Blob; pcm?: Float32Array }) =>
+      input.pcm ? Promise.resolve(input.pcm) : decodeToMonoF32_16k(),
+  };
+});
 
 import { ParakeetProvider } from "./parakeet";
 
@@ -22,7 +30,14 @@ describe("ParakeetProvider — invoke contract", () => {
     decodeToMonoF32_16k.mockResolvedValue(DECODED_SAMPLES);
   });
 
-  it("calls transcribe_parakeet with args wrapping variant, pcm array, and null language for 'auto'", async () => {
+  type RawCall = [string, Uint8Array, { headers: Record<string, string> }];
+
+  function decodeBody(body: Uint8Array): number[] {
+    const view = new DataView(body.buffer, body.byteOffset, body.byteLength);
+    return Array.from({ length: body.byteLength / 4 }, (_, i) => view.getFloat32(i * 4, true));
+  }
+
+  it("sends raw f32 PCM to transcribe_parakeet_pcm with variant/language headers", async () => {
     invoke.mockResolvedValueOnce({
       text: "this is a test",
       language_detected: "en",
@@ -36,28 +51,21 @@ describe("ParakeetProvider — invoke contract", () => {
     const result = await provider.transcribe({ audio: new Blob([new Uint8Array(4)]) });
 
     expect(invoke).toHaveBeenCalledOnce();
-    const [cmd, payload] = invoke.mock.calls[0] as [
-      string,
-      { args: { variant: string; pcm: number[]; language: string | null } },
-    ];
+    const [cmd, body, opts] = invoke.mock.calls[0] as RawCall;
+    expect(cmd).toBe("transcribe_parakeet_pcm");
+    expect(body).toBeInstanceOf(Uint8Array);
+    expect(body.byteLength).toBe(DECODED_SAMPLES.length * 4);
+    expect(opts.headers["x-verbatim-pcm-format"]).toBe("f32le-16000-mono");
+    expect(opts.headers["x-verbatim-parakeet-variant"]).toBe("v3");
+    // "auto" is sent as an empty language header.
+    expect(opts.headers["x-verbatim-language"]).toBe("");
 
-    // Command name
-    expect(cmd).toBe("transcribe_parakeet");
-
-    // Nested args object (Tauri serialised command format)
-    expect(payload.args.variant).toBe("v3");
-    expect(Array.isArray(payload.args.pcm)).toBe(true);
-    expect(payload.args.pcm).toHaveLength(5);
-    // "auto" language is sent as null to the Rust command
-    expect(payload.args.language).toBeNull();
-
-    // Result mapping
     expect(result.text).toBe("this is a test");
     expect(result.languageDetected).toBe("en");
     expect(result.durationMs).toBe(850);
   });
 
-  it("passes a concrete language code (non-auto) through to the Rust args", async () => {
+  it("passes a concrete language code (non-auto) through in the header", async () => {
     invoke.mockResolvedValueOnce({ text: "bonjour", language_detected: "fr", duration_ms: 400 });
 
     const provider = new ParakeetProvider({
@@ -67,11 +75,8 @@ describe("ParakeetProvider — invoke contract", () => {
     // input.language overrides cfg.language when provided
     await provider.transcribe({ audio: new Blob([new Uint8Array(4)]), language: "fr" });
 
-    const [, payload] = invoke.mock.calls[0] as [
-      string,
-      { args: { language: string | null } },
-    ];
-    expect(payload.args.language).toBe("fr");
+    const [, , opts] = invoke.mock.calls[0] as RawCall;
+    expect(opts.headers["x-verbatim-language"]).toBe("fr");
   });
 
   it("uses the v2 variant when the config says v2", async () => {
@@ -83,17 +88,13 @@ describe("ParakeetProvider — invoke contract", () => {
     });
     await provider.transcribe({ audio: new Blob([new Uint8Array(4)]) });
 
-    const [cmd, payload] = invoke.mock.calls[0] as [
-      string,
-      { args: { variant: string; language: string | null } },
-    ];
-    expect(cmd).toBe("transcribe_parakeet");
-    expect(payload.args.variant).toBe("v2");
-    // "en" is not "auto", so passed through as-is
-    expect(payload.args.language).toBe("en");
+    const [cmd, , opts] = invoke.mock.calls[0] as RawCall;
+    expect(cmd).toBe("transcribe_parakeet_pcm");
+    expect(opts.headers["x-verbatim-parakeet-variant"]).toBe("v2");
+    expect(opts.headers["x-verbatim-language"]).toBe("en");
   });
 
-  it("PCM array values match Array.from() of the decoded samples", async () => {
+  it("PCM bytes decode back to the decoded samples", async () => {
     invoke.mockResolvedValueOnce({ text: "ok", language_detected: "en", duration_ms: 100 });
 
     const provider = new ParakeetProvider({
@@ -102,15 +103,24 @@ describe("ParakeetProvider — invoke contract", () => {
     });
     await provider.transcribe({ audio: new Blob([new Uint8Array(4)]) });
 
-    const [, payload] = invoke.mock.calls[0] as [
-      string,
-      { args: { pcm: number[] } },
-    ];
+    const [, body] = invoke.mock.calls[0] as RawCall;
+    const decoded = decodeBody(body);
     const expected = Array.from(DECODED_SAMPLES);
-    expect(payload.args.pcm).toHaveLength(expected.length);
+    expect(decoded).toHaveLength(expected.length);
     for (let i = 0; i < expected.length; i++) {
-      expect(payload.args.pcm[i]).toBeCloseTo(expected[i], 4);
+      expect(decoded[i]).toBeCloseTo(expected[i], 4);
     }
+  });
+
+  it("uses caller-supplied PCM without decoding the blob", async () => {
+    invoke.mockResolvedValueOnce({ text: "ok", language_detected: "en", duration_ms: 100 });
+    const provider = new ParakeetProvider({ variant: "v3", language: "auto" });
+    const pcm = new Float32Array([0.25, -0.5]);
+    await provider.transcribe({ audio: new Blob([]), pcm });
+
+    expect(decodeToMonoF32_16k).not.toHaveBeenCalled();
+    const [, body] = invoke.mock.calls[0] as RawCall;
+    expect(decodeBody(body)).toEqual([0.25, -0.5]);
   });
 
   it("falls back to cfg.language when language_detected is empty", async () => {

@@ -12,25 +12,53 @@
  */
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { toast } from "sonner";
 import { startRecording, stopRecording, cancelRecording } from "./recording-bridge";
 import { resolveModeAtPress } from "./modeResolver";
 import { isHotkeyPaused } from "./preferences";
 import { syncNativeCaptureArm } from "./nativeAudio";
 import { isOnboardingComplete } from "./store/useOnboarding";
-import {
-  ensureWhisperEngineReady,
-  getAiProviderKind,
-  getLocalWhisperEngine,
-  getLocalWhisperTier,
-  type WhisperModelId,
-} from "./ai/localWhisper";
+import { prewarmEngines } from "./ai";
 
 const LS_HOTKEY = "sw.hotkey.spec";
+const BOOT_PREWARM_DELAY_MS = 3000;
 const LS_PTT = "sw.hotkey.ptt";
 // On macOS ⌘+Space is Spotlight — pick something the user can use out of the box.
 export const IS_MAC =
   typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
 export const DEFAULT_SPEC = IS_MAC ? "Control+Shift+Space" : "CommandOrControl+Space";
+
+/** One-click hotkey choices shown next to the recorder. */
+export interface HotkeyPreset {
+  spec: string;
+  /** Short note under the chip, e.g. "needs permission". */
+  note?: string;
+}
+
+export const HOTKEY_PRESETS: HotkeyPreset[] = IS_MAC
+  ? [
+      { spec: "Fn", note: "hold" },
+      { spec: "RightCommand", note: "hold" },
+      { spec: "Control+Shift+Space" },
+      { spec: "Alt+Space" },
+    ]
+  : [{ spec: "CommandOrControl+Space" }, { spec: "Control+Shift+Space" }, { spec: "F9" }];
+
+/** True when `spec` needs the macOS Input Monitoring permission. */
+export function needsInputMonitoring(spec: string): boolean {
+  return IS_MAC && isForcedHoldSpec(spec);
+}
+
+export interface ModifierHotkeyStatus {
+  supported: boolean;
+  inputMonitoringGranted: boolean;
+  listenerActive: boolean;
+  fnKeyUsage: "none" | "input-source" | "emoji" | "dictation" | "unknown";
+}
+
+export function getModifierHotkeyStatus(): Promise<ModifierHotkeyStatus> {
+  return invoke<ModifierHotkeyStatus>("get_modifier_hotkey_status");
+}
 
 export interface HotkeyConfig {
   spec: string;
@@ -120,21 +148,6 @@ export async function getActiveWindow(): Promise<ActiveWindow> {
   return invoke<ActiveWindow>("get_active_window");
 }
 
-function preloadWhisperIfNeeded(mode: {
-  transcribeProviderOverride?: string | null;
-  whisperTierOverride?: string | null;
-}): void {
-  const kind = mode.transcribeProviderOverride ?? getAiProviderKind();
-  if (kind !== "local-whisper" || getLocalWhisperEngine() === "cli") return;
-
-  const tier = (mode.whisperTierOverride ?? getLocalWhisperTier()) as WhisperModelId;
-  void ensureWhisperEngineReady(tier).catch((e) => {
-    if (import.meta.env.DEV) {
-      console.debug("[Verbatim AI] local whisper preload skipped", e);
-    }
-  });
-}
-
 /**
  * Install the global key-down / key-up listeners. Returns an unlisten
  * function that removes both subscriptions.
@@ -146,8 +159,28 @@ export async function installHotkeyListeners(): Promise<UnlistenFn> {
   // user may have rebound — or a previous session's recorder may have
   // left the slot empty after a clear+capture.
   const cfg0 = loadHotkeyConfig();
-  void applyHotkey(cfg0.spec).catch(() => {});
+  void applyHotkey(cfg0.spec).catch((e) => {
+    // A dead hotkey with no explanation is the worst failure mode for a
+    // dictation app — say so instead of failing silently.
+    const message = e instanceof Error ? e.message : String(e);
+    if (message.includes("needs-input-monitoring")) {
+      toast.error("Your fn / right ⌘ hotkey isn't active yet", {
+        description:
+          "Verbatim AI needs Input Monitoring permission. Open Settings → Recording to finish setup.",
+      });
+    } else {
+      toast.error("Couldn't register your dictation hotkey", {
+        description: `${message} — pick another one in Settings → Recording.`,
+      });
+    }
+  });
   void syncNativeCaptureArm().catch(() => {});
+  // Load the speech (and polish) model shortly after launch so the first
+  // dictation doesn't pay a multi-second cold model load. Delayed a little
+  // so it doesn't compete with app startup.
+  if (isOnboardingComplete()) {
+    setTimeout(() => prewarmEngines(null), BOOT_PREWARM_DELAY_MS);
+  }
 
   // A single serialized recording state machine drives BOTH hold and
   // toggle modes. Design notes — each guards a real event interleaving:
@@ -196,7 +229,7 @@ export async function installHotkeyListeners(): Promise<UnlistenFn> {
         }`,
       );
     }
-    preloadWhisperIfNeeded(mode);
+    prewarmEngines(mode);
     try {
       await startRecording(mode.name, mode.id, pressedAt);
     } catch (e) {

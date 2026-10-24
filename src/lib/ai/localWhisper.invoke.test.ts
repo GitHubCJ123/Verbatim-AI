@@ -9,7 +9,15 @@ const { decodeToMonoF32_16k } = vi.hoisted(() => ({
 }));
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
-vi.mock("./audioDecode", () => ({ decodeToMonoF32_16k }));
+vi.mock("./audioDecode", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./audioDecode")>();
+  return {
+    ...actual,
+    decodeToMonoF32_16k,
+    pcm16kFor: (input: { audio: Blob; pcm?: Float32Array }) =>
+      input.pcm ? Promise.resolve(input.pcm) : decodeToMonoF32_16k(),
+  };
+});
 vi.mock("../preferences", () => ({ isPerfDebugEnabled: () => false }));
 
 import { LocalWhisperProvider, resetWhisperEngineProbe } from "./localWhisper";
@@ -87,6 +95,28 @@ describe("LocalWhisperProvider — invoke contract", () => {
     expect(result.text).toBe("hello world");
     expect(result.languageDetected).toBe("en");
     expect(result.durationMs).toBe(1234);
+  });
+
+  it("sends the vocabulary as a URI-encoded whisper prompt and skips decode for supplied PCM", async () => {
+    invoke.mockResolvedValueOnce({ text: "ok", language_detected: "en", duration_ms: 10 });
+
+    const provider = new LocalWhisperProvider({ tier: "turbo" });
+    await provider.transcribe({
+      audio: new Blob([]),
+      pcm: new Float32Array([0.5, 0.5]),
+      vocabularyHints: ["Kubernetes", " Zoë "],
+    });
+
+    expect(decodeToMonoF32_16k).not.toHaveBeenCalled();
+    const [, body, opts] = invoke.mock.calls[0] as [
+      string,
+      Uint8Array,
+      { headers: Record<string, string> },
+    ];
+    expect(body.byteLength).toBe(8);
+    expect(decodeURIComponent(opts.headers["x-verbatim-prompt"])).toBe("Kubernetes, Zoë.");
+    // Header values must stay ASCII for the IPC transport.
+    expect(/^[\x20-\x7e]*$/.test(opts.headers["x-verbatim-prompt"])).toBe(true);
   });
 
   it("passes a custom model id verbatim in the x-verbatim-tier header", async () => {

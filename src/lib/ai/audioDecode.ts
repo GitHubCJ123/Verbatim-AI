@@ -22,3 +22,27 @@ export async function decodeToMonoF32_16k(blob: Blob): Promise<Float32Array> {
   const rendered = await off.startRendering();
   return rendered.getChannelData(0).slice();
 }
+
+/** The input's 16 kHz mono PCM, decoding the Blob only when none was supplied. */
+export async function pcm16kFor(input: { audio: Blob; pcm?: Float32Array }): Promise<Float32Array> {
+  return input.pcm ?? decodeToMonoF32_16k(input.audio);
+}
+
+/** Copy PCM into a standalone byte buffer for a raw-body Tauri invoke. */
+export function pcmToBytes(samples: Float32Array): Uint8Array {
+  const view = new Uint8Array(samples.buffer, samples.byteOffset, samples.byteLength);
+  const out = new Uint8Array(view.byteLength);
+  out.set(view);
+  return out;
+}
+
+/**
+ * Whisper initial prompt built from the user's vocabulary: a short glossary
+ * biases spelling of names and jargon. URI-encoded because Tauri IPC header
+ * values must be ASCII; Rust decodes it.
+ */
+export function vocabularyPromptHeader(hints?: string[]): string {
+  const terms = (hints ?? []).map((t) => t.trim()).filter(Boolean);
+  if (terms.length === 0) return "";
+  return encodeURIComponent(terms.slice(0, 40).join(", ") + ".");
+}

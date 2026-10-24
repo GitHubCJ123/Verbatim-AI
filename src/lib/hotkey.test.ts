@@ -30,12 +30,7 @@ vi.mock("./modeResolver", () => ({ resolveModeAtPress: h.resolveModeAtPress }));
 vi.mock("./preferences", () => ({ isHotkeyPaused: vi.fn(() => false) }));
 vi.mock("./store/useOnboarding", () => ({ isOnboardingComplete: vi.fn(() => true) }));
 vi.mock("./nativeAudio", () => ({ syncNativeCaptureArm: vi.fn(() => Promise.resolve()) }));
-vi.mock("./ai/localWhisper", () => ({
-  ensureWhisperEngineReady: vi.fn(),
-  getAiProviderKind: vi.fn(),
-  getLocalWhisperEngine: vi.fn(),
-  getLocalWhisperTier: vi.fn(),
-}));
+vi.mock("./ai", () => ({ prewarmEngines: vi.fn() }));
 
 import {
   hotkeyDisplayParts,

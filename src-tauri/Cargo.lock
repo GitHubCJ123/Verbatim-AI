@@ -5568,7 +5568,7 @@ dependencies = [
 
 [[package]]
 name = "verbatim-ai"
-version = "0.5.15"
+version = "0.5.16"
 dependencies = [
  "base64 0.22.1",
  "bzip2",

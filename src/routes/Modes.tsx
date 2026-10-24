@@ -310,22 +310,22 @@ function SortableModeCard({
 }
 
 function AiImproveToggle() {
-  const [disabled, setDisabled] = useState(isAiImproveDisabled());
+  const [enabled, setEnabled] = useState(!isAiImproveDisabled());
   return (
     <div className="mb-4 flex items-center justify-between rounded-md border border-border-subtle bg-bg-elevated/40 px-4 py-3">
       <div className="flex flex-col gap-0.5">
-        <div className="text-sm font-medium">Don't improve with AI</div>
+        <div className="text-sm font-medium">Improve with AI</div>
         <div className="text-xs text-text-muted">
-          Globally skip the cleanup pass for every Mode. You'll get the raw transcript
+          Globally run the cleanup pass for every Mode. Turn off to get the raw transcript
           (with vocabulary replacements still applied). Overrides per-mode settings.
         </div>
       </div>
       <Switch
-        checked={disabled}
+        checked={enabled}
         onCheckedChange={(v: boolean) => {
-          setAiImproveDisabled(v);
-          setDisabled(v);
-          toast.info(v ? "AI cleanup disabled" : "AI cleanup enabled");
+          setAiImproveDisabled(!v);
+          setEnabled(v);
+          toast.info(v ? "AI cleanup enabled" : "AI cleanup disabled");
         }}
       />
     </div>

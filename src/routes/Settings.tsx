@@ -10,6 +10,7 @@ import {
   RefreshCw,
   Trash2,
 } from "lucide-react";
+import { cn } from "../lib/utils";
 import { toast } from "../components/ui/Toast";
 import { PageContainer, PageHeader } from "../components/layout/PageHeader";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "../components/ui/Tabs";
@@ -143,13 +144,19 @@ interface RowProps {
   /** Registry id (src/lib/settingsRegistry.ts) — makes the row a
    *  Cmd+K deep-link target via ?highlight=<id>. */
   id?: string;
+  /** "start" for children whose height can grow (e.g. status/warning
+   *  panels), so the label doesn't get centered against the full height. */
+  align?: "center" | "start";
 }
 
-function SettingRow({ title, description, children, id }: RowProps) {
+function SettingRow({ title, description, children, id, align = "center" }: RowProps) {
   return (
     <div
       id={id ? `setting-${id}` : undefined}
-      className="flex scroll-mt-24 items-center justify-between gap-6 rounded-md border-b border-border-subtle py-4 transition-shadow last:border-b-0"
+      className={cn(
+        "flex scroll-mt-24 justify-between gap-6 rounded-md border-b border-border-subtle py-4 transition-shadow last:border-b-0",
+        align === "start" ? "items-start" : "items-center",
+      )}
     >
       <div className="flex flex-col gap-0.5">
         <div className="text-sm font-medium">{title}</div>
@@ -794,6 +801,7 @@ export default function Settings() {
                 id="hotkey"
                 title="Global hotkey"
                 description="Hold to dictate from anywhere."
+                align="start"
               >
                 <HotkeyRecorder value={hotkey.spec} onChange={handleHotkeyChange} />
               </SettingRow>

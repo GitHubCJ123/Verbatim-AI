@@ -307,7 +307,9 @@ export function prewarmEngines(mode?: Mode | null): void {
     const tier = (mode?.whisperTierOverride ?? getLocalWhisperTier()) as WhisperModelId;
     void ensureWhisperEngineReady(tier).catch(quiet("whisper"));
   } else if (kind === "local-parakeet") {
-    void ensureParakeetReady(getParakeetVariant()).catch(quiet("parakeet"));
+    const language =
+      mode?.language && mode.language !== "auto" ? mode.language : getParakeetLanguage();
+    void ensureParakeetReady(getParakeetVariant(), language).catch(quiet("parakeet"));
   }
 
   if (mode?.skipCleanup || isAiImproveDisabled()) return;

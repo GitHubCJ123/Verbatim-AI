@@ -44,10 +44,8 @@ const SAMPLE_RATE: i32 = 16_000;
 #[derive(Clone)]
 pub(crate) struct ParakeetServerLaunch {
     pub server_bin: PathBuf,
-    pub encoder: PathBuf,
-    pub decoder: PathBuf,
-    pub joiner: PathBuf,
-    pub tokens: PathBuf,
+    /// Model-specific flags (see `ParakeetVariant::model_args`).
+    pub model_args: Vec<String>,
     pub log_file: PathBuf,
     /// Cache key (variant tag); a different key respawns the server.
     pub key: String,
@@ -110,11 +108,7 @@ impl ParakeetServerState {
             .arg("--num-io-threads=1")
             .arg("--max-batch-size=1")
             .arg(format!("--max-utterance-length={MAX_UTTERANCE_SECS}"))
-            .arg(format!("--encoder={}", launch.encoder.display()))
-            .arg(format!("--decoder={}", launch.decoder.display()))
-            .arg(format!("--joiner={}", launch.joiner.display()))
-            .arg(format!("--tokens={}", launch.tokens.display()))
-            .arg("--model-type=nemo_transducer")
+            .args(&launch.model_args)
             .arg(format!("--log-file={}", launch.log_file.display()));
         // The default log file is `./log.txt`; never depend on the app's cwd
         // being writable (it is `/` for a macOS bundle).
@@ -347,10 +341,13 @@ mod tests {
         let state = ParakeetServerState::default();
         let launch = ParakeetServerLaunch {
             server_bin: bin.into(),
-            encoder: dir.join("encoder.int8.onnx"),
-            decoder: dir.join("decoder.int8.onnx"),
-            joiner: dir.join("joiner.int8.onnx"),
-            tokens: dir.join("tokens.txt"),
+            model_args: vec![
+                format!("--encoder={}", dir.join("encoder.int8.onnx").display()),
+                format!("--decoder={}", dir.join("decoder.int8.onnx").display()),
+                format!("--joiner={}", dir.join("joiner.int8.onnx").display()),
+                format!("--tokens={}", dir.join("tokens.txt").display()),
+                "--model-type=nemo_transducer".to_string(),
+            ],
             log_file: std::env::temp_dir().join("verbatim-parakeet-test.log"),
             key: "v3".into(),
             threads: inference_threads_for_test(),

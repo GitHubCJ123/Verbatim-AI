@@ -240,7 +240,7 @@ function PrivacyCard() {
           variant="ghost"
           size="sm"
           className="shrink-0"
-          onClick={() => navigate("/settings?tab=model&highlight=transcription-provider")}
+          onClick={() => navigate("/settings?tab=model&highlight=speech-model")}
         >
           Change
         </Button>

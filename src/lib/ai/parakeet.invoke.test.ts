@@ -3,9 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // Hoist mock handles so they're available inside vi.mock() factories.
 const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }));
 const { decodeToMonoF32_16k } = vi.hoisted(() => ({
-  decodeToMonoF32_16k: vi.fn(() =>
-    Promise.resolve(new Float32Array([0.3, 0.1, -0.2, 0.0, 0.5])),
-  ),
+  decodeToMonoF32_16k: vi.fn(() => Promise.resolve(new Float32Array([0.3, 0.1, -0.2, 0.0, 0.5]))),
 }));
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
@@ -63,6 +61,17 @@ describe("ParakeetProvider — invoke contract", () => {
     expect(result.text).toBe("this is a test");
     expect(result.languageDetected).toBe("en");
     expect(result.durationMs).toBe(850);
+  });
+
+  it("uses the spoken-language setting when the Mode is set to auto (needed by Canary)", async () => {
+    invoke.mockResolvedValueOnce({ text: "hallo", language_detected: "de", duration_ms: 300 });
+
+    const provider = new ParakeetProvider({ variant: "canary-180m-flash", language: "de" });
+    await provider.transcribe({ audio: new Blob([new Uint8Array(4)]), language: "auto" });
+
+    const [, , opts] = invoke.mock.calls[0] as RawCall;
+    expect(opts.headers["x-verbatim-parakeet-variant"]).toBe("canary-180m-flash");
+    expect(opts.headers["x-verbatim-language"]).toBe("de");
   });
 
   it("passes a concrete language code (non-auto) through in the header", async () => {
@@ -144,9 +153,9 @@ describe("ParakeetProvider — invoke contract", () => {
       variant: "v3",
       language: "auto",
     });
-    await expect(
-      provider.transcribe({ audio: new Blob([new Uint8Array(4)]) }),
-    ).rejects.toThrow("model not loaded");
+    await expect(provider.transcribe({ audio: new Blob([new Uint8Array(4)]) })).rejects.toThrow(
+      "model not loaded",
+    );
   });
 
   it("health() returns ok:false when invoke rejects during the runtime check", async () => {

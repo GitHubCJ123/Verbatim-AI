@@ -62,13 +62,17 @@ const ALL_SETTINGS_ENTRIES: SettingsSearchEntry[] = [
   },
   // AI model
   {
-    id: "transcription-provider",
-    title: "Transcription engine",
-    description: "Where speech-to-text runs: cloud, local Whisper, or Parakeet.",
+    id: "speech-model",
+    title: "Speech model",
+    description: "Pick the model that turns speech into text, with accuracy and speed scores.",
     keywords: [
       "ai",
       "whisper",
       "parakeet",
+      "canary",
+      "accuracy",
+      "speed",
+      "transcription",
       "local",
       "cloud",
       "offline",
@@ -106,8 +110,8 @@ const ALL_SETTINGS_ENTRIES: SettingsSearchEntry[] = [
   },
   {
     id: "transcription-language",
-    title: "Transcription language",
-    description: "Pick a language or let the model auto-detect.",
+    title: "Spoken language",
+    description: "The language you dictate in, for models that can't detect it (Canary).",
     keywords: ["language", "locale", "auto detect", "accent"],
     tab: "model",
   },

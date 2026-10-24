@@ -42,6 +42,7 @@ import {
 } from "../../components/ui/Select";
 import { HotkeyRecorder } from "../../components/settings/HotkeyRecorder";
 import { SpeechModelPicker } from "../../components/settings/SpeechModelPicker";
+import { CleanupModelPicker } from "../../components/settings/CleanupModelPicker";
 import { speechChoiceById } from "../../lib/ai/speechChoices";
 import { prewarmEngines } from "../../lib/ai";
 import {
@@ -87,16 +88,7 @@ import {
   isWhisperRuntimeInstalled,
   installWhisperRuntime,
   type WhisperTier,
-  getCleanupProviderKind,
   setCleanupProviderKind,
-  type CleanupProviderKind,
-  getOllamaHost,
-  setOllamaHost,
-  getOllamaModel,
-  setOllamaModel,
-  listOllamaModels,
-  pingOllama,
-  type OllamaModelInfo,
   isParakeetRuntimeInstalled,
   installParakeetRuntime,
   downloadParakeetModel,
@@ -104,9 +96,7 @@ import {
 } from "../../lib/ai";
 import {
   ShieldCheck,
-  CheckCircle2,
   Wand2,
-  ExternalLink,
   MessageCircle,
   Smile,
   GraduationCap,
@@ -269,7 +259,7 @@ async function applyQuickDefaults() {
   if (isLocalMode()) {
     // The speech model itself is chosen once its download finishes (see
     // setupLocalModelInBackground) so we never point at a missing model.
-    setCleanupProviderKind("local-ollama");
+    setCleanupProviderKind("local");
     setAiImproveDisabled(true);
   } else {
     setAiProviderKind("cloud");
@@ -891,32 +881,23 @@ function TestRecording() {
 
 // ─── Step: AI model ──────────────────────────────────────────────────────
 
-type CleanupChoice = CleanupProviderKind | "none";
-
 function AIStep() {
   const back = useOnboarding((s) => s.back);
   const next = useOnboarding((s) => s.next);
-  const [cleanup, setCleanup] = useState<CleanupChoice>(() =>
-    isAiImproveDisabled() ? "none" : getCleanupProviderKind(),
-  );
+  const [polish, setPolish] = useState(() => !isAiImproveDisabled());
 
   useEffect(() => {
     if (isLocalMode() && getAiProviderKind() === "cloud") {
       setAiProviderKind("local-whisper");
-      setCleanupProviderKind("local-ollama");
+      setCleanupProviderKind("local");
       setAiImproveDisabled(true);
-      setCleanup("none");
+      setPolish(false);
     }
   }, []);
 
-  const chooseCleanup = (k: CleanupChoice) => {
-    if (k === "none") {
-      setAiImproveDisabled(true);
-    } else {
-      setAiImproveDisabled(false);
-      setCleanupProviderKind(k);
-    }
-    setCleanup(k);
+  const togglePolish = (on: boolean) => {
+    setAiImproveDisabled(!on);
+    setPolish(on);
   };
 
   return (
@@ -955,200 +936,37 @@ function AIStep() {
       </p>
 
       <div className="mt-5 text-xs font-medium uppercase tracking-wide text-text-muted">
-        Cleanup (tone polish)
+        AI polish (optional)
       </div>
       <Card className="mt-2">
-        <CardContent className="flex items-start gap-3 p-4">
-          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-accent-solid/15 text-accent-solid">
-            <Wand2 className="h-4 w-4" />
-          </span>
-          <div className="text-xs leading-relaxed text-text-secondary">
-            After transcription, a language model rewrites the raw text using the active Mode —
-            fixing grammar, removing fillers, and shaping the tone.{" "}
-            {CLOUD_FEATURES_ENABLED
-              ? "Cloud uses Azure GPT and is fastest. Local uses your own Ollama install so the polish step also stays on your machine."
-              : "It runs on your own Ollama or llama.cpp install, so the polish step also stays on your machine. Choose None to paste the raw transcript."}
-          </div>
-        </CardContent>
-      </Card>
-      <Card className="mt-2">
         <CardContent className="flex items-center justify-between gap-3 p-4">
-          <div className="min-w-0">
-            <div className="text-sm font-medium">Where polish runs</div>
-            <div className="text-xs text-text-muted">
-              {cleanup === "cloud"
-                ? "Azure GPT — fastest, no setup."
-                : cleanup === "local-ollama"
-                  ? "Local Ollama on this machine."
-                  : cleanup === "local-llama-cpp"
-                    ? "Local llama.cpp on this machine."
-                    : "No AI polish — you get the raw transcript as spoken."}
+          <div className="flex min-w-0 items-start gap-3">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-accent-solid/15 text-accent-solid">
+              <Wand2 className="h-4 w-4" />
+            </span>
+            <div className="min-w-0">
+              <div className="text-sm font-medium">Improve with AI</div>
+              <div className="text-xs leading-relaxed text-text-muted">
+                A small model on this computer removes fillers, applies self-corrections, writes
+                numbers properly and shapes each Mode&apos;s style. Off pastes exactly what you
+                said.
+              </div>
             </div>
           </div>
-          <Select value={cleanup} onValueChange={(v) => chooseCleanup(v as CleanupChoice)}>
-            <SelectTrigger className="w-44">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {CLOUD_FEATURES_ENABLED && <SelectItem value="cloud">Cloud (Azure)</SelectItem>}
-              <SelectItem value="local-ollama">Local Ollama</SelectItem>
-              <SelectItem value="local-llama-cpp">Local llama.cpp</SelectItem>
-              <SelectItem value="none">None — raw text</SelectItem>
-            </SelectContent>
-          </Select>
+          <Switch checked={polish} onCheckedChange={togglePolish} />
         </CardContent>
       </Card>
-
-      {cleanup === "local-ollama" && <OllamaConfig />}
+      {polish && (
+        <div className="mt-2">
+          <CleanupModelPicker />
+          <p className="mt-2 text-[11px] text-text-muted">
+            Download one model to start. You can switch any time in Settings → AI model.
+          </p>
+        </div>
+      )}
 
       <NavRow onBack={back} onPrimary={next} />
     </div>
-  );
-}
-
-function OllamaConfig() {
-  const [host, setHost] = useState(getOllamaHost());
-  const [model, setModel] = useState(getOllamaModel());
-  const [models, setModels] = useState<OllamaModelInfo[]>([]);
-  const [status, setStatus] = useState<"idle" | "ok" | "unreachable" | "forbidden" | "http-error">(
-    "idle",
-  );
-  const [checking, setChecking] = useState(false);
-
-  const check = async (h: string) => {
-    setChecking(true);
-    const ping = await pingOllama(h);
-    setStatus(ping.kind === "ok" ? "ok" : ping.kind);
-    if (ping.kind === "ok") {
-      try {
-        const m = await listOllamaModels(h);
-        setModels(m);
-        if (!model && m.length > 0) {
-          setModel(m[0].name);
-          setOllamaModel(m[0].name);
-        }
-      } catch {
-        /* ignore */
-      }
-    } else {
-      setModels([]);
-    }
-    setChecking(false);
-  };
-
-  useEffect(() => {
-    void check(host);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const commitHost = (v: string) => {
-    setHost(v);
-    setOllamaHost(v);
-  };
-
-  const commitModel = (v: string) => {
-    setModel(v);
-    setOllamaModel(v);
-  };
-
-  return (
-    <Card className="mt-2">
-      <CardContent className="flex flex-col gap-3 p-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <div className="text-sm font-medium">Ollama setup</div>
-            <div className="text-xs text-text-muted">
-              Install Ollama from ollama.com, then{" "}
-              <span className="font-mono text-text-secondary">ollama pull qwen3.5:4b</span> (or any
-              other model).
-            </div>
-          </div>
-          <a
-            href="https://ollama.com/download"
-            target="_blank"
-            rel="noreferrer"
-            className="inline-flex items-center gap-1 text-xs text-accent-solid hover:underline"
-          >
-            ollama.com <ExternalLink className="h-3 w-3" />
-          </a>
-        </div>
-
-        <div className="flex items-center gap-2">
-          <Input
-            value={host}
-            onChange={(e) => commitHost(e.target.value)}
-            placeholder="http://localhost:11434"
-            className="font-mono text-xs"
-          />
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => void check(host)}
-            disabled={checking}
-          >
-            {checking && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-            Test
-          </Button>
-        </div>
-
-        <div className="flex items-center justify-between rounded-md border border-border-subtle bg-bg-elevated px-3 py-2">
-          <div className="text-xs">
-            {status === "ok" && (
-              <span className="inline-flex items-center gap-1 text-success">
-                <CheckCircle2 className="h-3.5 w-3.5" /> Reachable · {models.length} model
-                {models.length === 1 ? "" : "s"} installed
-              </span>
-            )}
-            {status === "unreachable" && (
-              <span className="inline-flex items-center gap-1 text-danger">
-                <AlertTriangle className="h-3.5 w-3.5" /> Can't reach Ollama — is it running?
-                Troubleshoot in Settings → AI.
-              </span>
-            )}
-            {status === "forbidden" && (
-              <span className="inline-flex items-center gap-1 text-danger">
-                <AlertTriangle className="h-3.5 w-3.5" /> Ollama rejected the origin (allow
-                tauri://localhost). Fix steps in Settings → AI model.
-              </span>
-            )}
-            {status === "http-error" && (
-              <span className="inline-flex items-center gap-1 text-danger">
-                <AlertTriangle className="h-3.5 w-3.5" /> Ollama responded with an error. Check
-                details in Settings → AI.
-              </span>
-            )}
-            {status === "idle" && <span className="text-text-muted">Checking…</span>}
-          </div>
-        </div>
-
-        {models.length > 0 ? (
-          <div>
-            <div className="mb-1 text-xs font-medium text-text-secondary">Model</div>
-            <Select value={model} onValueChange={commitModel}>
-              <SelectTrigger>
-                <SelectValue placeholder="Pick an installed model" />
-              </SelectTrigger>
-              <SelectContent>
-                {models.map((m) => (
-                  <SelectItem key={m.name} value={m.name}>
-                    {m.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        ) : status === "ok" ? (
-          <div className="rounded-md border border-border-subtle bg-bg-elevated px-3 py-2 text-xs text-text-muted">
-            No models installed yet. In a terminal:{" "}
-            <span className="font-mono text-text-secondary">ollama pull qwen3.5:4b</span>
-          </div>
-        ) : null}
-
-        <div className="text-[11px] text-text-muted">
-          You can pull more models and tweak prompts later from Settings → AI.
-        </div>
-      </CardContent>
-    </Card>
   );
 }
 

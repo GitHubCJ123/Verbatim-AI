@@ -6,13 +6,13 @@ describe("providerTestStatus", () => {
     expect(
       providerTestStatus("cleanup", {
         ok: true,
-        message: "Ollama ready",
+        message: "Qwen3.5 2B ready",
         latencyMs: 42,
       }),
     ).toEqual({
       ok: true,
       title: "Cleanup test passed",
-      message: "Ollama ready (42 ms)",
+      message: "Qwen3.5 2B ready (42 ms)",
       latencyMs: 42,
     });
   });
@@ -28,15 +28,15 @@ describe("providerTestStatus", () => {
     expect(status.troubleshoot).toContain("Switch this stage to a local engine");
   });
 
-  it("adds Ollama troubleshooting for unreachable local cleanup", () => {
-    expect(troubleshootFor("cleanup", "Couldn't reach Ollama at http://localhost:11434")).toContain(
-      "Start Ollama",
+  it("points to the model list when the cleanup model is missing", () => {
+    expect(troubleshootFor("cleanup", "Qwen3.5 2B isn't downloaded yet.")).toContain(
+      "Download the selected model",
     );
   });
 
-  it("adds runtime troubleshooting for llama.cpp failures", () => {
-    expect(troubleshootFor("cleanup", "llama.cpp runtime is not installed")).toContain(
-      "Install the llama.cpp runtime",
+  it("suggests re-downloading when the cleanup engine can't start", () => {
+    expect(troubleshootFor("cleanup", "The AI polish engine exited during startup")).toContain(
+      "download it again",
     );
   });
 });

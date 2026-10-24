@@ -13,6 +13,7 @@ import { supabase } from "../supabase";
 import { useAuth } from "./useAuth";
 import { isLocalMode } from "../appMode";
 import { buildBuiltinModes } from "./builtinModes";
+import { normalizeCleanupKind } from "../ai/localCleanup";
 
 const LS_MODES = "sw.modes";
 const LS_VOCAB = "sw.vocab";
@@ -20,10 +21,24 @@ const LS_DEFAULT_MODE = "sw.modes.default_id";
 
 // ─── Storage helpers (sync reads for the overlay) ─────────────────────
 
+type StoredMode = Omit<Mode, "cleanupProviderOverride" | "cleanupModelOverride"> & {
+  cleanupProviderOverride?: string | null;
+  cleanupModelOverride?: string | null;
+};
+
+/** Reads modes saved by older versions (Ollama/llama.cpp overrides) as built-in cleanup. */
+function normalizeMode(m: StoredMode): Mode {
+  return {
+    ...m,
+    cleanupProviderOverride: normalizeCleanupKind(m.cleanupProviderOverride),
+    cleanupModelOverride: m.cleanupModelOverride ?? null,
+  };
+}
+
 export function loadModes(): Mode[] {
   try {
     const raw = localStorage.getItem(LS_MODES);
-    return raw ? (JSON.parse(raw) as Mode[]) : [];
+    return raw ? (JSON.parse(raw) as StoredMode[]).map(normalizeMode) : [];
   } catch {
     return [];
   }
@@ -80,7 +95,8 @@ interface RemoteMode {
   updated_at: string;
   transcribe_provider: "cloud" | "local-whisper" | "local-parakeet" | null;
   whisper_tier: "tiny" | "base" | "small" | "turbo" | "large-v3" | "large-v3-q5_0" | null;
-  cleanup_provider: "cloud" | "local-ollama" | "local-llama-cpp" | null;
+  cleanup_provider: string | null;
+  /** Column predates the built-in engine; now holds a cleanup model id. */
   ollama_model: string | null;
 }
 
@@ -104,8 +120,8 @@ function rowToMode(r: RemoteMode): Mode {
     updatedAt: r.updated_at,
     transcribeProviderOverride: r.transcribe_provider ?? null,
     whisperTierOverride: r.whisper_tier ?? null,
-    cleanupProviderOverride: r.cleanup_provider ?? null,
-    ollamaModelOverride: r.ollama_model ?? null,
+    cleanupProviderOverride: normalizeCleanupKind(r.cleanup_provider),
+    cleanupModelOverride: r.ollama_model ?? null,
   };
 }
 
@@ -130,8 +146,10 @@ function modeToRow(m: Mode, userId: string): RemoteMode {
     updated_at: m.updatedAt,
     transcribe_provider: m.transcribeProviderOverride,
     whisper_tier: m.whisperTierOverride,
-    cleanup_provider: m.cleanupProviderOverride,
-    ollama_model: m.ollamaModelOverride,
+    // The column's check constraint predates "local"; any local value reads back as local.
+    cleanup_provider:
+      m.cleanupProviderOverride === "local" ? "local-llama-cpp" : m.cleanupProviderOverride,
+    ollama_model: m.cleanupModelOverride,
   };
 }
 
@@ -253,7 +271,7 @@ export const useModes = create<ModesState>((set, get) => ({
       transcribeProviderOverride: input.transcribeProviderOverride ?? null,
       whisperTierOverride: input.whisperTierOverride ?? null,
       cleanupProviderOverride: input.cleanupProviderOverride ?? null,
-      ollamaModelOverride: input.ollamaModelOverride ?? null,
+      cleanupModelOverride: input.cleanupModelOverride ?? null,
     };
     if (isLocalMode()) {
       const next = [...get().modes, mode];

@@ -46,6 +46,10 @@ export interface CleanupInput {
   vocabulary?: string[];
   targetLanguage?: string;
   temperature?: number;
+  /** True for minimal-edit modes; enables worked examples in the prompt. */
+  lightCleanup?: boolean;
+  /** ISO 639-1 language of the transcript, when known. */
+  language?: string;
 }
 
 export interface ProviderHealth {

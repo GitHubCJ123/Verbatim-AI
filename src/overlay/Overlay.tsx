@@ -56,6 +56,12 @@ import {
 } from "../lib/preferences";
 import { applyInlinePostProcessing } from "../lib/postProcess";
 import { finalizeCleanup, sanitizeTranscript } from "../lib/transcriptQuality";
+import {
+  isLightCleanupMode,
+  looksClean,
+  prepareForCleanup,
+  resolveCleanupLanguage,
+} from "../lib/ai/cleanupPrepass";
 import { getPrivacyStatus, type DataLocality } from "../lib/privacyStatus";
 import {
   classifyRecordingError,
@@ -430,7 +436,12 @@ export default function Overlay() {
     }
   };
 
-  const runCleanup = async (raw: string, activeMode: Mode, vocab: string[]): Promise<string> => {
+  const runCleanup = async (
+    raw: string,
+    activeMode: Mode,
+    vocab: string[],
+    language: string | undefined,
+  ): Promise<string> => {
     const provider = getActiveProvider(activeMode);
     if (!provider) throw new Error("Provider not configured");
 
@@ -443,6 +454,8 @@ export default function Overlay() {
       modeDescription: activeMode.description,
       vocabulary: vocab,
       targetLanguage: activeMode.targetLanguage ?? undefined,
+      lightCleanup: isLightCleanupMode(activeMode),
+      language,
     })) {
       acc += chunk;
       setStreamingCleaned(acc);
@@ -549,16 +562,46 @@ export default function Overlay() {
       }
 
       let cleaned: string;
-      if (activeMode.skipCleanup || isAiImproveDisabled()) {
+      const light = isLightCleanupMode(activeMode);
+      const language = resolveCleanupLanguage(transcript.languageDetected, processedText);
+      const prepared = light ? prepareForCleanup(processedText, language) : processedText;
+      if (activeMode.skipCleanup || isAiImproveDisabled() || (light && looksClean(prepared))) {
         // Fast path: skip the LLM entirely; vocab replacements still run.
-        cleaned = applyVocabReplacements(processedText, vocabularyAll);
+        cleaned = applyVocabReplacements(prepared, vocabularyAll);
         setStreamingCleaned(cleaned);
       } else {
         setState("polishing");
-        const streamed = await runCleanup(processedText, activeMode, vocabularyTerms);
+        let streamed: string;
+        try {
+          streamed = await runCleanup(prepared, activeMode, vocabularyTerms, language);
+        } catch (e) {
+          // Keep the dictation: show it unpolished in the editor with the reason.
+          cleaned = applyVocabReplacements(prepared, vocabularyAll);
+          setStreamingCleaned(cleaned);
+          setReviewNotice(
+            `AI polish didn't finish (${e instanceof Error ? e.message : String(e)}). This is your transcript without it.`,
+          );
+          await enterReview();
+          await invoke("relay_event", {
+            name: "recording:result",
+            payload: {
+              emitId: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+              raw: transcript.text,
+              cleaned,
+              durationMs,
+              language: transcript.languageDetected,
+              modeName: mode,
+              modeId: activeMode.id,
+              outputStyle: "review" as const,
+              saveHistory: activeMode.saveHistory,
+            },
+          });
+          setState("idle");
+          return;
+        }
         // Strip chat wrapper text, and fall back to the transcript if the
         // model answered/continued the dictation instead of editing it.
-        const { text: cleanedRaw } = finalizeCleanup(processedText, streamed, {
+        const { text: cleanedRaw } = finalizeCleanup(prepared, streamed, {
           translating: !!activeMode.targetLanguage,
         });
         cleaned = applyVocabReplacements(cleanedRaw, vocabularyAll);
@@ -768,7 +811,12 @@ export default function Overlay() {
     const vocab = vocabAll.map((t) => t.term);
     setState("polishing");
     try {
-      const streamed = await runCleanup(rawText, activeMode, vocab);
+      const streamed = await runCleanup(
+        rawText,
+        activeMode,
+        vocab,
+        resolveCleanupLanguage(null, rawText),
+      );
       const { text: cleanedRaw } = finalizeCleanup(rawText, streamed, {
         translating: !!activeMode.targetLanguage,
       });

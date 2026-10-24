@@ -17,7 +17,7 @@ export type WhisperTierKind =
   | "turbo"
   | "large-v3"
   | "large-v3-q5_0";
-export type CleanupProviderKind = "cloud" | "local-ollama" | "local-llama-cpp";
+export type CleanupProviderKind = "cloud" | "local";
 
 export interface Mode {
   id: string;
@@ -41,7 +41,8 @@ export interface Mode {
   transcribeProviderOverride: TranscribeProviderKind | null;
   whisperTierOverride: WhisperTierKind | null;
   cleanupProviderOverride: CleanupProviderKind | null;
-  ollamaModelOverride: string | null;
+  /** A built-in cleanup model id; anything else means inherit. */
+  cleanupModelOverride: string | null;
 }
 
 export interface VocabularyTerm {

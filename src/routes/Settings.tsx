@@ -5,18 +5,17 @@ import {
   CheckCircle2,
   ChevronRight,
   Download,
-  ExternalLink,
   Loader2,
   RefreshCw,
   Trash2,
 } from "lucide-react";
+import { cn } from "../lib/utils";
 import { toast } from "../components/ui/Toast";
 import { PageContainer, PageHeader } from "../components/layout/PageHeader";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "../components/ui/Tabs";
 import { Card, CardContent } from "../components/ui/Card";
 import { Switch } from "../components/ui/Switch";
 import { Button } from "../components/ui/Button";
-import { Input } from "../components/ui/Input";
 import { ProgressBar } from "../components/ui/ProgressBar";
 import {
   Select,
@@ -27,6 +26,7 @@ import {
 } from "../components/ui/Select";
 import { HotkeyRecorder } from "../components/settings/HotkeyRecorder";
 import { SpeechModelPicker } from "../components/settings/SpeechModelPicker";
+import { CleanupModelPicker } from "../components/settings/CleanupModelPicker";
 import {
   applyHotkey,
   hotkeyDisplayParts,
@@ -74,22 +74,7 @@ import {
   type WhisperTier,
   getCleanupProviderKind,
   setCleanupProviderKind,
-  getOllamaHost,
-  setOllamaHost,
-  getOllamaModel,
-  setOllamaModel,
-  listOllamaModels,
-  pingOllama,
-  pullOllamaModel,
-  SUGGESTED_OLLAMA_MODELS,
-  LLAMA_CPP_MODELS,
-  getLlamaCppModel,
-  setLlamaCppModel,
-  isLlamaCppRuntimeInstalled,
-  installLlamaCppRuntime,
   type CleanupProviderKind,
-  type OllamaModelInfo,
-  type PingResult,
   PARAKEET_LANGUAGES,
   getParakeetLanguage,
   setParakeetLanguage,
@@ -143,13 +128,19 @@ interface RowProps {
   /** Registry id (src/lib/settingsRegistry.ts) — makes the row a
    *  Cmd+K deep-link target via ?highlight=<id>. */
   id?: string;
+  /** "start" for children whose height can grow (e.g. status/warning
+   *  panels), so the label doesn't get centered against the full height. */
+  align?: "center" | "start";
 }
 
-function SettingRow({ title, description, children, id }: RowProps) {
+function SettingRow({ title, description, children, id, align = "center" }: RowProps) {
   return (
     <div
       id={id ? `setting-${id}` : undefined}
-      className="flex scroll-mt-24 items-center justify-between gap-6 rounded-md border-b border-border-subtle py-4 transition-shadow last:border-b-0"
+      className={cn(
+        "flex scroll-mt-24 justify-between gap-6 rounded-md border-b border-border-subtle py-4 transition-shadow last:border-b-0",
+        align === "start" ? "items-start" : "items-center",
+      )}
     >
       <div className="flex flex-col gap-0.5">
         <div className="text-sm font-medium">{title}</div>
@@ -794,6 +785,7 @@ export default function Settings() {
                 id="hotkey"
                 title="Global hotkey"
                 description="Hold to dictate from anywhere."
+                align="start"
               >
                 <HotkeyRecorder value={hotkey.spec} onChange={handleHotkeyChange} />
               </SettingRow>
@@ -908,7 +900,7 @@ export default function Settings() {
               <SettingRow
                 id="devtools"
                 title="Open developer tools"
-                description="Show the WebView2 dev tools for the main window. Use the Console tab to see app logs (Ollama, transcription, updates, etc)."
+                description="Show the WebView2 dev tools for the main window. Use the Console tab to see app logs (transcription, updates, etc)."
               >
                 <Button
                   variant="secondary"
@@ -1441,7 +1433,7 @@ function ModelTab() {
 }
 
 // --------------------------------------------------------------------------
-// Cleanup provider section (cloud vs local Ollama)
+// AI polish (cleanup) section
 // --------------------------------------------------------------------------
 
 function formatBytes(b: number): string {
@@ -1715,134 +1707,38 @@ function ParakeetSection() {
   );
 }
 
-// "none" = skip the LLM polish entirely (vocabulary replacements still
-// run). Stored as the existing sw.ai.disabled flag, so the overlay
-// pipeline and privacy indicator already understand it.
-type CleanupChoice = CleanupProviderKind | "none";
-
 function CleanupSection() {
-  const [kind, setKind] = useState<CleanupChoice>(() =>
-    isAiImproveDisabled() ? "none" : getCleanupProviderKind(),
-  );
-  const [host, setHostState] = useState<string>(getOllamaHost());
-  const [model, setModelState] = useState<string>(getOllamaModel());
-  const [models, setModels] = useState<OllamaModelInfo[]>([]);
-  const [ping, setPing] = useState<PingResult | null>(null);
-  const [refreshing, setRefreshing] = useState(false);
-  const [llamaModel, setLlamaModel] = useState<string>(getLlamaCppModel());
-  const [llamaRuntimeInstalled, setLlamaRuntimeInstalled] = useState(false);
-  const [installingLlamaRuntime, setInstallingLlamaRuntime] = useState<{
-    downloaded: number;
-    total: number;
-  } | null>(null);
+  const [enabled, setEnabled] = useState(() => !isAiImproveDisabled());
+  const [where, setWhere] = useState<CleanupProviderKind>(getCleanupProviderKind);
   const [cleanupTest, setCleanupTest] = useState<ProviderTestStatus | null>(null);
   const [testingCleanup, setTestingCleanup] = useState(false);
-  const reachable = ping?.kind === "ok";
 
-  const refresh = async () => {
-    setRefreshing(true);
-    try {
-      const p = await pingOllama(host);
-      setPing(p);
-      if (p.kind === "ok") {
-        const list = await listOllamaModels(host);
-        setModels(list);
-        // If the saved model isn't present, clear it so we don't silently use
-        // something the user can no longer run.
-        if (model && !list.find((m) => m.name === model)) {
-          setOllamaModel("");
-          setModelState("");
-        }
-      } else {
-        setModels([]);
-      }
-    } catch (e) {
-      setPing({ kind: "unreachable", message: e instanceof Error ? e.message : String(e) });
-      setModels([]);
-      toast.error("Couldn't talk to Ollama", {
-        description: e instanceof Error ? e.message : String(e),
-      });
-    } finally {
-      setRefreshing(false);
-    }
+  const handleEnabled = (on: boolean) => {
+    setAiImproveDisabled(!on);
+    setEnabled(on);
+    setCleanupTest(null);
   };
 
-  useEffect(() => {
-    if (kind === "local-ollama") void refresh();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [kind, host]);
-
-  const refreshLlamaRuntime = async () => {
-    try {
-      setLlamaRuntimeInstalled(await isLlamaCppRuntimeInstalled());
-    } catch (e) {
-      toast.error("Couldn't read llama.cpp state", {
-        description: e instanceof Error ? e.message : String(e),
-      });
-    }
-  };
-
-  useEffect(() => {
-    if (kind === "local-llama-cpp") void refreshLlamaRuntime();
-  }, [kind]);
-
-  useEffect(() => {
-    const offRtProg = listen<{ downloaded: number; total: number }>(
-      "llama-cpp:runtime:progress",
-      (e) => setInstallingLlamaRuntime(e.payload),
-    );
-    const offRtDone = listen<string>("llama-cpp:runtime:complete", () => {
-      setInstallingLlamaRuntime(null);
-      void refreshLlamaRuntime();
-    });
-    return () => {
-      void offRtProg.then((fn) => fn());
-      void offRtDone.then((fn) => fn());
-    };
-  }, []);
-
-  const handleInstallLlamaRuntime = async () => {
-    setInstallingLlamaRuntime({ downloaded: 0, total: 0 });
-    try {
-      await installLlamaCppRuntime();
-      toast.success("llama.cpp runtime installed");
-    } catch (e) {
-      setInstallingLlamaRuntime(null);
-      toast.error("Couldn't install llama.cpp", {
-        description: e instanceof Error ? e.message : String(e),
-      });
-    }
-  };
-
-  const handleOpenOllamaInstaller = async () => {
-    try {
-      const { openUrl } = await import("@tauri-apps/plugin-opener");
-      await openUrl("https://ollama.com/download");
-      toast.info("Opened Ollama download", {
-        description: "Install Ollama, start it, then refresh the Runtime status.",
-      });
-    } catch (e) {
-      toast.error("Couldn't open Ollama download", {
-        description: e instanceof Error ? e.message : String(e),
-      });
-    }
+  const handleWhere = (next: CleanupProviderKind) => {
+    setCleanupProviderKind(next);
+    setWhere(next);
+    setCleanupTest(null);
   };
 
   const handleTestCleanup = async () => {
     setTestingCleanup(true);
     setCleanupTest(null);
     try {
-      if (kind === "none") {
+      if (!enabled) {
         setCleanupTest(
           providerTestStatus("cleanup", {
             ok: true,
-            message: "Cleanup is disabled. Raw transcript mode is ready.",
+            message: "AI polish is off. Raw transcript mode is ready.",
           }),
         );
         return;
       }
-      const health = await testCleanupProvider();
-      setCleanupTest(providerTestStatus("cleanup", health));
+      setCleanupTest(providerTestStatus("cleanup", await testCleanupProvider()));
     } catch (e) {
       setCleanupTest(
         providerTestStatus("cleanup", {
@@ -1855,468 +1751,50 @@ function CleanupSection() {
     }
   };
 
-  const handleKind = (next: CleanupChoice) => {
-    if (next === "none") {
-      setAiImproveDisabled(true);
-    } else {
-      setAiImproveDisabled(false);
-      setCleanupProviderKind(next);
-    }
-    setKind(next);
-    toast.success(
-      next === "cloud"
-        ? "Cleanup: using cloud"
-        : next === "local-ollama"
-          ? "Cleanup: using local Ollama"
-          : next === "local-llama-cpp"
-            ? "Cleanup: using local llama.cpp"
-            : "Cleanup off — you'll get the raw transcript",
-    );
-  };
-
   return (
     <Card>
       <CardContent className="p-5 pt-5">
         <StageHeader
           eyebrow="Step 2 · optional"
           title="AI polish"
-          description="A local language model rewrites the transcript in each Mode's tone — grammar, fillers, formatting. Off pastes exactly what you said, with no extra delay."
+          description="A small model on this computer fixes fillers, self-corrections, numbers and punctuation, and applies each Mode's style. Clean dictations skip it, so they paste instantly."
         />
         <SettingRow
           id="cleanup-provider"
-          title="Polish with"
-          description="Ollama is recommended (install it once from ollama.com). llama.cpp runs a model without Ollama."
+          title="Improve with AI"
+          description="Turn off to paste exactly what you said, with no extra delay. Vocabulary replacements still apply."
         >
-          <Select value={kind} onValueChange={(v) => handleKind(v as CleanupChoice)}>
-            <SelectTrigger className="w-56">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {CLOUD_FEATURES_ENABLED && <SelectItem value="cloud">Cloud — Azure GPT</SelectItem>}
-              <SelectItem value="none">Off — paste what I said</SelectItem>
-              <SelectItem value="local-ollama">Ollama (recommended)</SelectItem>
-              <SelectItem value="local-llama-cpp">llama.cpp</SelectItem>
-            </SelectContent>
-          </Select>
+          <Switch checked={enabled} onCheckedChange={handleEnabled} />
         </SettingRow>
 
-        {kind === "cloud" && (
-          <div className="mt-5 rounded-md border border-border-subtle bg-bg-base/40 p-4">
-            <div className="text-sm font-medium">Azure GPT cleanup</div>
-            <div className="mt-1 text-xs leading-relaxed text-text-muted">
-              Uses the active Mode to fix grammar, remove fillers, and shape tone in the cloud. No
-              local model setup is required.
-            </div>
-          </div>
+        {enabled && CLOUD_FEATURES_ENABLED && (
+          <SettingRow id="cleanup-location" title="Runs on" description="Where the polish step runs.">
+            <Select value={where} onValueChange={(v) => handleWhere(v as CleanupProviderKind)}>
+              <SelectTrigger className="w-48">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="local">This computer</SelectItem>
+                <SelectItem value="cloud">Cloud</SelectItem>
+              </SelectContent>
+            </Select>
+          </SettingRow>
         )}
 
-        {kind === "none" && (
-          <div className="mt-5 rounded-md border border-border-subtle bg-bg-base/40 p-4">
-            <div className="text-sm font-medium">Raw transcript</div>
-            <div className="mt-1 text-xs leading-relaxed text-text-muted">
-              Skips the LLM polish step entirely. Vocabulary replacements still apply before the
-              text is pasted.
-            </div>
+        {enabled && where === "local" && (
+          <div id="setting-cleanup-models" className="mt-4 scroll-mt-24">
+            <CleanupModelPicker />
           </div>
         )}
 
         <ProviderTestControl
           id="test-cleanup"
-          label="Test cleanup"
+          label="Test AI polish"
           testing={testingCleanup}
           status={cleanupTest}
           onTest={handleTestCleanup}
         />
-
-        {kind === "local-ollama" && (
-          <div className="mt-5 border-t border-border-subtle pt-5">
-            <div className="mb-3 text-sm font-medium">Ollama cleanup models</div>
-            <div className="mb-4 text-xs leading-relaxed text-text-muted">
-              Verbatim AI talks to a local Ollama server for text cleanup, not audio transcription.
-              Install Ollama once from{" "}
-              <a
-                href="https://ollama.com"
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center gap-1 text-accent-start hover:underline"
-              >
-                ollama.com <ExternalLink className="h-3 w-3" />
-              </a>{" "}
-              and pull a model in a terminal:{" "}
-              <code className="text-text-primary">ollama pull qwen2.5:7b</code>.
-            </div>
-
-            <RuntimeRow
-              title="Runtime"
-              description="Uses the official Ollama app/server. Install it once, start it, then refresh the status."
-              installed={reachable}
-              installing={false}
-              onInstall={handleOpenOllamaInstaller}
-            />
-
-            <SettingRow
-              title="Status"
-              description="Whether Ollama is currently reachable at the configured host."
-            >
-              {ping === null ? (
-                <span className="text-xs text-text-muted">—</span>
-              ) : ping.kind === "ok" ? (
-                <span className="inline-flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
-                  <CheckCircle2 className="h-3.5 w-3.5" /> Connected
-                </span>
-              ) : ping.kind === "forbidden" ? (
-                <span className="inline-flex items-center gap-1 text-xs text-danger">
-                  Blocked (403)
-                </span>
-              ) : (
-                <span className="inline-flex items-center gap-1 text-xs text-danger">
-                  Not reachable
-                </span>
-              )}
-            </SettingRow>
-
-            <SettingRow
-              title="Host"
-              description="Default works for local Ollama. Change only if you run it elsewhere."
-            >
-              <div className="flex items-center gap-2">
-                <Input
-                  className="w-64"
-                  value={host}
-                  onChange={(e) => setHostState(e.target.value)}
-                  onBlur={() => {
-                    setOllamaHost(host);
-                    void refresh();
-                  }}
-                  placeholder="http://localhost:11434"
-                />
-                <Button variant="ghost" size="icon-sm" onClick={refresh} title="Refresh">
-                  <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
-                </Button>
-              </div>
-            </SettingRow>
-
-            {ping?.kind === "forbidden" && (
-              <div className="mt-3 rounded-md border border-danger/30 bg-danger/5 p-3 text-xs text-text-secondary">
-                <div className="mb-1 font-medium text-danger">
-                  Ollama is rejecting requests from this app (HTTP 403).
-                </div>
-                Ollama only allows requests from specific origins. Add Verbatim AI to the allowlist:
-                <ol className="mt-2 list-decimal space-y-1 pl-5">
-                  <li>Quit Ollama from the system tray.</li>
-                  <li>
-                    Open a terminal and run:{" "}
-                    <code className="text-text-primary">
-                      setx OLLAMA_ORIGINS "tauri://localhost,https://tauri.localhost"
-                    </code>{" "}
-                    (on macOS/Linux:{" "}
-                    <code className="text-text-primary">
-                      launchctl setenv OLLAMA_ORIGINS "tauri://localhost,https://tauri.localhost"
-                    </code>
-                    ). Avoid <code className="text-text-primary">"*"</code> — it lets any website
-                    reach your Ollama.
-                  </li>
-                  <li>Start Ollama again, then click the refresh icon.</li>
-                </ol>
-              </div>
-            )}
-
-            {ping?.kind === "unreachable" && (
-              <div className="mt-3 rounded-md border border-border-subtle bg-bg-elevated/40 p-3 text-xs text-text-muted">
-                Couldn't reach Ollama at <code className="text-text-primary">{host}</code>. Make
-                sure it's installed and running. On {osName()} it should auto-start after install.
-              </div>
-            )}
-
-            {reachable && (
-              <OllamaModelList
-                host={host}
-                installed={models}
-                currentModel={model}
-                onPulled={refresh}
-                onPick={(name) => {
-                  setOllamaModel(name);
-                  setModelState(name);
-                }}
-              />
-            )}
-          </div>
-        )}
-
-        {kind === "local-llama-cpp" && (
-          <div className="mt-5 border-t border-border-subtle pt-5">
-            <div className="mb-3 text-sm font-medium">llama.cpp cleanup models</div>
-            <div className="mb-4 text-xs leading-relaxed text-text-muted">
-              llama.cpp runs a local GGUF LLM directly from Verbatim AI for text cleanup. It does
-              not transcribe audio; use Whisper or Parakeet above for speech-to-text. Models use
-              llama.cpp's Hugging Face shorthand, for example{" "}
-              <code className="text-text-primary">ggml-org/gemma-3-1b-it-GGUF</code>.
-            </div>
-
-            {installingLlamaRuntime && (
-              <div className="mb-3 rounded-md border border-border-subtle bg-bg-elevated/40 p-3">
-                <div className="mb-1 flex items-center gap-2 text-xs text-text-secondary">
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  Installing llama.cpp runtime…
-                </div>
-                {installingLlamaRuntime.total > 0 && (
-                  <ProgressBar
-                    value={Math.round(
-                      (installingLlamaRuntime.downloaded / installingLlamaRuntime.total) * 100,
-                    )}
-                  />
-                )}
-              </div>
-            )}
-
-            <SettingRow
-              title="Runtime"
-              description="Downloads the official prebuilt llama-cli from ggml-org/llama.cpp releases."
-            >
-              <div className="flex items-center gap-2">
-                {llamaRuntimeInstalled ? (
-                  <span className="inline-flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
-                    <CheckCircle2 className="h-3.5 w-3.5" /> Installed
-                  </span>
-                ) : (
-                  <span className="text-xs text-text-muted">Not installed</span>
-                )}
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={handleInstallLlamaRuntime}
-                  disabled={!!installingLlamaRuntime}
-                >
-                  {llamaRuntimeInstalled ? "Reinstall" : "Install"}
-                </Button>
-              </div>
-            </SettingRow>
-
-            <SettingRow
-              title="Model"
-              description="Pick a suggested GGUF model or paste any llama.cpp-compatible Hugging Face reference."
-            >
-              <Input
-                className="w-80"
-                value={llamaModel}
-                onChange={(e) => {
-                  setLlamaModel(e.target.value);
-                  setLlamaCppModel(e.target.value);
-                }}
-                placeholder="ggml-org/gemma-3-1b-it-GGUF"
-              />
-            </SettingRow>
-
-            <div className="mt-3 flex flex-col gap-2">
-              {LLAMA_CPP_MODELS.map((m) => {
-                const selected = llamaModel === m.id;
-                return (
-                  <div
-                    key={m.id}
-                    className={`flex items-start justify-between gap-3 rounded-md border p-3 ${
-                      selected ? "border-accent bg-accent/5" : "border-border-subtle"
-                    }`}
-                  >
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-sm font-medium">{m.label}</span>
-                        {m.recommended && (
-                          <span className="rounded bg-accent/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-accent-start">
-                            Recommended
-                          </span>
-                        )}
-                        <span className="text-xs text-text-muted">·</span>
-                        <span className="text-xs text-text-muted">~{formatMB(m.approxDiskMB)}</span>
-                      </div>
-                      <div className="mt-0.5 truncate font-mono text-[11px] text-text-muted">
-                        {m.id}
-                      </div>
-                      <div className="mt-1 text-xs text-text-muted">{m.blurb}</div>
-                    </div>
-                    <Button
-                      variant={selected ? "primary" : "secondary"}
-                      size="sm"
-                      onClick={() => {
-                        setLlamaModel(m.id);
-                        setLlamaCppModel(m.id);
-                      }}
-                      disabled={selected}
-                    >
-                      {selected ? "In use" : "Use this"}
-                    </Button>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
       </CardContent>
     </Card>
-  );
-}
-
-function formatMB(mb: number): string {
-  if (mb >= 1024) return `${(mb / 1024).toFixed(1)} GB`;
-  return `${mb} MB`;
-}
-
-/**
- * Unified Ollama model picker — one list, styled exactly like the
- * Whisper/Parakeet model lists: suggested models are downloadable in
- * place, installed models (including ones pulled manually) get
- * "Use this" / "In use". Replaces the old separate Model dropdown +
- * "Suggested models" box (user request: one consistent pattern).
- */
-function OllamaModelList({
-  host,
-  installed,
-  currentModel,
-  onPulled,
-  onPick,
-}: {
-  host: string;
-  installed: OllamaModelInfo[];
-  currentModel: string;
-  onPulled: () => void | Promise<void>;
-  onPick: (name: string) => void;
-}) {
-  const [pulling, setPulling] = useState<
-    Record<string, { completed: number; total: number; status: string } | undefined>
-  >({});
-
-  const handlePull = async (tag: string) => {
-    setPulling((p) => ({ ...p, [tag]: { completed: 0, total: 0, status: "starting" } }));
-    try {
-      await pullOllamaModel(tag, host, (prog) => {
-        setPulling((p) => ({
-          ...p,
-          [tag]: {
-            completed: prog.completed ?? 0,
-            total: prog.total ?? 0,
-            status: prog.status,
-          },
-        }));
-      });
-      toast.success(`Downloaded ${tag}`);
-      await onPulled();
-      onPick(tag);
-    } catch (e) {
-      toast.error("Download failed", {
-        description: e instanceof Error ? e.message : String(e),
-      });
-    } finally {
-      setPulling((p) => ({ ...p, [tag]: undefined }));
-    }
-  };
-
-  const installedByName = new Map(installed.map((m) => [m.name, m]));
-  // Suggested first (recommended order), then anything else the user
-  // already pulled that we don't have a blurb for.
-  const extraInstalled = installed.filter(
-    (m) => !SUGGESTED_OLLAMA_MODELS.some((s) => s.tag === m.name),
-  );
-
-  interface Row {
-    tag: string;
-    label: string;
-    meta: string;
-    blurb: string;
-    recommended: boolean;
-    isInstalled: boolean;
-  }
-  const rows: Row[] = [
-    ...SUGGESTED_OLLAMA_MODELS.map((m) => ({
-      tag: m.tag,
-      label: m.label,
-      meta: `${formatMB(m.approxDiskMB)} disk · ~${formatMB(m.approxVramMB)} VRAM`,
-      blurb: m.blurb,
-      recommended: !!m.recommended,
-      isInstalled: installedByName.has(m.tag),
-    })),
-    ...extraInstalled.map((m) => ({
-      tag: m.name,
-      label: m.name,
-      meta: formatBytes(m.sizeBytes),
-      blurb: "Pulled into Ollama outside Verbatim AI.",
-      recommended: false,
-      isInstalled: true,
-    })),
-  ];
-
-  return (
-    <div className="mt-5 border-t border-border-subtle pt-5">
-      <div className="mb-3 text-sm font-medium">Ollama models</div>
-      <div className="mb-4 text-xs text-text-muted">
-        Pick the model used for polish. Downloads go straight into Ollama — or pull anything else
-        with <code className="text-text-primary">ollama pull &lt;tag&gt;</code> in a terminal.
-      </div>
-      <div className="flex flex-col gap-2">
-        {rows.map((m) => {
-          const selected = currentModel === m.tag;
-          const p = pulling[m.tag];
-          const pct = p && p.total > 0 ? Math.round((p.completed / p.total) * 100) : undefined;
-          return (
-            <div
-              key={m.tag}
-              className={`flex flex-col gap-2 rounded-md border p-3 ${
-                selected ? "border-accent bg-accent/5" : "border-border-subtle"
-              }`}
-            >
-              <div className="flex items-start justify-between gap-3">
-                <div className="flex flex-col gap-0.5">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-sm font-medium">{m.label}</span>
-                    {m.recommended && (
-                      <span className="rounded bg-accent/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-accent-start">
-                        Recommended
-                      </span>
-                    )}
-                    {m.label !== m.tag && (
-                      <>
-                        <span className="text-xs text-text-muted">·</span>
-                        <span className="text-xs text-text-muted">
-                          <code>{m.tag}</code>
-                        </span>
-                      </>
-                    )}
-                    <span className="text-xs text-text-muted">·</span>
-                    <span className="text-xs text-text-muted">{m.meta}</span>
-                    {m.isInstalled && (
-                      <span className="inline-flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
-                        <CheckCircle2 className="h-3.5 w-3.5" /> installed
-                      </span>
-                    )}
-                  </div>
-                  <div className="text-xs text-text-muted">{m.blurb}</div>
-                </div>
-                <div className="flex shrink-0 items-center gap-2">
-                  {m.isInstalled ? (
-                    <Button
-                      variant={selected ? "primary" : "secondary"}
-                      size="sm"
-                      onClick={() => onPick(m.tag)}
-                      disabled={selected}
-                    >
-                      {selected ? "In use" : "Use this"}
-                    </Button>
-                  ) : p ? (
-                    <Button variant="secondary" size="sm" disabled>
-                      <Loader2 className="mr-1 h-4 w-4 animate-spin" />
-                      {pct !== undefined ? `${pct}%` : "Starting…"}
-                    </Button>
-                  ) : (
-                    <Button variant="secondary" size="sm" onClick={() => handlePull(m.tag)}>
-                      <Download className="mr-1 h-4 w-4" />
-                      Download
-                    </Button>
-                  )}
-                </div>
-              </div>
-              {p && pct !== undefined && <ProgressBar value={pct} />}
-            </div>
-          );
-        })}
-      </div>
-    </div>
   );
 }

@@ -15,7 +15,7 @@ export default function ModePicker() {
     setAppMode(mode);
     if (mode === "local") {
       setAiProviderKind("local-whisper");
-      setCleanupProviderKind("local-ollama");
+      setCleanupProviderKind("local");
       setAiImproveDisabled(true);
     }
     window.location.reload();
@@ -92,7 +92,7 @@ export default function ModePicker() {
         <p className="mt-8 text-center text-xs text-text-muted">
           {CLOUD_FEATURES_ENABLED
             ? "Local mode starts with on-device transcription and raw transcript output. You can still switch any stage to cloud or local cleanup later in Settings → AI model."
-            : "Transcription runs on-device with raw transcript output. You can turn on local cleanup (Ollama or llama.cpp) any time in Settings → AI model."}
+            : "Transcription runs on-device with raw transcript output. You can turn on AI polish any time in Settings → AI model."}
         </p>
       </div>
     </div>

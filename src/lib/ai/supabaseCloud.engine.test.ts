@@ -18,9 +18,6 @@ vi.mock("@tauri-apps/plugin-autostart", () => ({
   enable: vi.fn(),
   isEnabled: vi.fn(),
 }));
-vi.mock("@tauri-apps/plugin-http", () => ({
-  fetch: (input: string | URL | Request, init?: RequestInit) => globalThis.fetch(input, init),
-}));
 
 function installLocalStorageShim(): void {
   if ("localStorage" in globalThis) return;

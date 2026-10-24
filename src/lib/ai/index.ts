@@ -22,13 +22,13 @@ import {
   type WhisperModelId,
 } from "./localWhisper";
 import {
-  OllamaProvider,
-  getCleanupProviderKind,
-  getOllamaHost,
-  getOllamaModel,
+  LocalCleanupProvider,
   effectiveCleanupKind,
-} from "./ollama";
-import { LlamaCppProvider, getLlamaCppModel } from "./llamaCpp";
+  ensureCleanupReady,
+  getCleanupModel,
+  isCleanupModelId,
+  type CleanupModelId,
+} from "./localCleanup";
 import {
   ParakeetProvider,
   ensureParakeetReady,
@@ -37,14 +37,12 @@ import {
   type ParakeetVariant,
 } from "./parakeet";
 import { ensureWhisperEngineReady, getLocalWhisperEngine } from "./localWhisper";
-import { warmOllamaModel } from "./ollama";
 import { isAiImproveDisabled } from "../preferences";
 import { edgeAppSecretHeaders, serializeDurationMs } from "./edgeAuth";
 import type { Mode } from "../../types/mode";
 
 export * from "./localWhisper";
-export * from "./ollama";
-export * from "./llamaCpp";
+export * from "./localCleanup";
 export * from "./parakeet";
 
 const TRANSCRIBE_TIMEOUT_MS = 10 * 60 * 1000; // 10 min — covers long recordings; whisper auto-chunks anyway.
@@ -244,8 +242,7 @@ export class SupabaseAIProvider implements AIProvider {
 
 let cloudCache: SupabaseAIProvider | null = null;
 const localWhisperByTier = new Map<WhisperModelId, LocalWhisperProvider>();
-const ollamaByKey = new Map<string, OllamaProvider>();
-const llamaCppByModel = new Map<string, LlamaCppProvider>();
+const localCleanupByModel = new Map<CleanupModelId, LocalCleanupProvider>();
 const parakeetByKey = new Map<string, ParakeetProvider>();
 
 function getCloud(): SupabaseAIProvider {
@@ -279,25 +276,19 @@ function transcribeProvider(mode?: Mode | null): Transcriber {
   return p;
 }
 
+/** The mode's pinned cleanup model when valid, else the global choice. */
+export function activeCleanupModel(mode?: Mode | null): CleanupModelId {
+  const pinned = mode?.cleanupModelOverride;
+  return isCleanupModelId(pinned) ? pinned : getCleanupModel();
+}
+
 function cleanupProvider(mode?: Mode | null): Cleaner {
-  const kind = effectiveCleanupKind(mode?.cleanupProviderOverride ?? getCleanupProviderKind());
-  if (kind === "cloud") return getCloud();
-  if (kind === "local-llama-cpp") {
-    const model = getLlamaCppModel();
-    let p = llamaCppByModel.get(model);
-    if (!p) {
-      p = new LlamaCppProvider({ model });
-      llamaCppByModel.set(model, p);
-    }
-    return p;
-  }
-  const host = getOllamaHost();
-  const model = mode?.ollamaModelOverride ?? getOllamaModel();
-  const key = `${host}|${model}`;
-  let p = ollamaByKey.get(key);
+  if (effectiveCleanupKind(mode?.cleanupProviderOverride ?? null) === "cloud") return getCloud();
+  const model = activeCleanupModel(mode);
+  let p = localCleanupByModel.get(model);
   if (!p) {
-    p = new OllamaProvider({ host, model });
-    ollamaByKey.set(key, p);
+    p = new LocalCleanupProvider(model);
+    localCleanupByModel.set(model, p);
   }
   return p;
 }
@@ -320,13 +311,8 @@ export function prewarmEngines(mode?: Mode | null): void {
   }
 
   if (mode?.skipCleanup || isAiImproveDisabled()) return;
-  const cleanupKind = effectiveCleanupKind(
-    mode?.cleanupProviderOverride ?? getCleanupProviderKind(),
-  );
-  if (cleanupKind === "local-ollama") {
-    void warmOllamaModel(getOllamaHost(), mode?.ollamaModelOverride ?? getOllamaModel()).catch(
-      quiet("ollama"),
-    );
+  if (effectiveCleanupKind(mode?.cleanupProviderOverride ?? null) === "local") {
+    void ensureCleanupReady(activeCleanupModel(mode)).catch(quiet("cleanup"));
   }
 }
 

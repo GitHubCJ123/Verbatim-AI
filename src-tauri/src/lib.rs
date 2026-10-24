@@ -16,7 +16,8 @@ use commands::{
     },
     hotkey::{clear_hotkey, handle_event as handle_hotkey_event, install_default, set_hotkey, HotkeyState},
     llama_cpp::{
-        cleanup_llama_cpp, install_llama_cpp_runtime, is_llama_cpp_runtime_installed,
+        cleanup_engine_status, cleanup_text, delete_cleanup_model, download_cleanup_model,
+        ensure_cleanup_ready, unload_cleanup_engine, CleanupServerState,
     },
     local_whisper::{
         delete_local_model, detect_whisper_compute_backend, download_local_model,
@@ -94,6 +95,7 @@ pub fn run() {
         .manage(TargetWindowState::default())
         .manage(WhisperServerState::default())
         .manage(ParakeetServerState::default())
+        .manage(CleanupServerState::default())
         .manage(StreamingSidecarState::default())
         .manage(NativeCaptureState::default())
         .plugin(tauri_plugin_opener::init())
@@ -104,7 +106,6 @@ pub fn run() {
         ))
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
-        .plugin(tauri_plugin_http::init())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, shortcut, event| {
@@ -143,9 +144,12 @@ pub fn run() {
             transcribe_parakeet,
             transcribe_parakeet_pcm,
             ensure_parakeet_ready,
-            is_llama_cpp_runtime_installed,
-            install_llama_cpp_runtime,
-            cleanup_llama_cpp,
+            cleanup_engine_status,
+            download_cleanup_model,
+            delete_cleanup_model,
+            ensure_cleanup_ready,
+            unload_cleanup_engine,
+            cleanup_text,
             open_devtools,
             open_main_devtools,
             open_input_monitoring_settings,
@@ -182,6 +186,7 @@ pub fn run() {
             tray::install(&app.handle())?;
             commands::whisper_server::init(&app.handle());
             commands::parakeet_server::init(&app.handle());
+            commands::llama_cpp::init(&app.handle());
             // Close-to-hide for the main window (plan §5 lifecycle).
             if let Some(window) = app.get_webview_window("main") {
                 // Fit the window to the available monitor so all UI is visible.
@@ -229,6 +234,7 @@ pub fn run() {
             if let tauri::RunEvent::Exit = event {
                 commands::whisper_server::shutdown(app_handle);
                 commands::parakeet_server::shutdown(app_handle);
+                commands::llama_cpp::shutdown(app_handle);
                 commands::streaming_sidecar::shutdown(app_handle);
             }
         });

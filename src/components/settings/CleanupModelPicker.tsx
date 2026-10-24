@@ -83,7 +83,7 @@ export function CleanupModelPicker({ disabled }: { disabled?: boolean }) {
     return () => void off.then((fn) => fn());
   }, []);
 
-  const use = (m: CleanupModelInfo) => {
+  const activate = (m: CleanupModelInfo) => {
     setCleanupModel(m.id);
     setCurrent(m.id);
     void ensureCleanupReady(m.id).catch(() => {});
@@ -94,7 +94,7 @@ export function CleanupModelPicker({ disabled }: { disabled?: boolean }) {
     setBusy({ id: m.id, label: "Starting", percent: null });
     try {
       await downloadCleanupModel(m.id);
-      use(m);
+      activate(m);
       toast.success(`${m.name} is ready`, {
         description: "It's now used to polish your dictation.",
       });
@@ -144,7 +144,7 @@ export function CleanupModelPicker({ disabled }: { disabled?: boolean }) {
             sizeMB={m.sizeMB}
             state={stateOf(m)}
             disabled={disabled || (!!busy && busy.id !== m.id)}
-            onUse={() => use(m)}
+            onUse={() => activate(m)}
             onDownload={() => void download(m)}
             onDelete={() => void remove(m)}
           />

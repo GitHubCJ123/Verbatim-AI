@@ -482,7 +482,7 @@ impl CleanupServerState {
             ready: false,
             last_used: Instant::now(),
         });
-        if let Err(e) = self.wait_until_ready(&base_url).await {
+        if let Err(e) = self.wait_until_ready(&base_url, &api_key).await {
             self.unload().await;
             return Err(e);
         }
@@ -490,7 +490,7 @@ impl CleanupServerState {
     }
 
     /// `/health` answers 503 while the model loads and 200 once it can serve.
-    async fn wait_until_ready(&self, base_url: &str) -> Result<(), String> {
+    async fn wait_until_ready(&self, base_url: &str, api_key: &str) -> Result<(), String> {
         let client = reqwest::Client::new();
         let deadline = Instant::now() + HEALTH_TIMEOUT;
         loop {
@@ -512,7 +512,13 @@ impl CleanupServerState {
                 .await
                 .is_ok_and(|r| r.status().is_success());
             if ready {
+                verify_responder(&client, base_url, api_key).await?;
                 if let Some(h) = self.inner.lock().await.as_mut().filter(|h| h.base_url == base_url) {
+                    // The port was free when picked; if another process took it
+                    // first, our server fails to bind and exits.
+                    if !h.is_alive() {
+                        return Err("The AI polish engine couldn't claim its port.".into());
+                    }
                     h.ready = true;
                     h.last_used = Instant::now();
                     return Ok(());
@@ -569,6 +575,32 @@ impl CleanupServerState {
                 }
             }
         });
+    }
+}
+
+/// The endpoint must refuse requests without our key and accept ours, which a
+/// different process answering on that port would not know to do.
+async fn verify_responder(client: &reqwest::Client, base_url: &str, api_key: &str) -> Result<(), String> {
+    // /props requires the key; /health and /v1/models are public in llama-server.
+    let url = format!("{base_url}/props");
+    let check = |e: reqwest::Error| format!("AI polish engine check failed: {e}");
+    let anonymous = client
+        .get(&url)
+        .timeout(Duration::from_secs(2))
+        .send()
+        .await
+        .map_err(check)?;
+    let keyed = client
+        .get(&url)
+        .bearer_auth(api_key)
+        .timeout(Duration::from_secs(2))
+        .send()
+        .await
+        .map_err(check)?;
+    if anonymous.status() == reqwest::StatusCode::UNAUTHORIZED && keyed.status().is_success() {
+        Ok(())
+    } else {
+        Err("Something else answered on the AI polish engine's port; not using it.".into())
     }
 }
 

@@ -931,8 +931,8 @@ function AIStep() {
         <SpeechModelPicker />
       </div>
       <p className="mt-2 text-[11px] text-text-muted">
-        More models (every Whisper size, Parakeet English-only, your own files) are in Settings →
-        AI model → Advanced options.
+        Not sure? Parakeet v3 is the best all-rounder. You can download others and switch any time
+        in Settings → AI model; your own model files go under Advanced there.
       </p>
 
       <div className="mt-5 text-xs font-medium uppercase tracking-wide text-text-muted">

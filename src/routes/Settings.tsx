@@ -1,14 +1,6 @@
 import { useEffect, useState } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
-import { listen } from "@tauri-apps/api/event";
-import {
-  CheckCircle2,
-  ChevronRight,
-  Download,
-  Loader2,
-  RefreshCw,
-  Trash2,
-} from "lucide-react";
+import { ChevronRight, Loader2, RefreshCw, Trash2 } from "lucide-react";
 import { cn } from "../lib/utils";
 import { toast } from "../components/ui/Toast";
 import { PageContainer, PageHeader } from "../components/layout/PageHeader";
@@ -16,7 +8,6 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "../components/ui/Tabs"
 import { Card, CardContent } from "../components/ui/Card";
 import { Switch } from "../components/ui/Switch";
 import { Button } from "../components/ui/Button";
-import { ProgressBar } from "../components/ui/ProgressBar";
 import {
   Select,
   SelectTrigger,
@@ -48,46 +39,27 @@ import { useOnboarding } from "../lib/store/useOnboarding";
 import {
   testTranscriptionProvider,
   testCleanupProvider,
+  prewarmEngines,
   getAiProviderKind,
   setAiProviderKind,
   getLocalWhisperTier,
   setLocalWhisperTier,
-  listLocalModels,
   listCustomWhisperModels,
   rescanLocalModels,
-  downloadLocalModel,
   deleteLocalModel,
-  isWhisperRuntimeInstalled,
-  installWhisperRuntime,
   getWhisperComputePreference,
   setWhisperComputePreference,
   getActiveWhisperRuntimeVariant,
   whisperComputePreferenceLabel,
   whisperRuntimeVariantLabel,
-  WHISPER_TIERS,
   type AiProviderKind,
   type CustomModelInfo,
-  type LocalModelInfo,
   type WhisperComputePreference,
   type WhisperModelId,
   type WhisperRuntimeVariant,
-  type WhisperTier,
   getCleanupProviderKind,
   setCleanupProviderKind,
   type CleanupProviderKind,
-  PARAKEET_LANGUAGES,
-  getParakeetLanguage,
-  setParakeetLanguage,
-  PARAKEET_VARIANTS,
-  getParakeetVariant,
-  setParakeetVariant,
-  type ParakeetVariant,
-  type ParakeetModelInfo,
-  isParakeetRuntimeInstalled,
-  installParakeetRuntime,
-  listParakeetModels,
-  downloadParakeetModel,
-  deleteParakeetModel,
 } from "../lib/ai";
 import { providerTestStatus, type ProviderTestStatus } from "../lib/ai/healthStatus";
 import { useTheme, type Theme } from "../lib/theme";
@@ -222,42 +194,6 @@ function ProviderTestControl({
         </div>
       )}
     </div>
-  );
-}
-
-function RuntimeRow({
-  title,
-  description,
-  installed,
-  installing,
-  installLabel = "Install",
-  reinstallLabel = "Reinstall",
-  onInstall,
-}: {
-  title: string;
-  description: string;
-  installed: boolean;
-  installing: boolean;
-  installLabel?: string;
-  reinstallLabel?: string;
-  onInstall: () => void;
-}) {
-  return (
-    <SettingRow title={title} description={description}>
-      <div className="flex items-center gap-2">
-        {installed ? (
-          <span className="inline-flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
-            <CheckCircle2 className="h-3.5 w-3.5" /> Installed
-          </span>
-        ) : (
-          <span className="text-xs text-text-muted">Not installed</span>
-        )}
-        <Button variant="secondary" size="sm" onClick={onInstall} disabled={installing}>
-          {installing && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-          {installed ? reinstallLabel : installLabel}
-        </Button>
-      </div>
-    </SettingRow>
   );
 }
 
@@ -931,11 +867,6 @@ export default function Settings() {
 // AI model tab
 // --------------------------------------------------------------------------
 
-function formatSize(mb: number): string {
-  if (mb >= 1024) return `${(mb / 1024).toFixed(1)} GB`;
-  return `${mb} MB`;
-}
-
 function ModelTab() {
   const [kind, setKind] = useState<AiProviderKind>(getAiProviderKind());
   const [selectedTier, setSelectedTier] = useState<WhisperModelId>(getLocalWhisperTier());
@@ -943,35 +874,23 @@ function ModelTab() {
     getWhisperComputePreference(),
   );
   const [activeRuntime, setActiveRuntime] = useState<WhisperRuntimeVariant | null>(null);
-  const [models, setModels] = useState<LocalModelInfo[]>([]);
   const [customModels, setCustomModels] = useState<CustomModelInfo[]>([]);
   const [rescanning, setRescanning] = useState(false);
-  const [runtimeInstalled, setRuntimeInstalled] = useState<boolean>(false);
-  const [installingRuntime, setInstallingRuntime] = useState<{
-    downloaded: number;
-    total: number;
-  } | null>(null);
-  const [downloading, setDownloading] = useState<
-    Record<WhisperTier, { downloaded: number; total: number } | undefined>
-  >({} as Record<WhisperTier, { downloaded: number; total: number } | undefined>);
   const [transcriptionTest, setTranscriptionTest] = useState<ProviderTestStatus | null>(null);
   const [testingTranscription, setTestingTranscription] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [pickerKey, setPickerKey] = useState(0);
 
   const refresh = async () => {
     try {
-      const [m, custom, rt, active] = await Promise.all([
-        listLocalModels(),
+      const [custom, active] = await Promise.all([
         listCustomWhisperModels(),
-        isWhisperRuntimeInstalled(),
         getActiveWhisperRuntimeVariant(),
       ]);
-      setModels(m);
       setCustomModels(custom);
-      setRuntimeInstalled(rt);
       setActiveRuntime(active);
     } catch (e) {
-      toast.error("Couldn't read local Whisper state", {
+      toast.error("Couldn't read custom models", {
         description: e instanceof Error ? e.message : String(e),
       });
     }
@@ -981,64 +900,14 @@ function ModelTab() {
     void refresh();
   }, []);
 
-  useEffect(() => {
-    const offDl = listen<{ tier: WhisperTier; downloaded: number; total: number }>(
-      "local-whisper:download:progress",
-      (e) => {
-        setDownloading((d) => ({
-          ...d,
-          [e.payload.tier]: { downloaded: e.payload.downloaded, total: e.payload.total },
-        }));
-      },
-    );
-    const offDone = listen<string>("local-whisper:download:complete", (e) => {
-      setDownloading((d) => ({ ...d, [e.payload as WhisperTier]: undefined }));
-      void refresh();
-    });
-    const offRtProg = listen<{ downloaded: number; total: number }>(
-      "local-whisper:runtime:progress",
-      (e) => setInstallingRuntime({ downloaded: e.payload.downloaded, total: e.payload.total }),
-    );
-    const offRtDone = listen<string>("local-whisper:runtime:complete", () => {
-      setInstallingRuntime(null);
-      void refresh();
-    });
-    return () => {
-      void offDl.then((fn) => fn());
-      void offDone.then((fn) => fn());
-      void offRtProg.then((fn) => fn());
-      void offRtDone.then((fn) => fn());
-    };
-  }, []);
-
-  // The whisper.cpp runtime is an implementation detail — install it
-  // automatically whenever it's needed so the user never has to think
-  // about it (manual reinstall lives behind "Show advanced settings").
-  const ensureRuntime = async () => {
-    if (runtimeInstalled || installingRuntime) return;
-    setInstallingRuntime({ downloaded: 0, total: 0 });
-    try {
-      await installWhisperRuntime();
-    } catch (e) {
-      setInstallingRuntime(null);
-      throw e;
-    }
-  };
-
   const handleProviderChange = (next: AiProviderKind) => {
     setAiProviderKind(next);
     setKind(next);
-    toast.success(next === "cloud" ? "Using cloud (Azure Whisper)" : "Using local Whisper");
-    if (next === "local-whisper" && !runtimeInstalled) {
-      void ensureRuntime().catch((e) => {
-        toast.error("Couldn't set up the Whisper runtime", {
-          description: e instanceof Error ? e.message : String(e),
-        });
-      });
-    }
+    setTranscriptionTest(null);
+    setPickerKey((k) => k + 1);
   };
 
-  // The curated picker changed the engine/model: resync the advanced view.
+  // The model list changed the engine/model: resync this view.
   const onPickerChange = () => {
     setKind(getAiProviderKind());
     setSelectedTier(getLocalWhisperTier());
@@ -1051,15 +920,23 @@ function ModelTab() {
     setSelectedTier(tier);
   };
 
+  const handleUseCustom = (id: WhisperModelId) => {
+    handleTierChange(id);
+    setAiProviderKind("local-whisper");
+    setKind("local-whisper");
+    setPickerKey((k) => k + 1);
+    prewarmEngines(null);
+  };
+
+  const getLocalSpeechKind = (): AiProviderKind => (kind === "cloud" ? "local-parakeet" : kind);
+
   const handleRescan = async () => {
     setRescanning(true);
     try {
       const found = await rescanLocalModels();
       setCustomModels(found);
       toast.success(
-        found.length === 1
-          ? "Found 1 custom model"
-          : `Found ${found.length} custom models`,
+        found.length === 1 ? "Found 1 custom model" : `Found ${found.length} custom models`,
       );
     } catch (e) {
       toast.error("Couldn't scan for custom models", {
@@ -1073,48 +950,20 @@ function ModelTab() {
   const handleComputeChange = (next: WhisperComputePreference) => {
     setWhisperComputePreference(next);
     setComputePreference(next);
-    setRuntimeInstalled(false);
     void refresh();
-  };
-
-  const handleDownload = async (tier: WhisperTier) => {
-    setDownloading((d) => ({ ...d, [tier]: { downloaded: 0, total: 0 } }));
-    try {
-      await ensureRuntime();
-      await downloadLocalModel(tier);
-      toast.success(`Downloaded ${tier}`);
-    } catch (e) {
-      toast.error("Download failed", { description: e instanceof Error ? e.message : String(e) });
-      setDownloading((d) => ({ ...d, [tier]: undefined }));
-    }
   };
 
   const handleDelete = async (id: WhisperModelId) => {
     try {
       await deleteLocalModel(id);
-      // If the deleted model was selected, fall back to the default tier.
-      if (selectedTier === id && id !== "turbo") {
-        handleTierChange("turbo");
-      }
+      if (selectedTier === id) handleTierChange("turbo");
       toast.success(`Removed ${id.replace("custom:", "")}`);
+      setPickerKey((k) => k + 1);
       void refresh();
     } catch (e) {
       toast.error("Couldn't remove model", {
         description: e instanceof Error ? e.message : String(e),
       });
-    }
-  };
-
-  const handleInstallRuntime = async () => {
-    setInstallingRuntime({ downloaded: 0, total: 0 });
-    try {
-      await installWhisperRuntime();
-      toast.success("whisper.cpp runtime installed");
-    } catch (e) {
-      toast.error("Couldn't install runtime", {
-        description: e instanceof Error ? e.message : String(e),
-      });
-      setInstallingRuntime(null);
     }
   };
 
@@ -1143,10 +992,10 @@ function ModelTab() {
           <StageHeader
             eyebrow="Step 1"
             title="Speech model"
-            description="Turns your voice into text, entirely on this computer. Pick one — it downloads what it needs and switches over when ready."
+            description="Turns your voice into text, entirely on this computer. Accuracy and speed are measured on the same recordings for every model; hover a score for the numbers."
           />
-          <div className="mt-3">
-            <SpeechModelPicker onChange={onPickerChange} />
+          <div id="setting-speech-model" className="mt-3 scroll-mt-24">
+            <SpeechModelPicker key={pickerKey} onChange={onPickerChange} />
           </div>
 
           <ProviderTestControl
@@ -1166,262 +1015,131 @@ function ModelTab() {
             <ChevronRight
               className={`h-3.5 w-3.5 transition-transform ${showAdvanced ? "rotate-90" : ""}`}
             />
-            Advanced options — every model, compute device, custom models
+            Advanced: compute device, custom model files
           </button>
 
           {showAdvanced && (
             <div className="mt-3 border-t border-border-subtle pt-3">
+              {CLOUD_FEATURES_ENABLED && (
+                <SettingRow
+                  id="transcription-provider"
+                  title="Runs on"
+                  description="Cloud sends audio to the Verbatim cloud; the models above run on this computer."
+                >
+                  <Select
+                    value={kind === "cloud" ? "cloud" : "local"}
+                    onValueChange={(v) =>
+                      handleProviderChange(v === "cloud" ? "cloud" : getLocalSpeechKind())
+                    }
+                  >
+                    <SelectTrigger className="w-48">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="local">This computer</SelectItem>
+                      <SelectItem value="cloud">Cloud</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </SettingRow>
+              )}
+
               <SettingRow
-                id="transcription-provider"
-                title="Transcription engine"
-                description={
-                  CLOUD_FEATURES_ENABLED
-                    ? "Where speech-to-text runs. Cloud is the default. Local engines keep audio on this machine once a model is downloaded."
-                    : "Where speech-to-text runs. Whisper and Parakeet keep audio on this machine once a model is downloaded."
-                }
+                title="Compute device"
+                description={`For Whisper models. Auto currently uses ${
+                  activeRuntime
+                    ? whisperRuntimeVariantLabel(activeRuntime)
+                    : "the best available device"
+                }.`}
               >
-                <Select value={kind} onValueChange={(v) => handleProviderChange(v as AiProviderKind)}>
-                  <SelectTrigger className="w-56">
+                <Select
+                  value={computePreference}
+                  onValueChange={(v) => handleComputeChange(v as WhisperComputePreference)}
+                >
+                  <SelectTrigger className="w-48">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {CLOUD_FEATURES_ENABLED && (
-                      <SelectItem value="cloud">Cloud — Azure Whisper</SelectItem>
-                    )}
-                    <SelectItem value="local-whisper">Local — Whisper</SelectItem>
-                    <SelectItem value="local-parakeet">Local — Parakeet</SelectItem>
+                    {(["auto", "cuda", "vulkan", "cpu"] as WhisperComputePreference[]).map((v) => (
+                      <SelectItem key={v} value={v}>
+                        {whisperComputePreferenceLabel(v)}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </SettingRow>
 
-
-              {kind === "cloud" && (
-                <div className="mt-5 rounded-md border border-border-subtle bg-bg-base/40 p-4">
-                  <div className="text-sm font-medium">Azure Whisper</div>
-                  <div className="mt-1 text-xs leading-relaxed text-text-muted">
-                    No local model download is needed. Audio is sent to the Verbatim cloud just long
-                    enough to transcribe it.
-                  </div>
-                </div>
-              )}
-
-              {kind === "local-whisper" && (
-                <div className="mt-5 border-t border-border-subtle pt-5">
-                  <div className="mb-3 text-sm font-medium">Whisper.cpp models</div>
-                  <div className="mb-4 text-xs text-text-muted">
-                    Local Whisper uses whisper.cpp, the ggml speech-to-text runtime. Pick a tier based
-                    on your machine. Larger = more accurate, slower. The runtime is set up automatically
-                    with your first download.
-                  </div>
-                  <SettingRow
-                    title="Compute device"
-                    description={`Auto currently resolves to ${
-                      activeRuntime
-                        ? whisperRuntimeVariantLabel(activeRuntime)
-                        : "the best available backend"
-                    }.`}
+              <div className="mt-4">
+                <div className="mb-1 flex items-center justify-between gap-3">
+                  <div className="text-sm font-medium">Custom model files</div>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={handleRescan}
+                    disabled={rescanning}
                   >
-                    <Select
-                      value={computePreference}
-                      onValueChange={(v) => handleComputeChange(v as WhisperComputePreference)}
-                    >
-                      <SelectTrigger className="w-48">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {(["auto", "cuda", "vulkan", "cpu"] as WhisperComputePreference[]).map((v) => (
-                          <SelectItem key={v} value={v}>
-                            {whisperComputePreferenceLabel(v)}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </SettingRow>
-                  {installingRuntime && (
-                    <div className="mb-3 rounded-md border border-border-subtle bg-bg-elevated/40 p-3">
-                      <div className="mb-1 flex items-center gap-2 text-xs text-text-secondary">
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        Setting up the on-device engine (one time, ~5 MB)…
-                      </div>
-                      {installingRuntime.total > 0 && (
-                        <ProgressBar
-                          value={Math.round(
-                            (installingRuntime.downloaded / installingRuntime.total) * 100,
-                          )}
-                        />
-                      )}
-                    </div>
-                  )}
-                  <RuntimeRow
-                    title="Runtime"
-                    description={`Downloads the ${
-                      activeRuntime ? whisperRuntimeVariantLabel(activeRuntime) : "selected"
-                    } whisper.cpp sidecar used for local speech-to-text.`}
-                    installed={runtimeInstalled}
-                    installing={!!installingRuntime}
-                    onInstall={handleInstallRuntime}
-                  />
+                    {rescanning ? (
+                      <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+                    ) : (
+                      <RefreshCw className="mr-1 h-4 w-4" />
+                    )}
+                    Rescan
+                  </Button>
+                </div>
+                <div className="mb-3 text-xs text-text-muted">
+                  Bring your own Whisper-compatible model: drop a <code>.bin</code> or{" "}
+                  <code>.gguf</code> file into the whisper-models folder, then Rescan.
+                </div>
+                {customModels.length === 0 ? (
+                  <div className="rounded-md border border-dashed border-border-subtle p-3 text-xs text-text-muted">
+                    No custom models found.
+                  </div>
+                ) : (
                   <div className="flex flex-col gap-2">
-                    {WHISPER_TIERS.map((meta) => {
-                      const info = models.find((m) => m.tier === meta.tier);
-                      const installed = !!info?.installed;
-                      const isSelected = selectedTier === meta.tier;
-                      const dl = downloading[meta.tier];
-                      const dlPct =
-                        dl && dl.total > 0 ? Math.round((dl.downloaded / dl.total) * 100) : undefined;
+                    {customModels.map((cm) => {
+                      const isSelected = kind === "local-whisper" && selectedTier === cm.id;
                       return (
                         <div
-                          key={meta.tier}
-                          className={`flex flex-col gap-2 rounded-md border p-3 ${
+                          key={cm.id}
+                          className={`flex items-start justify-between gap-3 rounded-md border p-3 ${
                             isSelected ? "border-accent bg-accent/5" : "border-border-subtle"
                           }`}
                         >
-                          <div className="flex items-start justify-between gap-3">
-                            <div className="flex flex-col gap-0.5">
-                              <div className="flex items-center gap-2">
-                                <span className="text-sm font-medium">{meta.label}</span>
-                                <span className="text-xs text-text-muted">·</span>
-                                <span className="text-xs text-text-muted">{meta.tier}</span>
-                                <span className="text-xs text-text-muted">·</span>
-                                <span className="text-xs text-text-muted">
-                                  {formatSize(meta.approxSizeMB)}
-                                </span>
-                                {installed && (
-                                  <span className="inline-flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
-                                    <CheckCircle2 className="h-3.5 w-3.5" /> installed
-                                  </span>
-                                )}
-                              </div>
-                              <div className="text-xs text-text-muted">{meta.blurb}</div>
-                              <div className="text-xs text-text-muted">
-                                Best for: {meta.recommendedFor}
-                              </div>
+                          <div className="flex min-w-0 flex-col gap-0.5">
+                            <div className="flex items-center gap-2">
+                              <span className="truncate text-sm font-medium">{cm.displayName}</span>
+                              <span className="text-xs text-text-muted">·</span>
+                              <span className="text-xs text-text-muted">
+                                {formatBytes(cm.sizeBytes)}
+                              </span>
                             </div>
-                            <div className="flex shrink-0 items-center gap-2">
-                              {installed ? (
-                                <>
-                                  <Button
-                                    variant={isSelected ? "primary" : "secondary"}
-                                    size="sm"
-                                    onClick={() => handleTierChange(meta.tier)}
-                                    disabled={isSelected}
-                                  >
-                                    {isSelected ? "In use" : "Use this"}
-                                  </Button>
-                                  <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    onClick={() => handleDelete(meta.tier)}
-                                    title="Remove model file"
-                                  >
-                                    <Trash2 className="h-4 w-4" />
-                                  </Button>
-                                </>
-                              ) : dl ? (
-                                <Button variant="secondary" size="sm" disabled>
-                                  <Loader2 className="mr-1 h-4 w-4 animate-spin" />
-                                  {dlPct !== undefined ? `${dlPct}%` : "Starting…"}
-                                </Button>
-                              ) : (
-                                <Button
-                                  variant="secondary"
-                                  size="sm"
-                                  onClick={() => handleDownload(meta.tier)}
-                                >
-                                  <Download className="mr-1 h-4 w-4" />
-                                  Download
-                                </Button>
-                              )}
-                            </div>
+                            <div className="truncate text-xs text-text-muted">{cm.fileName}</div>
                           </div>
-                          {dl && dlPct !== undefined && <ProgressBar value={dlPct} />}
+                          <div className="flex shrink-0 items-center gap-2">
+                            <Button
+                              variant={isSelected ? "primary" : "secondary"}
+                              size="sm"
+                              onClick={() => handleUseCustom(cm.id)}
+                              disabled={isSelected}
+                            >
+                              {isSelected ? "In use" : "Use this"}
+                            </Button>
+                            {!isSelected && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleDelete(cm.id)}
+                                title="Remove model file"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            )}
+                          </div>
                         </div>
                       );
                     })}
                   </div>
-
-                  <div className="mt-5 border-t border-border-subtle pt-5">
-                    <div className="mb-1 flex items-center justify-between gap-3">
-                      <div className="text-sm font-medium">Custom models</div>
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        onClick={handleRescan}
-                        disabled={rescanning}
-                      >
-                        {rescanning ? (
-                          <Loader2 className="mr-1 h-4 w-4 animate-spin" />
-                        ) : (
-                          <RefreshCw className="mr-1 h-4 w-4" />
-                        )}
-                        Rescan
-                      </Button>
-                    </div>
-                    <div className="mb-3 text-xs text-text-muted">
-                      Bring your own model: drop a <code>.bin</code> or <code>.gguf</code> whisper.cpp
-                      model into the models folder, then Rescan to select it here.
-                    </div>
-                    {customModels.length === 0 ? (
-                      <div className="rounded-md border border-dashed border-border-subtle p-3 text-xs text-text-muted">
-                        No custom models found. Add a <code>.bin</code>/<code>.gguf</code> file to the
-                        whisper-models folder and press Rescan.
-                      </div>
-                    ) : (
-                      <div className="flex flex-col gap-2">
-                        {customModels.map((cm) => {
-                          const isSelected = selectedTier === cm.id;
-                          return (
-                            <div
-                              key={cm.id}
-                              className={`flex items-start justify-between gap-3 rounded-md border p-3 ${
-                                isSelected ? "border-accent bg-accent/5" : "border-border-subtle"
-                              }`}
-                            >
-                              <div className="flex min-w-0 flex-col gap-0.5">
-                                <div className="flex items-center gap-2">
-                                  <span className="truncate text-sm font-medium">
-                                    {cm.displayName}
-                                  </span>
-                                  <span className="text-xs text-text-muted">·</span>
-                                  <span className="text-xs text-text-muted">Custom</span>
-                                  <span className="text-xs text-text-muted">·</span>
-                                  <span className="text-xs text-text-muted">
-                                    {formatBytes(cm.sizeBytes)}
-                                  </span>
-                                  <span className="inline-flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
-                                    <CheckCircle2 className="h-3.5 w-3.5" /> installed
-                                  </span>
-                                </div>
-                                <div className="truncate text-xs text-text-muted">{cm.fileName}</div>
-                              </div>
-                              <div className="flex shrink-0 items-center gap-2">
-                                <Button
-                                  variant={isSelected ? "primary" : "secondary"}
-                                  size="sm"
-                                  onClick={() => handleTierChange(cm.id)}
-                                  disabled={isSelected}
-                                >
-                                  {isSelected ? "In use" : "Use this"}
-                                </Button>
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() => handleDelete(cm.id)}
-                                  title="Remove model file"
-                                >
-                                  <Trash2 className="h-4 w-4" />
-                                </Button>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              {kind === "local-parakeet" && <ParakeetSection />}
+                )}
+              </div>
             </div>
           )}
         </CardContent>
@@ -1440,271 +1158,6 @@ function formatBytes(b: number): string {
   if (b >= 1024 * 1024 * 1024) return `${(b / 1024 / 1024 / 1024).toFixed(1)} GB`;
   if (b >= 1024 * 1024) return `${(b / 1024 / 1024).toFixed(0)} MB`;
   return `${b} B`;
-}
-
-// --------------------------------------------------------------------------
-// Parakeet TDT v3 section (on-device, multilingual, sherpa-onnx)
-// --------------------------------------------------------------------------
-
-function ParakeetSection() {
-  const [runtimeInstalled, setRuntimeInstalled] = useState<boolean>(false);
-  const [models, setModels] = useState<ParakeetModelInfo[]>([]);
-  const [selectedVariant, setSelectedVariant] = useState<ParakeetVariant>(getParakeetVariant());
-  const [installingRuntime, setInstallingRuntime] = useState<{
-    downloaded: number;
-    total: number;
-  } | null>(null);
-  const [downloading, setDownloading] = useState<
-    Record<ParakeetVariant, { downloaded: number; total: number } | undefined>
-  >({} as Record<ParakeetVariant, { downloaded: number; total: number } | undefined>);
-  const [language, setLanguageState] = useState<string>(getParakeetLanguage());
-
-  const refresh = async () => {
-    try {
-      const [rt, m] = await Promise.all([isParakeetRuntimeInstalled(), listParakeetModels()]);
-      setRuntimeInstalled(rt);
-      setModels(m);
-    } catch (e) {
-      toast.error("Couldn't read Parakeet state", {
-        description: e instanceof Error ? e.message : String(e),
-      });
-    }
-  };
-
-  useEffect(() => {
-    void refresh();
-  }, []);
-
-  useEffect(() => {
-    const offRtProg = listen<{ downloaded: number; total: number }>(
-      "parakeet:runtime:progress",
-      (e) => setInstallingRuntime({ downloaded: e.payload.downloaded, total: e.payload.total }),
-    );
-    const offRtDone = listen<string>("parakeet:runtime:complete", () => {
-      setInstallingRuntime(null);
-      void refresh();
-    });
-    const offDlProg = listen<{ downloaded: number; total: number }>(
-      "parakeet:download:progress",
-      (e) => {
-        // Sherpa-onnx doesn't tag progress with the variant, but only one
-        // download runs at a time. Apply to whichever variant is in-flight.
-        setDownloading((d) => {
-          const inflight = (Object.keys(d) as ParakeetVariant[]).find((k) => d[k] !== undefined);
-          if (!inflight) return d;
-          return { ...d, [inflight]: { downloaded: e.payload.downloaded, total: e.payload.total } };
-        });
-      },
-    );
-    const offDlDone = listen<string>("parakeet:download:complete", (e) => {
-      const v = (e.payload === "v2" ? "v2" : "v3") as ParakeetVariant;
-      setDownloading((d) => ({ ...d, [v]: undefined }));
-      void refresh();
-    });
-    return () => {
-      void offRtProg.then((fn) => fn());
-      void offRtDone.then((fn) => fn());
-      void offDlProg.then((fn) => fn());
-      void offDlDone.then((fn) => fn());
-    };
-  }, []);
-
-  const handleInstallRuntime = async () => {
-    setInstallingRuntime({ downloaded: 0, total: 0 });
-    try {
-      await installParakeetRuntime();
-      toast.success("Sherpa-onnx runtime installed");
-    } catch (e) {
-      toast.error("Couldn't install runtime", {
-        description: e instanceof Error ? e.message : String(e),
-      });
-      setInstallingRuntime(null);
-    }
-  };
-
-  // Runtime is an implementation detail — auto-install on first model
-  // download; manual controls live behind "Show advanced settings".
-  const ensureRuntime = async () => {
-    if (runtimeInstalled || installingRuntime) return;
-    setInstallingRuntime({ downloaded: 0, total: 0 });
-    try {
-      await installParakeetRuntime();
-    } catch (e) {
-      setInstallingRuntime(null);
-      throw e;
-    }
-  };
-
-  const handleVariantChange = (v: ParakeetVariant) => {
-    setParakeetVariant(v);
-    setSelectedVariant(v);
-  };
-
-  const handleDownload = async (v: ParakeetVariant) => {
-    setDownloading((d) => ({ ...d, [v]: { downloaded: 0, total: 0 } }));
-    try {
-      await ensureRuntime();
-      await downloadParakeetModel(v);
-      toast.success(`Parakeet ${v} model downloaded`);
-    } catch (e) {
-      toast.error("Download failed", {
-        description: e instanceof Error ? e.message : String(e),
-      });
-      setDownloading((d) => ({ ...d, [v]: undefined }));
-    }
-  };
-
-  const handleDelete = async (v: ParakeetVariant) => {
-    try {
-      await deleteParakeetModel(v);
-      toast.success(`Parakeet ${v} model removed`);
-      void refresh();
-    } catch (e) {
-      toast.error("Couldn't remove model", {
-        description: e instanceof Error ? e.message : String(e),
-      });
-    }
-  };
-
-  const handleLanguageChange = (code: string) => {
-    setParakeetLanguage(code);
-    setLanguageState(code);
-  };
-
-  const rtPct =
-    installingRuntime && installingRuntime.total > 0
-      ? Math.round((installingRuntime.downloaded / installingRuntime.total) * 100)
-      : undefined;
-
-  return (
-    <div className="mt-5 border-t border-border-subtle pt-5">
-      <div className="mb-3 text-sm font-medium">Parakeet TDT</div>
-      <div className="mb-4 text-xs text-text-muted">
-        On-device transcription via the sherpa-onnx runtime. Pick a model variant — v2 for
-        English-only with the best WER, or v3 for 25 European languages. Runs on CPU. Windows x64
-        and Apple Silicon only.
-      </div>
-
-      {installingRuntime && (
-        <div className="mb-3 rounded-md border border-border-subtle bg-bg-elevated/40 p-3">
-          <div className="mb-1 flex items-center gap-2 text-xs text-text-secondary">
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            Setting up the on-device engine (one time, ~50 MB)…
-          </div>
-          {rtPct !== undefined && <ProgressBar value={rtPct} />}
-        </div>
-      )}
-
-      {/* Model variants */}
-      <div className="mb-3 text-sm font-medium">Models</div>
-      <div className="mb-4 text-xs text-text-muted">
-        Pick the variant that fits your needs. Both can be installed; the selected one is used for
-        new recordings. Everything needed to run them is set up automatically with your first
-        download.
-      </div>
-      <div className="flex flex-col gap-2">
-        {PARAKEET_VARIANTS.map((meta) => {
-          const info = models.find((m) => m.variant === meta.variant);
-          const installed = !!info?.installed;
-          const isSelected = selectedVariant === meta.variant;
-          const dl = downloading[meta.variant];
-          const dlPct =
-            dl && dl.total > 0 ? Math.round((dl.downloaded / dl.total) * 100) : undefined;
-          return (
-            <div
-              key={meta.variant}
-              className={`flex flex-col gap-2 rounded-md border p-3 ${
-                isSelected ? "border-accent bg-accent/5" : "border-border-subtle"
-              }`}
-            >
-              <div className="flex items-start justify-between gap-3">
-                <div className="flex flex-col gap-0.5">
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium">{meta.label}</span>
-                    <span className="text-xs text-text-muted">·</span>
-                    <span className="text-xs text-text-muted">~{meta.approxSizeMB} MB</span>
-                    {installed && (
-                      <span className="inline-flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
-                        <CheckCircle2 className="h-3.5 w-3.5" /> installed
-                      </span>
-                    )}
-                  </div>
-                  <div className="text-xs text-text-muted">{meta.blurb}</div>
-                  <div className="text-xs text-text-muted">Best for: {meta.recommendedFor}</div>
-                </div>
-                <div className="flex shrink-0 items-center gap-2">
-                  {installed ? (
-                    <>
-                      <Button
-                        variant={isSelected ? "primary" : "secondary"}
-                        size="sm"
-                        onClick={() => handleVariantChange(meta.variant)}
-                        disabled={isSelected}
-                      >
-                        {isSelected ? "In use" : "Use this"}
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => handleDelete(meta.variant)}
-                        title="Remove model file"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </>
-                  ) : dl ? (
-                    <Button variant="secondary" size="sm" disabled>
-                      <Loader2 className="mr-1 h-4 w-4 animate-spin" />
-                      {dlPct !== undefined ? `${dlPct}%` : "Starting…"}
-                    </Button>
-                  ) : (
-                    <Button
-                      variant="primary"
-                      size="sm"
-                      onClick={() => handleDownload(meta.variant)}
-                    >
-                      <Download className="mr-1 h-4 w-4" /> Download
-                    </Button>
-                  )}
-                </div>
-              </div>
-              {dl && dlPct !== undefined && <ProgressBar value={dlPct} />}
-            </div>
-          );
-        })}
-      </div>
-
-      {/* Language */}
-      <div className="pt-3">
-        <SettingRow
-          id="transcription-language"
-          title="Language"
-          description="Pick a specific language for best accuracy, or let the model auto-detect. (v2 is English-only regardless.)"
-        >
-          <Select value={language} onValueChange={handleLanguageChange}>
-            <SelectTrigger className="w-56">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {PARAKEET_LANGUAGES.map((l) => (
-                <SelectItem key={l.code} value={l.code}>
-                  {l.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </SettingRow>
-      </div>
-
-      <RuntimeRow
-        title="Runtime"
-        description="Downloads the sherpa-onnx sidecar used for Parakeet transcription."
-        installed={runtimeInstalled}
-        installing={!!installingRuntime}
-        onInstall={handleInstallRuntime}
-      />
-    </div>
-  );
 }
 
 function CleanupSection() {
@@ -1768,7 +1221,11 @@ function CleanupSection() {
         </SettingRow>
 
         {enabled && CLOUD_FEATURES_ENABLED && (
-          <SettingRow id="cleanup-location" title="Runs on" description="Where the polish step runs.">
+          <SettingRow
+            id="cleanup-location"
+            title="Runs on"
+            description="Where the polish step runs."
+          >
             <Select value={where} onValueChange={(v) => handleWhere(v as CleanupProviderKind)}>
               <SelectTrigger className="w-48">
                 <SelectValue />

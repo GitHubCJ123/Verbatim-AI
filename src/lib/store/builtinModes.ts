@@ -15,6 +15,9 @@ function genId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
+export const DEFAULT_MODE_PROMPT =
+  "Make minimal changes. Remove disfluencies (\"um\", \"uh\", false starts). Fix obvious grammar and punctuation. Keep the speaker's word choice and tone exactly.";
+
 export function buildBuiltinModes(): Mode[] {
   const now = new Date().toISOString();
   const base = {
@@ -30,7 +33,7 @@ export function buildBuiltinModes(): Mode[] {
     transcribeProviderOverride: null,
     whisperTierOverride: null,
     cleanupProviderOverride: null,
-    ollamaModelOverride: null,
+    cleanupModelOverride: null,
   } as const;
 
   return [
@@ -40,8 +43,7 @@ export function buildBuiltinModes(): Mode[] {
       name: "Default",
       icon: "Sparkles",
       description: "Light cleanup. Fixes fillers and punctuation, preserves tone.",
-      systemPrompt:
-        "Make minimal changes. Remove disfluencies (\"um\", \"uh\", false starts). Fix obvious grammar and punctuation. Keep the speaker's word choice and tone exactly.",
+      systemPrompt: DEFAULT_MODE_PROMPT,
       outputStyle: "paste",
       position: 0,
     },

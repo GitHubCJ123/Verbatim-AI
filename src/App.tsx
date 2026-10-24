@@ -123,7 +123,7 @@ export default function App() {
   const [hydrationError, setHydrationError] = useState<string | null>(null);
   // Only cloud app-mode (account + sync) hard-requires Supabase. Local
   // mode and the first-launch picker never touch it, so a fully-local
-  // setup (Local Whisper/Parakeet + local Ollama) needs no .env.local
+  // setup (local speech + built-in AI polish) needs no .env.local
   // at all — Supabase is just the relay to Azure for the cloud AI
   // option, not a prerequisite for the app to run.
   const [fatalCloudConfig, setFatalCloudConfig] = useState(false);

@@ -18,26 +18,14 @@ import { HotkeyRecorder } from "../components/settings/HotkeyRecorder";
 import { Badge } from "../components/ui/Badge";
 import { toast } from "../components/ui/Toast";
 import { useModes, loadVocabulary } from "../lib/store/useModes";
-import {
-  getActiveProvider,
-  WHISPER_TIERS,
-  listOllamaModels,
-  pingOllama,
-  getOllamaHost,
-  type OllamaModelInfo,
-} from "../lib/ai";
+import { getActiveProvider, WHISPER_TIERS, CLEANUP_MODELS, isCleanupModelId } from "../lib/ai";
 import { estimateTokens } from "../lib/ai/promptBuilder";
+import { isLightCleanupMode } from "../lib/ai/cleanupPrepass";
 import { startRecording, type AudioController } from "../lib/audio";
 import { getMicDeviceId } from "../lib/preferences";
 import { CLOUD_FEATURES_ENABLED } from "../lib/features";
 import { Waveform } from "../components/recording/Waveform";
-import type {
-  Mode,
-  OutputStyle,
-  TranscribeProviderKind,
-  WhisperTierKind,
-  CleanupProviderKind,
-} from "../types/mode";
+import type { Mode, OutputStyle, TranscribeProviderKind, WhisperTierKind } from "../types/mode";
 
 const ICON_OPTIONS = [
   "Sparkles",
@@ -337,6 +325,7 @@ function TestColumn({ draft }: { draft: Mode }) {
         modeDescription: draft.description,
         vocabulary: vocab,
         targetLanguage: draft.targetLanguage ?? undefined,
+        lightCleanup: isLightCleanupMode(draft),
       })) {
         acc += chunk;
         setCleaned(acc);
@@ -457,39 +446,8 @@ function AiOverridesSection({
     draft.transcribeProviderOverride !== null ||
       draft.whisperTierOverride !== null ||
       draft.cleanupProviderOverride !== null ||
-      draft.ollamaModelOverride !== null,
+      draft.cleanupModelOverride !== null,
   );
-  const [ollamaModels, setOllamaModels] = useState<OllamaModelInfo[]>([]);
-  const [ollamaReachable, setOllamaReachable] = useState<boolean | null>(null);
-
-  // Refresh Ollama models if the cleanup override is local-ollama. We
-  // need a populated dropdown to pick from; without it the user can't
-  // override the model meaningfully.
-  useEffect(() => {
-    if (draft.cleanupProviderOverride !== "local-ollama") return;
-    let cancelled = false;
-    (async () => {
-      const host = getOllamaHost();
-      const ping = await pingOllama(host);
-      const reachable = ping.kind === "ok";
-      if (cancelled) return;
-      setOllamaReachable(reachable);
-      if (!reachable) {
-        setOllamaModels([]);
-        return;
-      }
-      try {
-        const list = await listOllamaModels(host);
-        if (!cancelled) setOllamaModels(list);
-      } catch {
-        if (!cancelled) setOllamaModels([]);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [draft.cleanupProviderOverride]);
-
   return (
     <div className="rounded-md border border-border-subtle">
       <button
@@ -559,67 +517,44 @@ function AiOverridesSection({
             </Row>
           )}
 
-          <Row label="Cleanup provider">
+          <Row label="Cleanup model">
             <Select
               value={
-                !CLOUD_FEATURES_ENABLED && draft.cleanupProviderOverride === "cloud"
-                  ? INHERIT
-                  : (draft.cleanupProviderOverride ?? INHERIT)
+                draft.cleanupProviderOverride === "cloud"
+                  ? CLOUD_FEATURES_ENABLED
+                    ? "cloud"
+                    : INHERIT
+                  : isCleanupModelId(draft.cleanupModelOverride)
+                    ? draft.cleanupModelOverride
+                    : INHERIT
               }
-              onValueChange={(v) =>
-                set("cleanupProviderOverride", v === INHERIT ? null : (v as CleanupProviderKind))
-              }
+              onValueChange={(v) => {
+                if (v === INHERIT) {
+                  set("cleanupProviderOverride", null);
+                  set("cleanupModelOverride", null);
+                } else if (v === "cloud") {
+                  set("cleanupProviderOverride", "cloud");
+                  set("cleanupModelOverride", null);
+                } else {
+                  set("cleanupProviderOverride", "local");
+                  set("cleanupModelOverride", v);
+                }
+              }}
             >
               <SelectTrigger className="w-full">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value={INHERIT}>Use global default</SelectItem>
+                {CLEANUP_MODELS.map((m) => (
+                  <SelectItem key={m.id} value={m.id}>
+                    {m.name} · quality {m.quality.toFixed(1)} · speed {m.speed.toFixed(1)}
+                  </SelectItem>
+                ))}
                 {CLOUD_FEATURES_ENABLED && <SelectItem value="cloud">Cloud (Azure GPT)</SelectItem>}
-                <SelectItem value="local-ollama">Local (Ollama)</SelectItem>
-                <SelectItem value="local-llama-cpp">Local (llama.cpp)</SelectItem>
               </SelectContent>
             </Select>
           </Row>
-
-          {draft.cleanupProviderOverride === "local-llama-cpp" && (
-            <Row label="llama.cpp model">
-              <div className="text-xs text-text-muted">
-                Uses the global llama.cpp model from Settings → AI model.
-              </div>
-            </Row>
-          )}
-
-          {draft.cleanupProviderOverride === "local-ollama" && (
-            <Row label="Ollama model">
-              {ollamaReachable === false ? (
-                <div className="text-xs text-text-muted">
-                  Ollama not reachable. Configure it in Settings → AI model first.
-                </div>
-              ) : ollamaModels.length === 0 ? (
-                <div className="text-xs text-text-muted">
-                  No models pulled. Pull one from Settings → AI model.
-                </div>
-              ) : (
-                <Select
-                  value={draft.ollamaModelOverride ?? INHERIT}
-                  onValueChange={(v) => set("ollamaModelOverride", v === INHERIT ? null : v)}
-                >
-                  <SelectTrigger className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value={INHERIT}>Use global model</SelectItem>
-                    {ollamaModels.map((m) => (
-                      <SelectItem key={m.name} value={m.name}>
-                        {m.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              )}
-            </Row>
-          )}
         </div>
       )}
     </div>

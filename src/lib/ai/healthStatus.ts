@@ -37,14 +37,11 @@ export function troubleshootFor(stage: ProviderStage, message: string): string {
   if (m.includes("supabase") || m.includes("vite_supabase") || m.includes("not signed in")) {
     return "Cloud AI needs Supabase configuration and, in cloud app mode, a signed-in account. Switch this stage to a local engine or configure Supabase.";
   }
-  if (m.includes("ollama") && (m.includes("reach") || m.includes("running"))) {
-    return "Start Ollama, verify the host is http://localhost:11434, then refresh the Runtime status.";
+  if (stage === "cleanup" && m.includes("isn't downloaded")) {
+    return "Download the selected model from the list above, then run the test again.";
   }
-  if (m.includes("403") || m.includes("forbidden") || m.includes("origin")) {
-    return "Ollama rejected the app origin. Restart Ollama after setting OLLAMA_ORIGINS to tauri://localhost,https://tauri.localhost.";
-  }
-  if (m.includes("llama.cpp")) {
-    return "Install the llama.cpp runtime, then confirm the selected Hugging Face GGUF model reference is valid.";
+  if (stage === "cleanup" && (m.includes("polish engine") || m.includes("checksum"))) {
+    return "Delete the model and download it again. If it still fails, pick a smaller model.";
   }
   if (m.includes("runtime") || m.includes("not installed")) {
     return `Install the ${stage === "transcription" ? "transcription" : "cleanup"} runtime, then run the test again.`;

@@ -142,7 +142,7 @@ export function SpeechModelPicker({ onChange }: { onChange?: () => void }) {
     return () => offs.forEach((off) => void off.then((fn) => fn()));
   }, []);
 
-  const use = (c: SpeechChoice) => {
+  const activate = (c: SpeechChoice) => {
     applyChoice(c);
     setCurrent(c.id);
     onChange?.();
@@ -159,7 +159,7 @@ export function SpeechModelPicker({ onChange }: { onChange?: () => void }) {
         if (!install.whisperRuntime) await installWhisperRuntime();
         await downloadLocalModel((c.tier ?? "turbo") as WhisperTier);
       }
-      use(c);
+      activate(c);
       toast.success(`${c.name} is ready`, { description: "Hold your hotkey and start talking." });
     } catch (e) {
       toast.error(`Couldn't set up ${c.name}`, {
@@ -216,7 +216,7 @@ export function SpeechModelPicker({ onChange }: { onChange?: () => void }) {
       sizeMB={c.approxSizeMB}
       state={stateOf(c)}
       disabled={!!busy && busy.id !== c.id}
-      onUse={() => use(c)}
+      onUse={() => activate(c)}
       onDownload={() => void download(c)}
       onDelete={() => void remove(c)}
     />

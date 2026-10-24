@@ -14,6 +14,7 @@ import type {
   TranscribeInput,
   TranscribeResult,
 } from "./AIProvider";
+import type { Mode } from "../../types/mode";
 
 export type WhisperTier = "tiny" | "base" | "small" | "turbo" | "large-v3" | "large-v3-q5_0";
 
@@ -196,6 +197,23 @@ export function setAiProviderKind(v: AiProviderKind): void {
  */
 export function effectiveTranscribeKind(kind: AiProviderKind): AiProviderKind {
   return !CLOUD_FEATURES_ENABLED && kind === "cloud" ? "local-whisper" : kind;
+}
+
+/**
+ * Whether the active transcription engine (global setting, with any
+ * per-Mode override winning) is the local Whisper provider — the only
+ * engine with a matching `whisper-stream` sidecar (issue #33). Gates true
+ * token-level streaming so a Cloud or Parakeet transcription selection
+ * never spins up an unrelated local Whisper process just for the live
+ * preview. Mirrors the same override-resolution order as
+ * `transcribeProvider` (ai/index.ts) and `getPrivacyStatus` so the three
+ * can't drift.
+ */
+export function isLocalWhisperTranscribeActive(mode?: Mode | null): boolean {
+  return (
+    effectiveTranscribeKind(mode?.transcribeProviderOverride ?? getAiProviderKind()) ===
+    "local-whisper"
+  );
 }
 
 export function getLocalWhisperTier(): WhisperModelId {

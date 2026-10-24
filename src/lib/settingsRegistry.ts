@@ -140,6 +140,23 @@ const ALL_SETTINGS_ENTRIES: SettingsSearchEntry[] = [
     tab: "recording",
   },
   {
+    id: "true-streaming",
+    title: "True token-level streaming",
+    description:
+      "Experimental opt-in live preview from a streaming engine, with automatic fallback.",
+    keywords: [
+      "streaming",
+      "true streaming",
+      "token",
+      "experimental",
+      "whisper-stream",
+      "live preview",
+      "partial",
+      "preview",
+    ],
+    tab: "recording",
+  },
+  {
     id: "clipboard-behavior",
     title: "Clipboard behavior",
     description: "Choose how clipboard-based paste methods keep or restore clipboard contents.",

@@ -9,6 +9,7 @@ interface ReviewPanelProps {
   /** Streamed updates while polishing. */
   streamingText?: string;
   isPolishing: boolean;
+  isBusy?: boolean;
   /** Optional banner explaining why the panel appeared (e.g. paste failed). */
   notice?: string | null;
   /** When provided, renders an "Open Settings" action in the notice banner. */
@@ -24,6 +25,7 @@ export function ReviewPanel({
   initialText,
   streamingText,
   isPolishing,
+  isBusy = false,
   notice,
   onOpenSettings,
   onPaste,
@@ -51,22 +53,22 @@ export function ReviewPanel({
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
         e.preventDefault();
-        onPaste(text);
+        if (!isPolishing && !isBusy && text.trim()) onPaste(text);
       } else if (e.key === "Escape") {
         e.preventDefault();
-        onDiscard();
+        if (!isPolishing && !isBusy) onDiscard();
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [text, onPaste, onDiscard]);
+  }, [text, onPaste, onDiscard, isPolishing, isBusy]);
 
   return (
     <motion.div
       initial={{ opacity: 0, y: 12, scale: 0.98 }}
       animate={{ opacity: 1, y: 0, scale: 1 }}
       transition={{ type: "spring", stiffness: 240, damping: 26 }}
-      className="pointer-events-auto flex h-full w-full flex-col gap-3 rounded-lg2 border border-white/10 bg-[rgba(20,20,28,0.85)] p-4 shadow-md backdrop-blur-2xl"
+      className="pointer-events-auto flex h-full w-full flex-col gap-3 overflow-y-auto rounded-lg2 border border-white/10 bg-[rgba(20,20,28,0.85)] p-4 shadow-md backdrop-blur-2xl"
     >
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2 text-xs">
@@ -75,13 +77,19 @@ export function ReviewPanel({
             {modeName}
           </span>
         </div>
-        {isPolishing && (
-          <span className="text-[10px] text-text-muted">Polishing…</span>
+        {isPolishing && <span className="text-[10px] text-text-muted">Polishing…</span>}
+        {isBusy && (
+          <span role="status" className="text-[10px] text-text-muted">
+            Delivering…
+          </span>
         )}
       </div>
 
       {notice && (
-        <div className="flex items-start gap-2 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-[11px] leading-snug text-text-secondary">
+        <div
+          role="status"
+          className="flex items-start gap-2 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-[11px] leading-snug text-text-secondary"
+        >
           <AlertTriangle className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-warning" />
           <span className="flex-1">{notice}</span>
           {onOpenSettings && (
@@ -99,12 +107,13 @@ export function ReviewPanel({
       <textarea
         ref={textareaRef}
         value={text}
+        readOnly={isBusy}
         onChange={(e) => {
           userEditedRef.current = true;
           setText(e.target.value);
         }}
         className={cn(
-          "flex-1 resize-none rounded-md border border-border-subtle bg-bg-base px-3 py-2 font-sans text-sm leading-relaxed text-text-primary",
+          "min-h-[96px] flex-1 resize-none rounded-md border border-border-subtle bg-bg-base px-3 py-2 font-sans text-sm leading-relaxed text-text-primary",
           "focus:outline-none focus:border-accent-solid/60 focus:ring-2 focus:ring-accent-solid/20",
         )}
         placeholder={isPolishing ? "Listening for tokens…" : "Cleaned text will appear here"}
@@ -115,6 +124,7 @@ export function ReviewPanel({
           <button
             type="button"
             onClick={onDiscard}
+            disabled={isPolishing || isBusy}
             className="flex h-8 items-center gap-1 rounded-md px-2.5 text-xs text-text-secondary transition-colors hover:bg-white/[0.04] hover:text-text-primary"
           >
             <X className="h-3.5 w-3.5" />
@@ -123,7 +133,7 @@ export function ReviewPanel({
           <button
             type="button"
             onClick={onRegenerate}
-            disabled={isPolishing}
+            disabled={isPolishing || isBusy}
             className="flex h-8 items-center gap-1 rounded-md px-2.5 text-xs text-text-secondary transition-colors hover:bg-white/[0.04] hover:text-text-primary disabled:pointer-events-none disabled:opacity-50"
           >
             <RotateCw className="h-3.5 w-3.5" />
@@ -134,7 +144,7 @@ export function ReviewPanel({
           <button
             type="button"
             onClick={() => onCopy(text)}
-            disabled={isPolishing || !text}
+            disabled={isPolishing || isBusy || !text.trim()}
             className="flex h-8 items-center gap-1 rounded-md border border-border-subtle bg-bg-elevated px-2.5 text-xs text-text-primary transition-colors hover:border-border-strong disabled:pointer-events-none disabled:opacity-50"
           >
             <ClipboardCopy className="h-3.5 w-3.5" />
@@ -143,7 +153,7 @@ export function ReviewPanel({
           <button
             type="button"
             onClick={() => onPaste(text)}
-            disabled={isPolishing || !text}
+            disabled={isPolishing || isBusy || !text.trim()}
             className="flex h-8 items-center gap-1.5 rounded-md bg-gradient-to-b from-accent-solid to-[#7c3aed] px-3 text-xs font-medium text-white shadow-sm transition-all hover:brightness-110 active:scale-[0.98] disabled:pointer-events-none disabled:opacity-50"
           >
             <Send className="h-3.5 w-3.5" />

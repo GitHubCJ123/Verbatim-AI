@@ -24,6 +24,7 @@ interface RecordingPillProps {
    * arrived; replaced by the final transcript once recording stops.
    */
   partialText?: string;
+  successLabel?: "Pasted" | "Copied";
 }
 
 function formatDuration(ms: number) {
@@ -62,6 +63,7 @@ export function RecordingPill({
   errorTitle,
   privacy,
   partialText,
+  successLabel = "Pasted",
 }: RecordingPillProps) {
   const elapsed = useElapsed(state === "recording");
 
@@ -139,7 +141,11 @@ export function RecordingPill({
                 />
               </div>
             )}
-            {state === "success" && <div className="text-sm font-medium text-success">Done</div>}
+            {state === "success" && (
+              <div role="status" className="text-sm font-medium text-success">
+                {successLabel}
+              </div>
+            )}
             {state === "error" && (
               <div className="min-w-0 text-danger">
                 {errorTitle ? (

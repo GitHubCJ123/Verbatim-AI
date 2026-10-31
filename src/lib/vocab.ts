@@ -1,5 +1,38 @@
 import type { VocabularyTerm } from "../types/mode";
 
+export const MAX_VOCABULARY_TERM_LENGTH = 200;
+
+/** One explicit term or phrase, never an entire multi-line dictation. */
+export function validateVocabularyTerm(
+  input: string,
+  terms: VocabularyTerm[],
+  excludeId?: string,
+): string {
+  const term = input.trim();
+  if (!term) throw new Error("Enter a term or short phrase.");
+  if (
+    Array.from(term).some(
+      (character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127,
+    )
+  ) {
+    throw new Error("Use a single-line term without control characters.");
+  }
+  if (term.length > MAX_VOCABULARY_TERM_LENGTH) {
+    throw new Error(`Use at most ${MAX_VOCABULARY_TERM_LENGTH} characters.`);
+  }
+  const key = term.normalize("NFKC").toLowerCase().replace(/\s+/gu, " ");
+  if (
+    terms.some(
+      (entry) =>
+        entry.id !== excludeId &&
+        entry.term.trim().normalize("NFKC").toLowerCase().replace(/\s+/gu, " ") === key,
+    )
+  ) {
+    throw new Error("This term is already in Vocabulary.");
+  }
+  return term;
+}
+
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

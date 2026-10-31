@@ -20,7 +20,7 @@ for current implementation boundaries, applicable checks and privacy/release gat
   **Customize** opens the selected recipe; its prompt, language, output, hotkey
   and AI overrides live under **Advanced recipe settings** and still use **Save changes**.
   App mappings continue to take priority over the default style.
-- **Custom vocabulary** — keep proper nouns and jargon spelled correctly.
+- **Custom vocabulary** — keep proper nouns and jargon spelled correctly. In Review, select a corrected term and choose **Add corrected term**, edit the suggested spelling, then **Save term**. With no selection, enter the term yourself. Cancel saves nothing; terms are never learned automatically. Manage them in Vocabulary. Only the confirmed term is stored (locally while cloud features are disabled), not the surrounding dictation. Empty, multi-line, over-200-character and duplicate terms are rejected; save failures leave the draft available to retry.
 - **Translation** — speak any language, output in another.
 - **Cloud-backed** — Supabase Postgres for sync, Supabase Edge Functions proxying Azure AI Foundry for transcription + polish. No keys on the client.
 - **Tray-resident** — close the window, app keeps running. Autostart optional.

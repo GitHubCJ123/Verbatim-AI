@@ -15,6 +15,11 @@ for current implementation boundaries, applicable checks and privacy/release gat
 
 - **Global push-to-talk hotkey** — default `Ctrl+Space`, fully rebindable.
 - **Per-app tone** — Slack stays casual, Gmail stays formal, code comments stay terse. Driven by user-defined Modes + app mappings.
+- **Writing Style** — choose your default from existing Modes, including custom recipes.
+  Expand **Advanced: Mode recipes** to create, duplicate, reorder or edit them.
+  **Customize** opens the selected recipe; its prompt, language, output, hotkey
+  and AI overrides live under **Advanced recipe settings** and still use **Save changes**.
+  App mappings continue to take priority over the default style.
 - **Custom vocabulary** — keep proper nouns and jargon spelled correctly.
 - **Translation** — speak any language, output in another.
 - **Cloud-backed** — Supabase Postgres for sync, Supabase Edge Functions proxying Azure AI Foundry for transcription + polish. No keys on the client.

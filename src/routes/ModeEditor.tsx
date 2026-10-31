@@ -100,7 +100,7 @@ export default function ModeEditor() {
           </>
         }
       />
-      <div className="grid grid-cols-2 gap-6">
+      <div className="grid gap-6 lg:grid-cols-2">
         <FormColumn draft={draft} set={set} />
         <TestColumn draft={draft} />
       </div>
@@ -122,92 +122,106 @@ function FormColumn({
           <Input value={draft.name} onChange={(e) => set("name", e.target.value)} />
         </Row>
 
-        <Row label="Icon">
-          <Select value={draft.icon} onValueChange={(v) => set("icon", v)}>
-            <SelectTrigger className="w-full">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {ICON_OPTIONS.map((name) => (
-                <SelectItem key={name} value={name}>
-                  {name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </Row>
-
         <Row label="Description">
           <Input value={draft.description} onChange={(e) => set("description", e.target.value)} />
         </Row>
 
-        <Row label="System prompt" help={`~${estimateTokens(draft.systemPrompt)} tokens`}>
-          <Textarea
-            rows={9}
-            className="font-mono text-xs"
-            value={draft.systemPrompt}
-            onChange={(e) => set("systemPrompt", e.target.value)}
-          />
-        </Row>
+        <p className="text-xs text-text-muted">
+          This writing style uses the Mode recipe below. Advanced settings are preserved until you
+          edit them and save changes.
+        </p>
+        <details className="rounded-md border border-border-subtle">
+          <summary className="cursor-pointer rounded-md px-4 py-3 text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-solid">
+            Advanced recipe settings
+            <span className="mt-1 block text-xs font-normal text-text-muted">
+              Prompt, language, output, hotkey and AI overrides
+            </span>
+          </summary>
+          <div className="flex flex-col gap-5 border-t border-border-subtle p-4">
+            <Row label="Icon">
+              <Select value={draft.icon} onValueChange={(v) => set("icon", v)}>
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {ICON_OPTIONS.map((name) => (
+                    <SelectItem key={name} value={name}>
+                      {name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </Row>
 
-        <div className="grid grid-cols-2 gap-3">
-          <Row label="Language">
-            <Input
-              value={draft.language}
-              onChange={(e) => set("language", e.target.value)}
-              placeholder="auto"
+            <Row label="System prompt" help={`~${estimateTokens(draft.systemPrompt)} tokens`}>
+              <Textarea
+                rows={9}
+                className="font-mono text-xs"
+                value={draft.systemPrompt}
+                onChange={(e) => set("systemPrompt", e.target.value)}
+              />
+            </Row>
+
+            <div className="grid grid-cols-2 gap-3">
+              <Row label="Language">
+                <Input
+                  value={draft.language}
+                  onChange={(e) => set("language", e.target.value)}
+                  placeholder="auto"
+                />
+              </Row>
+              <Row label="Translate to">
+                <Input
+                  value={draft.targetLanguage ?? ""}
+                  onChange={(e) => set("targetLanguage", e.target.value || null)}
+                  placeholder="(no translation)"
+                />
+              </Row>
+            </div>
+
+            <Row label="Output">
+              <Select
+                value={draft.outputStyle}
+                onValueChange={(v) => set("outputStyle", v as OutputStyle)}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="paste">Auto-paste</SelectItem>
+                  <SelectItem value="review">Review before pasting</SelectItem>
+                </SelectContent>
+              </Select>
+            </Row>
+
+            <Row label="Mode hotkey" help="Optional — overrides global when this mode is set">
+              <HotkeyRecorder value={draft.hotkey ?? ""} onChange={(spec) => set("hotkey", spec)} />
+            </Row>
+
+            <ToggleRow
+              title="Push-to-talk"
+              description="Hold to record. Off = tap to toggle."
+              checked={draft.pushToTalk}
+              onChange={(v) => set("pushToTalk", v)}
             />
-          </Row>
-          <Row label="Translate to">
-            <Input
-              value={draft.targetLanguage ?? ""}
-              onChange={(e) => set("targetLanguage", e.target.value || null)}
-              placeholder="(no translation)"
+
+            <ToggleRow
+              title="Save to history"
+              description="Keep cleaned transcripts in your history."
+              checked={draft.saveHistory}
+              onChange={(v) => set("saveHistory", v)}
             />
-          </Row>
-        </div>
 
-        <Row label="Output">
-          <Select
-            value={draft.outputStyle}
-            onValueChange={(v) => set("outputStyle", v as OutputStyle)}
-          >
-            <SelectTrigger className="w-full">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="paste">Auto-paste</SelectItem>
-              <SelectItem value="review">Review before pasting</SelectItem>
-            </SelectContent>
-          </Select>
-        </Row>
+            <ToggleRow
+              title="Skip AI cleanup"
+              description="Paste the raw transcript instantly, no polishing pass. Fastest path. Vocabulary replacements still run."
+              checked={draft.skipCleanup}
+              onChange={(v) => set("skipCleanup", v)}
+            />
 
-        <Row label="Mode hotkey" help="Optional — overrides global when this mode is set">
-          <HotkeyRecorder value={draft.hotkey ?? ""} onChange={(spec) => set("hotkey", spec)} />
-        </Row>
-
-        <ToggleRow
-          title="Push-to-talk"
-          description="Hold to record. Off = tap to toggle."
-          checked={draft.pushToTalk}
-          onChange={(v) => set("pushToTalk", v)}
-        />
-
-        <ToggleRow
-          title="Save to history"
-          description="Keep cleaned transcripts in your history."
-          checked={draft.saveHistory}
-          onChange={(v) => set("saveHistory", v)}
-        />
-
-        <ToggleRow
-          title="Skip AI cleanup"
-          description="Paste the raw transcript instantly, no polishing pass. Fastest path. Vocabulary replacements still run."
-          checked={draft.skipCleanup}
-          onChange={(v) => set("skipCleanup", v)}
-        />
-
-        <AiOverridesSection draft={draft} set={set} />
+            <AiOverridesSection draft={draft} set={set} />
+          </div>
+        </details>
       </CardContent>
     </Card>
   );
@@ -250,7 +264,7 @@ function ToggleRow({
         <div className="text-sm font-medium">{title}</div>
         <div className="text-xs text-text-muted">{description}</div>
       </div>
-      <Switch checked={checked} onCheckedChange={onChange} />
+      <Switch aria-label={title} checked={checked} onCheckedChange={onChange} />
     </div>
   );
 }
@@ -341,76 +355,84 @@ function TestColumn({ draft }: { draft: Mode }) {
   const getBars = () => controllerRef.current?.getBars(32) ?? new Array(32).fill(0);
 
   return (
-    <div className="flex flex-col gap-4">
-      <Card>
-        <CardContent className="flex flex-col gap-4 p-5 pt-5">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Sparkles className="h-4 w-4 text-accent-start" />
-              <div className="text-sm font-medium">Test this mode</div>
-            </div>
-            {state !== "idle" && (
-              <Badge variant={state === "error" ? "danger" : "accent"}>{labelFor(state)}</Badge>
-            )}
-          </div>
-
-          <div className="flex h-16 items-center gap-3 rounded-md border border-border-subtle bg-bg-base px-3">
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-pill bg-gradient-to-br from-accent-start to-accent-end text-white">
-              <Mic className="h-4 w-4" strokeWidth={2.25} />
-            </div>
-            <div className="flex-1">
-              {state === "recording" ? (
-                <Waveform getBars={getBars} className="h-10 w-full" />
-              ) : busy ? (
-                <div className="text-xs text-text-secondary">{labelFor(state)}…</div>
-              ) : (
-                <div className="text-xs text-text-muted">
-                  Press Record and read aloud. Release Stop to run transcribe + cleanup.
-                </div>
+    <details className="self-start rounded-md border border-border-subtle">
+      <summary className="cursor-pointer rounded-md px-5 py-4 text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-solid">
+        Try this recipe with a recording
+        <span className="mt-1 block text-xs font-normal text-text-muted">
+          Records audio and runs your configured transcription and cleanup engines.
+        </span>
+      </summary>
+      <div className="flex flex-col gap-4 border-t border-border-subtle p-4">
+        <Card>
+          <CardContent className="flex flex-col gap-4 p-5 pt-5">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Sparkles className="h-4 w-4 text-accent-start" />
+                <div className="text-sm font-medium">Test this mode</div>
+              </div>
+              {state !== "idle" && (
+                <Badge variant={state === "error" ? "danger" : "accent"}>{labelFor(state)}</Badge>
               )}
             </div>
-            <div className="shrink-0">
-              {state === "recording" ? (
-                <Button variant="danger" size="sm" onClick={stop}>
-                  <Square className="h-3.5 w-3.5" />
-                  Stop
-                </Button>
-              ) : (
-                <Button variant="primary" size="sm" onClick={start} disabled={busy}>
-                  {state === "processing" || state === "polishing" ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <Mic className="h-3.5 w-3.5" />
-                  )}
-                  Record
-                </Button>
-              )}
+
+            <div className="flex h-16 items-center gap-3 rounded-md border border-border-subtle bg-bg-base px-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-pill bg-gradient-to-br from-accent-start to-accent-end text-white">
+                <Mic className="h-4 w-4" strokeWidth={2.25} />
+              </div>
+              <div className="flex-1">
+                {state === "recording" ? (
+                  <Waveform getBars={getBars} className="h-10 w-full" />
+                ) : busy ? (
+                  <div className="text-xs text-text-secondary">{labelFor(state)}…</div>
+                ) : (
+                  <div className="text-xs text-text-muted">
+                    Press Record and read aloud. Release Stop to run transcribe + cleanup.
+                  </div>
+                )}
+              </div>
+              <div className="shrink-0">
+                {state === "recording" ? (
+                  <Button variant="danger" size="sm" onClick={stop}>
+                    <Square className="h-3.5 w-3.5" />
+                    Stop
+                  </Button>
+                ) : (
+                  <Button variant="primary" size="sm" onClick={start} disabled={busy}>
+                    {state === "processing" || state === "polishing" ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Mic className="h-3.5 w-3.5" />
+                    )}
+                    Record
+                  </Button>
+                )}
+              </div>
             </div>
-          </div>
 
-          {error && <div className="text-xs text-danger">{error}</div>}
-        </CardContent>
-      </Card>
+            {error && <div className="text-xs text-danger">{error}</div>}
+          </CardContent>
+        </Card>
 
-      <Card>
-        <CardContent className="flex flex-col gap-3 p-5 pt-5">
-          <div className="text-xs font-medium uppercase tracking-wide text-text-muted">Raw</div>
-          <div className="min-h-[60px] whitespace-pre-wrap text-sm text-text-secondary">
-            {raw || <span className="text-text-muted">(no transcript yet)</span>}
-          </div>
-        </CardContent>
-      </Card>
-      <Card>
-        <CardContent className="flex flex-col gap-3 p-5 pt-5">
-          <div className="text-xs font-medium uppercase tracking-wide text-text-muted">
-            Cleaned with {draft.name}
-          </div>
-          <div className="min-h-[80px] whitespace-pre-wrap text-sm text-text-primary">
-            {cleaned || <span className="text-text-muted">(no output yet)</span>}
-          </div>
-        </CardContent>
-      </Card>
-    </div>
+        <Card>
+          <CardContent className="flex flex-col gap-3 p-5 pt-5">
+            <div className="text-xs font-medium uppercase tracking-wide text-text-muted">Raw</div>
+            <div className="min-h-[60px] whitespace-pre-wrap text-sm text-text-secondary">
+              {raw || <span className="text-text-muted">(no transcript yet)</span>}
+            </div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="flex flex-col gap-3 p-5 pt-5">
+            <div className="text-xs font-medium uppercase tracking-wide text-text-muted">
+              Cleaned with {draft.name}
+            </div>
+            <div className="min-h-[80px] whitespace-pre-wrap text-sm text-text-primary">
+              {cleaned || <span className="text-text-muted">(no output yet)</span>}
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    </details>
   );
 }
 
@@ -452,6 +474,7 @@ function AiOverridesSection({
     <div className="rounded-md border border-border-subtle">
       <button
         type="button"
+        aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
         className="flex w-full items-center justify-between px-4 py-3 text-left"
       >

@@ -1,10 +1,13 @@
 # Verbatim AI
 
-A Windows desktop voice-transcription app with a modern, animated UI.
+A Windows and macOS desktop voice-transcription app with a modern, animated UI.
 
 > Talk anywhere. We type it for you, in your voice, in the right tone, in any app.
 
-Hold a global hotkey, speak, release — Verbatim AI transcribes your audio, polishes it with the tone of the app you're in, and pastes the result wherever your cursor is.
+Hold a global hotkey, speak, release — or disable push-to-talk to press once to
+start and again to finish. Bare Fn and right Command shortcuts remain hold-only.
+Verbatim AI transcribes your audio, optionally polishes it with the tone of the
+app you're in, and pastes the result wherever your cursor is.
 
 See [`plan.md`](./plan.md) for the full product, architecture, and roadmap.
 
@@ -13,16 +16,20 @@ for current implementation boundaries, applicable checks and privacy/release gat
 
 ## Features
 
-- **Global push-to-talk hotkey** — default `Ctrl+Space`, fully rebindable.
+- **Global dictation hotkey** — default `Ctrl+Space` on Windows and
+  `Control+Shift+Space` on macOS, rebindable with hold or toggle behavior.
 - **Per-app tone** — Slack stays casual, Gmail stays formal, code comments stay terse. Driven by user-defined Modes + app mappings.
 - **Writing Style** — choose your default from existing Modes, including custom recipes.
   Expand **Advanced: Mode recipes** to create, duplicate, reorder or edit them.
   **Customize** opens the selected recipe; its prompt, language, output, hotkey
   and AI overrides live under **Advanced recipe settings** and still use **Save changes**.
   App mappings continue to take priority over the default style.
+  Find app mappings under **Writing Style → Apps**.
 - **Custom vocabulary** — keep proper nouns and jargon spelled correctly. In Review, select a corrected term and choose **Add corrected term**, edit the suggested spelling, then **Save term**. With no selection, enter the term yourself. Cancel saves nothing; terms are never learned automatically. Manage them in Vocabulary. Only the confirmed term is stored (locally while cloud features are disabled), not the surrounding dictation. Empty, multi-line, over-200-character and duplicate terms are rejected; save failures leave the draft available to retry.
 - **Translation** — speak any language, output in another.
-- **Cloud-backed** — Supabase Postgres for sync, Supabase Edge Functions proxying Azure AI Foundry for transcription + polish. No keys on the client.
+- **Local processing** — speech transcription and optional AI polish run on-device.
+  Cloud providers, accounts and sync are currently disabled. Model downloads and
+  app updates use the network; downloaded models can run offline.
 - **Tray-resident** — close the window, app keeps running. Autostart optional.
 - **Dark + light themes**, follows OS by default.
 - **Onboarding** generates Modes + app mappings from a few tone picks.
@@ -86,7 +93,6 @@ After that, in-app updates install correctly. If you skip step 2, the app detect
 
 ```powershell
 pnpm install
-Copy-Item .env.example .env.local   # fill in Supabase URL + anon key
 pnpm tauri dev
 ```
 
@@ -94,7 +100,14 @@ The first `cargo` build takes several minutes; subsequent builds are incremental
 
 ### Environment
 
-Verbatim AI is online-only. Set these in `.env.local`:
+No Supabase configuration or account is required for the current local-only app.
+Choose and download a speech model in Quick Start or Settings before dictating;
+AI polish can be turned off or use a downloaded local model.
+
+The following configuration and backend commands are for maintainers of the
+disabled cloud integration, not local setup steps. Do not re-enable cloud
+features or deploy a backend just to run the app. If working on that integration,
+keep environment values in ignored `.env.local`:
 
 ```
 VITE_SUPABASE_URL=https://YOUR-PROJECT.supabase.co
@@ -105,7 +118,7 @@ VITE_VERBATIM_EDGE_APP_SECRET=YOUR-ROLLOUT-SECRET
 
 Azure credentials live in **Supabase secrets**, not on the client. See [`supabase/functions/README.md`](./supabase/functions/README.md).
 
-### Database
+### Database (disabled cloud integration)
 
 Apply migrations against your Supabase project:
 
@@ -113,7 +126,7 @@ Apply migrations against your Supabase project:
 supabase db push
 ```
 
-### Edge Functions
+### Edge Functions (disabled cloud integration)
 
 ```powershell
 supabase functions deploy transcribe

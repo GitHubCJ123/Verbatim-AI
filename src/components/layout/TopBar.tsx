@@ -12,7 +12,7 @@ import { hotkeyDisplayParts, loadHotkeyConfig } from "../../lib/hotkey";
 
 const routeLabels: Record<string, string> = {
   "": "Home",
-  modes: "Modes",
+  modes: "Writing Style",
   apps: "Apps",
   vocabulary: "Vocabulary",
   history: "History",

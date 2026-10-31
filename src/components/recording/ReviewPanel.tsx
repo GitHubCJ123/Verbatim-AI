@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { ClipboardCopy, X, RotateCw, Send, AlertTriangle } from "lucide-react";
 import { cn } from "../../lib/utils";
+import { CorrectionVocabularyAction } from "./CorrectionVocabularyAction";
 
 interface ReviewPanelProps {
   modeName: string;
@@ -34,6 +35,7 @@ export function ReviewPanel({
   onRegenerate,
 }: ReviewPanelProps) {
   const [text, setText] = useState(initialText);
+  const [selectedText, setSelectedText] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   // Mirror streaming chunks until the user starts editing manually.
@@ -111,6 +113,11 @@ export function ReviewPanel({
         onChange={(e) => {
           userEditedRef.current = true;
           setText(e.target.value);
+          setSelectedText("");
+        }}
+        onSelect={(e) => {
+          const textarea = e.currentTarget;
+          setSelectedText(textarea.value.slice(textarea.selectionStart, textarea.selectionEnd));
         }}
         className={cn(
           "min-h-[96px] flex-1 resize-none rounded-md border border-border-subtle bg-bg-base px-3 py-2 font-sans text-sm leading-relaxed text-text-primary",
@@ -118,6 +125,8 @@ export function ReviewPanel({
         )}
         placeholder={isPolishing ? "Listening for tokens…" : "Cleaned text will appear here"}
       />
+
+      <CorrectionVocabularyAction selectedText={selectedText} disabled={isPolishing} />
 
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-1">

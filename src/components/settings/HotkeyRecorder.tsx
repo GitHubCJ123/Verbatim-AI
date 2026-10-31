@@ -12,6 +12,9 @@ import { cn } from "../../lib/utils";
 import {
   applyHotkey,
   clearHotkey,
+  getRegisteredHotkey,
+  hotkeyErrorTitle,
+  reservedHotkeyWarning,
   hotkeyDisplayParts,
   isFunctionKey,
   HOTKEY_PRESETS,
@@ -24,7 +27,8 @@ import { handleInputMonitoringError } from "./inputMonitoring";
 
 interface HotkeyRecorderProps {
   value: string;
-  onChange: (spec: string) => void;
+  /** registered=false only for a modifier preset pending Input Monitoring. */
+  onChange: (spec: string, registered: boolean) => void;
   /** Show one-click preset chips (fn, right ⌘, …). Default true. */
   showPresets?: boolean;
 }
@@ -193,7 +197,12 @@ export class HotkeyCaptureSession {
     try {
       await clear;
     } catch (error) {
-      await this.cleanup().catch(() => {});
+      try {
+        await this.cleanup();
+      } catch (restore) {
+        this.reportError(`${String(error)}. Previous shortcut could not be restored: ${String(restore)}`);
+        return;
+      }
       this.reportError(error);
       return;
     } finally {
@@ -210,7 +219,12 @@ export class HotkeyCaptureSession {
       this.callbacks.onRecordingChange(true);
       this.callbacks.onBusyChange(false);
     } catch (error) {
-      await this.cleanup().catch(() => {});
+      try {
+        await this.cleanup();
+      } catch (restore) {
+        this.reportError(`${String(error)}. Previous shortcut could not be restored: ${String(restore)}`);
+        return;
+      }
       this.reportError(error);
       return;
     }
@@ -283,9 +297,15 @@ export class HotkeyCaptureSession {
             // A failed new binding must not leave the user without the
             // shortcut that was active before capture began.
             if (committedSpec && previousSpec && previousSpec !== restoreSpec) {
-              await applyHotkey(previousSpec).catch(() => {});
+              try {
+                await applyHotkey(previousSpec);
+              } catch (restore) {
+                restoreError = new Error(
+                  `${String(error)}. Previous shortcut could not be restored: ${String(restore)}`,
+                );
+              }
             }
-            restoreError = error;
+            restoreError ??= error;
           }
         }
       }
@@ -326,9 +346,7 @@ export function HotkeyRecorder({ value, onChange, showPresets = true }: HotkeyRe
   const [showFnHint, setShowFnHint] = useState(false);
   const [unsupportedKey, setUnsupportedKey] = useState<string | null>(null);
   const mountedRef = useRef(true);
-  const valueRef = useRef(value);
   const onChangeRef = useRef(onChange);
-  valueRef.current = value;
   onChangeRef.current = onChange;
 
   const sessionRef = useRef<HotkeyCaptureSession | null>(null);
@@ -353,13 +371,13 @@ export function HotkeyRecorder({ value, onChange, showPresets = true }: HotkeyRe
         // mid-commit — so the saved preference can't desync from the hotkey
         // that cleanup() already applied natively.
         if (mountedRef.current) setCommitted(spec);
-        onChangeRef.current(spec);
+        onChangeRef.current(spec, true);
       },
       onFnCaptureUnavailable: ifMounted(() => setShowFnHint(true)),
       onUnsupportedKey: ifMounted((key: string) => setUnsupportedKey(key || null)),
       onError: ifMounted((message) => {
         if (!handleInputMonitoringError(message)) {
-          toast.error("Couldn't change the shortcut", { description: message });
+          toast.error(hotkeyErrorTitle(message), { description: message });
         }
       }),
     });
@@ -369,7 +387,9 @@ export function HotkeyRecorder({ value, onChange, showPresets = true }: HotkeyRe
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
-      void sessionRef.current?.cleanup().catch(() => {});
+      void sessionRef.current?.cleanup().catch((error) => {
+        toast.error("Couldn't restore the shortcut", { description: String(error) });
+      });
     };
   }, []);
 
@@ -388,6 +408,27 @@ export function HotkeyRecorder({ value, onChange, showPresets = true }: HotkeyRe
   };
 
   const displayed = committed ?? value;
+  const reservedWarning = reservedHotkeyWarning(displayed);
+
+  const selectPreset = async (spec: string) => {
+    setBusy(true);
+    let registered = true;
+    try {
+      await applyHotkey(spec);
+    } catch (error) {
+      // Preserve the existing pending-permission choice for modifier presets.
+      // It is explicitly shown as inactive by ModifierHotkeyStatus.
+      if (!handleInputMonitoringError(error)) {
+        toast.error(hotkeyErrorTitle(error), { description: String(error) });
+        return;
+      }
+      registered = false;
+    } finally {
+      if (mountedRef.current) setBusy(false);
+    }
+    if (mountedRef.current) setCommitted(spec);
+    onChangeRef.current(spec, registered);
+  };
   const tokens =
     recording && pendingModifiers.length > 0
       ? pendingModifiers
@@ -411,7 +452,20 @@ export function HotkeyRecorder({ value, onChange, showPresets = true }: HotkeyRe
         <button
           type="button"
           disabled={recording || busy}
-          onClick={() => void sessionRef.current?.start(valueRef.current)}
+          onClick={async () => {
+            setBusy(true);
+            try {
+              // A mode draft is not necessarily the currently registered
+              // global binding. Restore what was actually active, not value.
+              const previous = await getRegisteredHotkey();
+              if (!mountedRef.current) return;
+              await sessionRef.current?.start(previous ?? "");
+            } catch (error) {
+              toast.error("Couldn't start shortcut capture", { description: String(error) });
+            } finally {
+              if (mountedRef.current) setBusy(false);
+            }
+          }}
           className={cn(
             "flex h-9 min-w-[160px] items-center justify-center gap-1 rounded-md border px-3 transition-colors disabled:cursor-default",
             recording
@@ -477,10 +531,7 @@ export function HotkeyRecorder({ value, onChange, showPresets = true }: HotkeyRe
                 key={preset.spec}
                 type="button"
                 disabled={busy || active}
-                onClick={() => {
-                  setCommitted(preset.spec);
-                  onChangeRef.current(preset.spec);
-                }}
+                onClick={() => void selectPreset(preset.spec)}
                 className={cn(
                   "flex items-center gap-1 rounded-md border px-2 py-1 text-[11px] transition-colors",
                   active
@@ -498,6 +549,12 @@ export function HotkeyRecorder({ value, onChange, showPresets = true }: HotkeyRe
       )}
 
       {helperContent}
+
+      {!recording && reservedWarning && (
+        <p role="status" className="max-w-[340px] text-right text-[11px] leading-snug text-text-muted">
+          {reservedWarning}
+        </p>
+      )}
 
       {!recording && <ModifierHotkeyStatus spec={displayed} />}
 

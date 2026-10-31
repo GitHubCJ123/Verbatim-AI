@@ -19,13 +19,11 @@ import { HotkeyRecorder } from "../components/settings/HotkeyRecorder";
 import { SpeechModelPicker } from "../components/settings/SpeechModelPicker";
 import { CleanupModelPicker } from "../components/settings/CleanupModelPicker";
 import {
-  applyHotkey,
   hotkeyDisplayParts,
   isForcedHoldSpec,
   loadHotkeyConfig,
   saveHotkeyConfig,
 } from "../lib/hotkey";
-import { handleInputMonitoringError } from "../components/settings/inputMonitoring";
 import {
   isAutostartEnabled,
   setAutostart,
@@ -637,29 +635,14 @@ export default function Settings() {
     void isAutostartEnabled().then(setAutostartState);
   }, []);
 
-  const handleHotkeyChange = async (spec: string) => {
-    const save = () =>
-      setHotkey((h) => ({ ...h, spec, pushToTalk: h.pushToTalk || isForcedHoldSpec(spec) }));
-    try {
-      await applyHotkey(spec);
-      save();
+  const handleHotkeyChange = (spec: string, registered: boolean) => {
+    // The recorder only publishes accepted bindings (or an explicitly
+    // pending Input Monitoring modifier preset). Do not register twice.
+    setHotkey((h) => ({ ...h, spec, pushToTalk: h.pushToTalk || isForcedHoldSpec(spec) }));
+    if (registered) {
       toast.success("Hotkey updated", {
         description: `Now using ${hotkeyDisplayParts(spec).join(" ")}`,
       });
-    } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
-      if (message.includes("needs-input-monitoring")) {
-        // Keep the choice: the status panel under the recorder walks the user
-        // through the permission and activates fn / right ⌘ once granted (and
-        // the saved spec is re-registered on every launch).
-        save();
-        return;
-      }
-      if (!handleInputMonitoringError(e)) {
-        toast.error("Couldn't register that shortcut", {
-          description: e instanceof Error ? e.message : String(e),
-        });
-      }
     }
   };
 

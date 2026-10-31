@@ -13,7 +13,7 @@ for current implementation boundaries, applicable checks and privacy/release gat
 
 ## Features
 
-- **Global push-to-talk hotkey** — default `Ctrl+Space`, fully rebindable.
+- **Global push-to-talk hotkey** — default `Ctrl+Space` on Windows and `Ctrl+Shift+Space` on macOS, fully rebindable. Windows reports registered shortcuts already in use: choose another shortcut, since another app's binding cannot be overridden. macOS only shows best-effort warnings for common Spotlight, Finder search and Force Quit shortcuts; arbitrary cross-app conflicts cannot be reliably detected. Failed replacements keep the prior active binding, and rejected choices are not saved. Recording a shortcut temporarily releases the active binding; if another app claims it during capture and restoration fails, the error is reported explicitly. macOS fn/right-command presets may be saved as **pending Input Monitoring permission**, not reported as active.
 - **Per-app tone** — Slack stays casual, Gmail stays formal, code comments stay terse. Driven by user-defined Modes + app mappings.
 - **Writing Style** — choose your default from existing Modes, including custom recipes.
   Expand **Advanced: Mode recipes** to create, duplicate, reorder or edit them.

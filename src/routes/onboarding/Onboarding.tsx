@@ -49,6 +49,7 @@ import {
 import { osName, micPermissionPath } from "../../lib/os";
 import {
   applyHotkey,
+  hotkeyErrorTitle,
   saveHotkeyConfig,
   loadHotkeyConfig,
   hotkeyDisplayParts,
@@ -533,7 +534,7 @@ function HotkeyStep() {
       // re-registered on every launch) — the status panel above explains
       // the remaining step. Any other failure means the shortcut is unusable.
       if (!message.includes("needs-input-monitoring")) {
-        toast.error("Couldn't register that shortcut", { description: message });
+        toast.error(hotkeyErrorTitle(e), { description: message });
         return;
       }
     }

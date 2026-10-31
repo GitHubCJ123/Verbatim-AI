@@ -1,12 +1,8 @@
-/**
- * Onboarding flow (plan §15). One file, 8 steps, animated transitions.
- *
- * Routes outside AppShell so it can be full-bleed with a shifting
- * gradient backdrop.
- */
+/** Resumable onboarding and Quick Start, outside AppShell. */
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
+import { invoke } from "@tauri-apps/api/core";
 import {
   Mic,
   ArrowRight,
@@ -43,8 +39,6 @@ import {
 import { HotkeyRecorder } from "../../components/settings/HotkeyRecorder";
 import { SpeechModelPicker } from "../../components/settings/SpeechModelPicker";
 import { CleanupModelPicker } from "../../components/settings/CleanupModelPicker";
-import { speechChoiceById } from "../../lib/ai/speechChoices";
-import { prewarmEngines } from "../../lib/ai";
 import {
   applyOnboarding,
   COMMON_APPS,
@@ -61,6 +55,9 @@ import {
   DEFAULT_SPEC,
   IS_MAC,
   isForcedHoldSpec,
+  usesHoldToTalk,
+  needsInputMonitoring,
+  getModifierHotkeyStatus,
 } from "../../lib/hotkey";
 import { cn } from "../../lib/utils";
 import { useAuth } from "../../lib/store/useAuth";
@@ -80,20 +77,6 @@ import {
   setAutostart,
 } from "../../lib/preferences";
 import { useTheme, type Theme } from "../../lib/theme";
-import {
-  getAiProviderKind,
-  setAiProviderKind,
-  setLocalWhisperTier,
-  downloadLocalModel,
-  isWhisperRuntimeInstalled,
-  installWhisperRuntime,
-  type WhisperTier,
-  setCleanupProviderKind,
-  isParakeetRuntimeInstalled,
-  installParakeetRuntime,
-  downloadParakeetModel,
-  setParakeetVariant,
-} from "../../lib/ai";
 import {
   ShieldCheck,
   Wand2,
@@ -158,19 +141,21 @@ function ProgressDots() {
   const step = useOnboarding((s) => s.step);
   return (
     <div className="flex items-center gap-1.5 pt-8">
-      {Array.from({ length: TOTAL_STEPS }).map((_, i) => (
-        <span
-          key={i}
-          className={cn(
-            "h-1.5 rounded-pill transition-all duration-300",
-            i === step
-              ? "w-8 bg-gradient-to-r from-accent-start to-accent-end"
-              : i < step
-                ? "w-1.5 bg-accent-solid/60"
-                : "w-1.5 bg-white/[0.08]",
-          )}
-        />
-      ))}
+      {Array.from({ length: TOTAL_STEPS }, (_, i) => i)
+        .filter((i) => CLOUD_FEATURES_ENABLED || i !== 2)
+        .map((i) => (
+          <span
+            key={i}
+            className={cn(
+              "h-1.5 rounded-pill transition-all duration-300",
+              i === step
+                ? "w-8 bg-gradient-to-r from-accent-start to-accent-end"
+                : i < step
+                  ? "w-1.5 bg-accent-solid/60"
+                  : "w-1.5 bg-white/[0.08]",
+            )}
+          />
+        ))}
     </div>
   );
 }
@@ -182,7 +167,7 @@ function StepBody({ step }: { step: number }) {
     case 1:
       return <Permissions />;
     case 2:
-      return <SignInStep />;
+      return CLOUD_FEATURES_ENABLED ? <SignInStep /> : <AIStep />;
     case 3:
       return <AIStep />;
     case 4:
@@ -252,64 +237,11 @@ function NavRow({
 
 // ─── Step 1: Welcome ─────────────────────────────────────────────────────
 
-async function applyQuickDefaults() {
-  const cfg = loadHotkeyConfig(); // platform default unless the user rebound before
-  await applyHotkey(cfg.spec);
-  saveHotkeyConfig({ spec: cfg.spec, pushToTalk: true });
-  if (isLocalMode()) {
-    // The speech model itself is chosen once its download finishes (see
-    // setupLocalModelInBackground) so we never point at a missing model.
-    setCleanupProviderKind("local");
-    setAiImproveDisabled(true);
-  } else {
-    setAiProviderKind("cloud");
-    setCleanupProviderKind("cloud");
-    setAiImproveDisabled(false);
-  }
-  setHistoryDisabled(false);
-  setOverlayPosition("bottom-center");
+function prepareQuickStart() {
+  const cfg = loadHotkeyConfig();
   const ob = useOnboarding.getState();
   ob.setHotkey(cfg.spec);
-  ob.setPushToTalk(true);
-}
-
-// Quick Start kicks the on-device model download off in the background so the
-// app is usable as soon as it finishes, without a separate manual step. The
-// download runs in Rust and continues even after onboarding closes; failures
-// surface as a toast with a retry pointer instead of leaving the user with a
-// silent, unusable app.
-async function setupLocalModelInBackground() {
-  toast.success("Setting up local dictation…", {
-    description: "Downloading the on-device speech model so dictation works offline.",
-  });
-  // Parakeet v3 is the fast, accurate default; if it can't be installed on
-  // this machine (e.g. an Intel Mac), fall back to Whisper Base.
-  let lastError: unknown = null;
-  for (const id of ["parakeet-v3", "whisper-base"] as const) {
-    const choice = speechChoiceById(id);
-    try {
-      if (choice.engine === "local-parakeet") {
-        if (!(await isParakeetRuntimeInstalled())) await installParakeetRuntime();
-        await downloadParakeetModel(choice.variant ?? "v3");
-        setParakeetVariant(choice.variant ?? "v3");
-      } else {
-        if (!(await isWhisperRuntimeInstalled())) await installWhisperRuntime();
-        await downloadLocalModel((choice.tier ?? "base") as WhisperTier);
-        setLocalWhisperTier(choice.tier ?? "base");
-      }
-      setAiProviderKind(choice.engine);
-      prewarmEngines(null);
-      toast.success("Local model ready", { description: "You can dictate now." });
-      return;
-    } catch (e) {
-      lastError = e;
-    }
-  }
-  toast.error("Couldn't finish local model setup", {
-    description:
-      (lastError instanceof Error ? lastError.message : String(lastError)) +
-      " — retry from Settings → AI model.",
-  });
+  ob.setPushToTalk(usesHoldToTalk(cfg));
 }
 
 function Welcome() {
@@ -317,34 +249,11 @@ function Welcome() {
   const setStep = useOnboarding((s) => s.setStep);
   const finish = useOnboarding((s) => s.finish);
   const navigate = useNavigate();
-  const [applying, setApplying] = useState(false);
   const localMode = isLocalMode();
 
-  const setMicPermission = useOnboarding((s) => s.setMicPermission);
-
-  const quickStart = async () => {
-    setApplying(true);
-    try {
-      // Mic permission is the one step that can't be defaulted.
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        stream.getTracks().forEach((t) => t.stop());
-        setMicPermission("granted");
-      } catch {
-        setMicPermission("denied");
-        setStep(1); // Permissions step has the "how to unblock" guidance
-        return;
-      }
-      await applyQuickDefaults();
-      if (isLocalMode()) void setupLocalModelInBackground();
-      setStep(TOTAL_STEPS - 1); // straight to "You're all set"
-    } catch (e) {
-      toast.error("Couldn't apply the default setup", {
-        description: e instanceof Error ? e.message : String(e),
-      });
-    } finally {
-      setApplying(false);
-    }
+  const quickStart = () => {
+    prepareQuickStart();
+    setStep(TOTAL_STEPS - 1);
   };
 
   return (
@@ -363,8 +272,7 @@ function Welcome() {
         Talk anywhere. We type it for you, in your voice, in the right tone, in any app.
       </p>
       <div className="mt-10 flex justify-center gap-3">
-        <Button variant="primary" size="lg" onClick={() => void quickStart()} disabled={applying}>
-          {applying && <Loader2 className="h-4 w-4 animate-spin" />}
+        <Button variant="primary" size="lg" onClick={quickStart}>
           Quick start
           <ArrowRight className="h-4 w-4" />
         </Button>
@@ -384,8 +292,8 @@ function Welcome() {
       </div>
       <p className="mx-auto mt-6 max-w-md text-xs text-text-muted">
         {localMode
-          ? "Quick start uses local defaults: on-device transcription, raw transcript output, hold-to-talk hotkey, and transcript history on. You can opt into cloud AI later in Settings."
-          : "Quick start uses our cloud AI defaults, hold-to-talk hotkey, and transcript history on. Everything can be changed later in Settings."}
+          ? "Quick start checks permissions and helps you choose one local speech model. No account required. Existing models, shortcut, polish and history preferences are kept."
+          : "Quick start checks your setup and keeps existing preferences. Everything can be changed later in Settings."}
       </p>
     </div>
   );
@@ -396,9 +304,55 @@ function Welcome() {
 function Permissions() {
   const back = useOnboarding((s) => s.back);
   const next = useOnboarding((s) => s.next);
+  const setStep = useOnboarding((s) => s.setStep);
+  const permission = useOnboarding((s) => s.micPermission);
+  return (
+    <div>
+      <StepHeading
+        title="Microphone access"
+        subtitle="Allow microphone access when you're ready. Local transcription stays on this computer."
+      />
+      <PermissionCheck />
+      <NavRow
+        onBack={back}
+        onPrimary={() => (CLOUD_FEATURES_ENABLED ? next() : setStep(3))}
+        primaryDisabled={permission !== "granted"}
+      />
+    </div>
+  );
+}
+
+function PermissionCheck() {
   const permission = useOnboarding((s) => s.micPermission);
   const setPermission = useOnboarding((s) => s.setMicPermission);
   const [requesting, setRequesting] = useState(false);
+  const [accessibility, setAccessibility] = useState<boolean | null>(null);
+  const [inputMonitoring, setInputMonitoring] = useState<boolean | null>(null);
+  const [checkError, setCheckError] = useState<string | null>(null);
+  const modifierShortcut = needsInputMonitoring(loadHotkeyConfig().spec);
+
+  useEffect(() => {
+    const check = async () => {
+      try {
+        if (IS_MAC) setAccessibility(await invoke<boolean>("check_accessibility_permission"));
+        if (modifierShortcut) {
+          const status = await getModifierHotkeyStatus();
+          setInputMonitoring(status.inputMonitoringGranted && status.listenerActive);
+        }
+        const status = await navigator.permissions.query({ name: "microphone" as PermissionName });
+        if (status.state === "prompt") useOnboarding.setState({ micPermission: "unknown" });
+        else setPermission(status.state === "granted" ? "granted" : "denied");
+        setCheckError(null);
+      } catch {
+        setCheckError(
+          "Permission status couldn't be verified. Use Allow to check the microphone; check system permissions before dictating.",
+        );
+      }
+    };
+    void check();
+    window.addEventListener("focus", check);
+    return () => window.removeEventListener("focus", check);
+  }, [setPermission, modifierShortcut]);
 
   const request = async () => {
     setRequesting(true);
@@ -406,23 +360,20 @@ function Permissions() {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       stream.getTracks().forEach((t) => t.stop());
       setPermission("granted");
-    } catch {
-      setPermission("denied");
+      setCheckError(null);
+    } catch (e) {
+      if (e instanceof DOMException && e.name === "NotAllowedError") setPermission("denied");
+      else useOnboarding.setState({ micPermission: "unknown" });
+      setCheckError(
+        `Couldn't access the microphone: ${e instanceof Error ? e.message : String(e)}`,
+      );
     } finally {
       setRequesting(false);
     }
   };
 
   return (
-    <div>
-      <StepHeading
-        title="Microphone access"
-        subtitle={
-          isLocalMode()
-            ? "Verbatim AI needs microphone access to record. With local defaults, transcription stays on this computer."
-            : "Verbatim AI sends your audio to our cloud just long enough to transcribe and polish it. Recordings themselves are never stored."
-        }
-      />
+    <div className="text-left">
       <Card className="mt-8">
         <CardContent className="flex items-center justify-between gap-4 p-6 pt-6">
           <div className="flex items-center gap-4">
@@ -455,7 +406,7 @@ function Permissions() {
               <div className="text-xs text-text-muted">
                 {permission === "denied"
                   ? `Open ${micPermissionPath()} to allow access.`
-                  : `Click below; ${osName()} will ask once.`}
+                  : "Allow briefly opens the microphone to check access; no audio is saved or transcribed."}
               </div>
             </div>
           </div>
@@ -470,7 +421,33 @@ function Permissions() {
           </Button>
         </CardContent>
       </Card>
-      <NavRow onBack={back} onPrimary={next} primaryDisabled={permission !== "granted"} />
+      {IS_MAC && (
+        <p className="mt-3 text-xs text-text-secondary">
+          Accessibility for typing into other apps:{" "}
+          {accessibility === null
+            ? "not verified"
+            : accessibility
+              ? "allowed"
+              : "needed — enable Verbatim AI in System Settings → Privacy & Security → Accessibility"}
+          .
+        </p>
+      )}
+      {modifierShortcut && (
+        <p className="mt-2 text-xs text-text-secondary">
+          Input Monitoring and shortcut listener:{" "}
+          {inputMonitoring === null
+            ? "not verified"
+            : inputMonitoring
+              ? "ready"
+              : "setup needed — check the shortcut in Settings → Recording"}
+          .
+        </p>
+      )}
+      {checkError && (
+        <p role="status" className="mt-2 text-xs text-text-muted">
+          {checkError}
+        </p>
+      )}
     </div>
   );
 }
@@ -488,7 +465,11 @@ function SignInStep() {
       <div>
         <StepHeading
           title="Local mode"
-          subtitle="No account — everything stays on this device. You can sign in later from Account to sync across machines."
+          subtitle={
+            CLOUD_FEATURES_ENABLED
+              ? "No account — everything stays on this device."
+              : "No account required. Cloud accounts and sync are unavailable in this build."
+          }
         />
         <Card className="mt-8">
           <CardContent className="flex items-center gap-4 p-6 pt-6">
@@ -566,9 +547,9 @@ function HotkeyStep() {
       <StepHeading
         title="Pick your shortcut"
         subtitle={
-          IS_MAC
-            ? "Hold it anywhere to dictate, release to paste. Most people use fn."
-            : `Hold this anywhere on ${osName()} to start dictating.`
+          usesHoldToTalk({ spec: hotkey, pushToTalk: ptt })
+            ? "Hold your shortcut to record; release to finish."
+            : "Press your shortcut to record; press it again to finish."
         }
       />
       <Card className="mt-8">
@@ -593,7 +574,11 @@ function HotkeyStep() {
               <div className="text-sm font-medium">Push-to-talk</div>
               <div className="text-xs text-text-muted">Hold to record. Off = tap to toggle.</div>
             </div>
-            <Switch checked={ptt} onCheckedChange={setPushToTalk} />
+            <Switch
+              checked={ptt || isForcedHoldSpec(hotkey)}
+              disabled={isForcedHoldSpec(hotkey)}
+              onCheckedChange={setPushToTalk}
+            />
           </div>
           <div className="flex items-center justify-between rounded-md border border-border-subtle bg-bg-elevated px-4 py-3">
             <div>
@@ -807,7 +792,7 @@ function Generate() {
   const labels = [
     "Creating your Modes…",
     "Mapping your apps…",
-    "Syncing your settings…",
+    isLocalMode() ? "Saving your settings…" : "Syncing your settings…",
     `Created ${created.modes} mode${created.modes === 1 ? "" : "s"} and ${created.mappings} app rule${created.mappings === 1 ? "" : "s"}`,
   ];
 
@@ -834,36 +819,67 @@ function Generate() {
 
 // ─── Step 8: Test recording ──────────────────────────────────────────────
 
-const KEY_LABEL: Record<string, string> = IS_MAC
-  ? { CommandOrControl: "⌘", Control: "⌃", Shift: "⇧", Alt: "⌥", Super: "⌘" }
-  : { CommandOrControl: "Ctrl", Control: "Ctrl", Super: "Win" };
-
 function TestRecording() {
   const navigate = useNavigate();
   const finish = useOnboarding((s) => s.finish);
   const back = useOnboarding((s) => s.back);
-  const hotkeyParts = loadHotkeyConfig()
-    .spec.split("+")
-    .map((p) => p.trim())
-    .filter(Boolean);
+  const cfg = loadHotkeyConfig();
+  const hotkeyParts = hotkeyDisplayParts(cfg.spec);
+  const [practice, setPractice] = useState("");
 
   return (
     <div className="text-center">
       <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-pill bg-gradient-to-br from-accent-start to-accent-end shadow-glow">
         <Mic className="h-7 w-7 text-white" strokeWidth={2.25} />
       </div>
-      <h2 className="text-2xl font-semibold tracking-tight">You're all set</h2>
+      <h2 className="text-2xl font-semibold tracking-tight">Your Quick Start checklist</h2>
+      <p className="mt-2 text-xs text-text-muted">
+        Check permissions and model files before your first dictation. You can finish setup later.
+      </p>
+      <PermissionCheck />
+      <div className="mt-5 text-left">
+        <SpeechModelPicker />
+      </div>
+      <div className="mt-5 text-left">
+        <h3 className="text-sm font-medium">AI polish · optional</h3>
+        {isAiImproveDisabled() ? (
+          <p className="mt-2 text-xs text-text-muted">
+            Off — your raw transcript is used. Enable polish later in Settings → AI model.
+          </p>
+        ) : (
+          <div className="mt-2">
+            <CleanupModelPicker />
+          </div>
+        )}
+      </div>
       <p className="mt-3 text-sm text-text-secondary">
-        Hold{" "}
+        {usesHoldToTalk(cfg) ? "Hold" : "Press"}{" "}
         {hotkeyParts.map((k, i) => (
           <span key={k}>
             {i > 0 && " "}
-            <Kbd>{KEY_LABEL[k] ?? k}</Kbd>
+            <Kbd>{k}</Kbd>
           </span>
         ))}{" "}
-        anywhere on {osName()} and say something. The pill will appear, your voice will type itself
-        wherever your cursor is.
+        {usesHoldToTalk(cfg)
+          ? "to record; release to finish."
+          : "to record; press again to finish."}{" "}
+        When setup is ready, try it with your cursor in a text field on {osName()}.
       </p>
+      <div className="mt-5 rounded-lg border border-border-subtle p-4 text-left">
+        <label htmlFor="setup-practice" className="text-sm font-medium">
+          Practice space
+        </label>
+        <p className="mb-3 mt-1 text-xs text-text-muted">
+          Type synthetic text here, such as “The meeting is at nine.” This field does not run speech
+          or AI polish and does not save text.
+        </p>
+        <Input
+          id="setup-practice"
+          value={practice}
+          onChange={(e) => setPractice(e.target.value)}
+          placeholder="The meeting is at nine."
+        />
+      </div>
       <p className="mt-2 text-xs text-text-muted">
         Tweak your modes, vocabulary, and per-app tones any time from the sidebar.
       </p>
@@ -883,17 +899,8 @@ function TestRecording() {
 
 function AIStep() {
   const back = useOnboarding((s) => s.back);
-  const next = useOnboarding((s) => s.next);
+  const setStep = useOnboarding((s) => s.setStep);
   const [polish, setPolish] = useState(() => !isAiImproveDisabled());
-
-  useEffect(() => {
-    if (isLocalMode() && getAiProviderKind() === "cloud") {
-      setAiProviderKind("local-whisper");
-      setCleanupProviderKind("local");
-      setAiImproveDisabled(true);
-      setPolish(false);
-    }
-  }, []);
 
   const togglePolish = (on: boolean) => {
     setAiImproveDisabled(!on);
@@ -918,7 +925,7 @@ function AIStep() {
           <div className="text-xs leading-relaxed text-text-secondary">
             <span className="font-medium text-text-primary">Privacy:</span>{" "}
             {CLOUD_FEATURES_ENABLED
-              ? "cloud mode sends audio to our Azure endpoint just long enough to transcribe — we never store the raw recording. Local mode keeps everything on your computer, even when you're offline."
+              ? "Cloud transcription sends audio to the configured service. Choose a local model to transcribe on this computer."
               : "everything runs on your computer, even when you're offline. Your audio never leaves this machine."}
           </div>
         </CardContent>
@@ -931,8 +938,8 @@ function AIStep() {
         <SpeechModelPicker />
       </div>
       <p className="mt-2 text-[11px] text-text-muted">
-        Not sure? Parakeet v3 is the best all-rounder. You can download others and switch any time
-        in Settings → AI model; your own model files go under Advanced there.
+        Choose your language for a compatible recommendation. You can download others and switch any
+        time in Settings → AI model; your own model files go under Advanced there.
       </p>
 
       <div className="mt-5 text-xs font-medium uppercase tracking-wide text-text-muted">
@@ -965,7 +972,10 @@ function AIStep() {
         </div>
       )}
 
-      <NavRow onBack={back} onPrimary={next} />
+      <NavRow
+        onBack={() => (CLOUD_FEATURES_ENABLED ? back() : setStep(1))}
+        onPrimary={() => setStep(4)}
+      />
     </div>
   );
 }

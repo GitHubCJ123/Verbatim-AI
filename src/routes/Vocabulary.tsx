@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Plus, Trash2, Upload, Download, BookText } from "lucide-react";
 import { Button } from "../components/ui/Button";
 import { Card, CardContent } from "../components/ui/Card";
@@ -14,37 +14,69 @@ export default function Vocabulary() {
   const update = useVocabulary((s) => s.update);
   const remove = useVocabulary((s) => s.remove);
   const importMany = useVocabulary((s) => s.importMany);
+  const hydrate = useVocabulary((s) => s.hydrate);
 
   const [draft, setDraft] = useState({ term: "", replacement: "", notes: "" });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const savingRef = useRef(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const handleAdd = () => {
-    if (!draft.term.trim()) return;
-    add({
-      term: draft.term.trim(),
-      replacement: draft.replacement.trim() || null,
-      notes: draft.notes.trim() || null,
+  const reportError = (cause: unknown) => {
+    const message =
+      cause instanceof Error ? cause.message : "Could not save Vocabulary. Try again.";
+    setError(message);
+  };
+
+  useEffect(() => {
+    // Refresh terms explicitly added from the Review WebView.
+    void hydrate().catch((cause: unknown) => {
+      setError(cause instanceof Error ? cause.message : "Could not load Vocabulary.");
     });
-    setDraft({ term: "", replacement: "", notes: "" });
+  }, [hydrate]);
+
+  const handleAdd = async () => {
+    if (savingRef.current) return;
+    savingRef.current = true;
+    setSaving(true);
+    setError(null);
+    try {
+      await add({
+        term: draft.term,
+        replacement: draft.replacement.trim() || null,
+        notes: draft.notes.trim() || null,
+      });
+      setDraft({ term: "", replacement: "", notes: "" });
+    } catch (cause) {
+      reportError(cause);
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
+    }
   };
 
   const handleImport = async (file: File) => {
-    const text = await file.text();
-    const rows = text
-      .split(/\r?\n/)
-      .map((line) => line.split(",").map((cell) => cell.trim()))
-      .filter((cells) => cells[0]);
+    try {
+      const text = await file.text();
+      const rows = text
+        .split(/\r?\n/)
+        .map((line) => line.split(",").map((cell) => cell.trim()))
+        .filter((cells) => cells[0]);
 
-    // Skip header row if it looks like one
-    const start = rows[0]?.[0]?.toLowerCase() === "term" ? 1 : 0;
-    const items = rows.slice(start).map((cells) => ({
-      term: cells[0] ?? "",
-      replacement: cells[1] || null,
-      pronunciation: cells[2] || null,
-      notes: cells[3] || null,
-    }));
-    const n = await importMany(items);
-    toast.success(`Imported ${n} term${n === 1 ? "" : "s"}`);
+      // Skip header row if it looks like one
+      const start = rows[0]?.[0]?.toLowerCase() === "term" ? 1 : 0;
+      const items = rows.slice(start).map((cells) => ({
+        term: cells[0] ?? "",
+        replacement: cells[1] || null,
+        pronunciation: cells[2] || null,
+        notes: cells[3] || null,
+      }));
+      const n = await importMany(items);
+      toast.success(`Imported ${n} term${n === 1 ? "" : "s"}`);
+      setError(null);
+    } catch (cause) {
+      reportError(cause);
+    }
   };
 
   const handleExport = () => {
@@ -87,12 +119,7 @@ export default function Vocabulary() {
               <Upload className="h-3.5 w-3.5" />
               Import CSV
             </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={handleExport}
-              disabled={terms.length === 0}
-            >
+            <Button variant="ghost" size="sm" onClick={handleExport} disabled={terms.length === 0}>
               <Download className="h-3.5 w-3.5" />
               Export
             </Button>
@@ -100,38 +127,47 @@ export default function Vocabulary() {
         }
       />
 
+      {error && (
+        <p role="alert" className="mb-3 text-sm text-danger">
+          {error}
+        </p>
+      )}
+
       <Card className="mb-4">
         <CardContent className="flex items-center gap-2 p-3">
           <Input
             placeholder="Term (e.g. Kubernetes)"
             className="flex-1"
             value={draft.term}
+            disabled={saving}
             onChange={(e) => setDraft((d) => ({ ...d, term: e.target.value }))}
             onKeyDown={(e) => {
-              if (e.key === "Enter") handleAdd();
+              if (e.key === "Enter") void handleAdd();
             }}
           />
           <Input
             placeholder="Replace with (optional)"
             className="flex-1"
             value={draft.replacement}
+            disabled={saving}
             onChange={(e) => setDraft((d) => ({ ...d, replacement: e.target.value }))}
             onKeyDown={(e) => {
-              if (e.key === "Enter") handleAdd();
+              if (e.key === "Enter") void handleAdd();
             }}
           />
           <Input
             placeholder="Notes (optional)"
             className="flex-1"
             value={draft.notes}
+            disabled={saving}
             onChange={(e) => setDraft((d) => ({ ...d, notes: e.target.value }))}
             onKeyDown={(e) => {
-              if (e.key === "Enter") handleAdd();
+              if (e.key === "Enter") void handleAdd();
             }}
           />
-          <Button variant="primary" size="sm" onClick={handleAdd} disabled={!draft.term.trim()}>
+          <Button variant="primary" size="sm" onClick={() => void handleAdd()} disabled={saving}>
             <Plus className="h-3.5 w-3.5" />
-            Add
+            {saving ? "Saving..." : "Add"}
           </Button>
         </CardContent>
       </Card>
@@ -166,7 +202,9 @@ export default function Vocabulary() {
                     <td className="px-5 py-2">
                       <Input
                         value={t.term}
-                        onChange={(e) => update(t.id, { term: e.target.value })}
+                        onChange={(e) =>
+                          void update(t.id, { term: e.target.value }).catch(reportError)
+                        }
                         className="h-8 border-transparent bg-transparent px-2"
                       />
                     </td>
@@ -174,7 +212,9 @@ export default function Vocabulary() {
                       <Input
                         value={t.replacement ?? ""}
                         onChange={(e) =>
-                          update(t.id, { replacement: e.target.value || null })
+                          void update(t.id, { replacement: e.target.value || null }).catch(
+                            reportError,
+                          )
                         }
                         className="h-8 border-transparent bg-transparent px-2 text-text-secondary"
                         placeholder="—"
@@ -183,7 +223,9 @@ export default function Vocabulary() {
                     <td className="px-5 py-2">
                       <Input
                         value={t.notes ?? ""}
-                        onChange={(e) => update(t.id, { notes: e.target.value || null })}
+                        onChange={(e) =>
+                          void update(t.id, { notes: e.target.value || null }).catch(reportError)
+                        }
                         className="h-8 border-transparent bg-transparent px-2 text-text-secondary"
                         placeholder="—"
                       />
@@ -191,7 +233,7 @@ export default function Vocabulary() {
                     <td className="px-5 py-2 text-right">
                       <IconButton
                         size="sm"
-                        onClick={() => remove(t.id)}
+                        onClick={() => void remove(t.id).catch(reportError)}
                         className="hover:text-danger"
                         aria-label="Delete"
                       >

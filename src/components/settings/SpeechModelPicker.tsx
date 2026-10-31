@@ -10,6 +10,8 @@ import { toast } from "../ui/Toast";
 import { TooltipProvider } from "../ui/Tooltip";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/Select";
 import { ModelCard, type ModelCardState } from "./ModelCard";
+import { recommendedSpeechChoice } from "./modelPresentation";
+import { loadHotkeyConfig, usesHoldToTalk } from "../../lib/hotkey";
 import {
   CANARY_LANGUAGES,
   PARAKEET_LANGUAGES,
@@ -53,23 +55,17 @@ const EMPTY_STATE: SpeechInstallState = {
 };
 
 async function readInstallState(): Promise<SpeechInstallState> {
-  const [wr, wm, pr, pm] = await Promise.allSettled([
+  const [wr, wm, pr, pm] = await Promise.all([
     isWhisperRuntimeInstalled(),
     listLocalModels(),
     isParakeetRuntimeInstalled(),
     listParakeetModels(),
   ]);
   return {
-    whisperRuntime: wr.status === "fulfilled" && wr.value,
-    whisperTiers:
-      wm.status === "fulfilled"
-        ? Object.fromEntries(wm.value.map((m) => [m.tier, m.installed]))
-        : {},
-    parakeetRuntime: pr.status === "fulfilled" && pr.value,
-    parakeetVariants:
-      pm.status === "fulfilled"
-        ? Object.fromEntries(pm.value.map((m) => [m.variant, m.installed]))
-        : {},
+    whisperRuntime: wr,
+    whisperTiers: Object.fromEntries(wm.map((m) => [m.tier, m.installed])),
+    parakeetRuntime: pr,
+    parakeetVariants: Object.fromEntries(pm.map((m) => [m.variant, m.installed])),
   };
 }
 
@@ -110,16 +106,39 @@ export function SpeechModelPicker({ onChange }: { onChange?: () => void }) {
     currentSpeechChoice(getAiProviderKind(), getLocalWhisperTier(), getParakeetVariant()),
   );
   const [language, setLanguage] = useState(getParakeetLanguage);
+  const canaryLanguage = (CANARY_LANGUAGES as readonly string[]).includes(language) ? language : "";
+  const [recommendationLanguage, setRecommendationLanguage] = useState(getParakeetLanguage);
+  const [advanced, setAdvanced] = useState(false);
+  const [readError, setReadError] = useState<string | null>(null);
+  const [checked, setChecked] = useState(false);
   const [busy, setBusy] = useState<{
     id: SpeechChoiceId;
     label: string;
     percent: number | null;
   } | null>(null);
 
-  const refresh = async () => setInstall(await readInstallState());
+  const refresh = async () => {
+    try {
+      setInstall(await readInstallState());
+      setReadError(null);
+      setChecked(true);
+    } catch (e) {
+      setReadError(e instanceof Error ? e.message : String(e));
+    }
+  };
 
   useEffect(() => {
-    void readInstallState().then(setInstall);
+    const read = async () => {
+      try {
+        setInstall(await readInstallState());
+        setReadError(null);
+        setChecked(true);
+      } catch (e) {
+        setReadError(e instanceof Error ? e.message : String(e));
+      }
+    };
+    void read();
+    window.addEventListener("focus", read);
     const update = (label: string) => (e: { payload: { downloaded: number; total: number } }) =>
       setBusy((b) =>
         b
@@ -139,17 +158,34 @@ export function SpeechModelPicker({ onChange }: { onChange?: () => void }) {
       listen("parakeet:runtime:progress", update("Setting up")),
       listen("parakeet:download:progress", update("Downloading")),
     ];
-    return () => offs.forEach((off) => void off.then((fn) => fn()));
+    for (const off of offs) {
+      void off.catch((e) => setReadError(e instanceof Error ? e.message : String(e)));
+    }
+    return () => {
+      window.removeEventListener("focus", read);
+      offs.forEach((off) => void off.then((fn) => fn()).catch(() => {}));
+    };
   }, []);
 
+  const canUseChoice = (c: SpeechChoice) => {
+    if (!c.needsLanguage || canaryLanguage) return true;
+    setAdvanced(true);
+    toast.error("Choose a Canary spoken language", {
+      description:
+        "Canary supports English, German, Spanish and French. Your saved language has not been changed.",
+    });
+    return false;
+  };
+
   const activate = (c: SpeechChoice) => {
+    if (!canUseChoice(c)) return;
     applyChoice(c);
     setCurrent(c.id);
     onChange?.();
   };
 
   const download = async (c: SpeechChoice) => {
-    if (busy) return;
+    if (busy || !canUseChoice(c)) return;
     setBusy({ id: c.id, label: "Starting", percent: null });
     try {
       if (c.engine === "local-parakeet") {
@@ -160,7 +196,12 @@ export function SpeechModelPicker({ onChange }: { onChange?: () => void }) {
         await downloadLocalModel((c.tier ?? "turbo") as WhisperTier);
       }
       activate(c);
-      toast.success(`${c.name} is ready`, { description: "Hold your hotkey and start talking." });
+      const cfg = loadHotkeyConfig();
+      toast.success(`${c.name} is ready`, {
+        description: usesHoldToTalk(cfg)
+          ? "Hold your hotkey to record; release to finish."
+          : "Press your hotkey to record; press again to finish.",
+      });
     } catch (e) {
       toast.error(`Couldn't set up ${c.name}`, {
         description: e instanceof Error ? e.message : String(e),
@@ -202,7 +243,7 @@ export function SpeechModelPicker({ onChange }: { onChange?: () => void }) {
       key={c.id}
       name={c.name}
       tagline={c.tagline}
-      recommended={c.recommended}
+      recommended={c.id === recommended.id}
       scores={[
         { label: "Accuracy", value: c.quality, detail: accuracyDetail(c) },
         { label: "Speed", value: c.speed, detail: speedDetail(c) },
@@ -222,35 +263,74 @@ export function SpeechModelPicker({ onChange }: { onChange?: () => void }) {
     />
   );
 
-  const downloaded = SPEECH_CHOICES.filter((c) => isSpeechChoiceInstalled(c, install));
-  const available = SPEECH_CHOICES.filter((c) => !isSpeechChoiceInstalled(c, install));
+  const recommended = recommendedSpeechChoice(recommendationLanguage);
+  const foreground = SPEECH_CHOICES.filter((c) => c.id === recommended.id || c.id === current);
+  const catalog = SPEECH_CHOICES.filter((c) => !foreground.includes(c));
   const active = current ? speechChoiceById(current) : null;
-  const canaryLanguage = (CANARY_LANGUAGES as readonly string[]).includes(language)
-    ? language
-    : "en";
 
   return (
     <TooltipProvider delayDuration={150}>
       <div role="radiogroup" aria-label="Speech model" className="flex flex-col gap-2.5">
-        {downloaded.length > 0 && (
-          <div className="text-xs font-medium text-text-muted">Downloaded</div>
-        )}
-        {downloaded.map(card)}
+        <div className="flex items-center justify-between gap-4 rounded-lg border border-border-subtle px-4 py-3">
+          <div>
+            <div className="text-sm font-medium">Choose a recommendation</div>
+            <p className="text-xs text-text-muted">
+              Only changes this suggestion, not your saved model or language.
+            </p>
+          </div>
+          <Select value={recommendationLanguage} onValueChange={setRecommendationLanguage}>
+            <SelectTrigger className="w-48" aria-label="Language for model recommendation">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="auto">Mixed / other languages</SelectItem>
+              {PARAKEET_LANGUAGES.filter((l) => l.code !== "auto").map((l) => (
+                <SelectItem key={l.code} value={l.code}>
+                  {l.label}
+                </SelectItem>
+              ))}
+              {!PARAKEET_LANGUAGES.some((l) => l.code === recommendationLanguage) && (
+                <SelectItem value={recommendationLanguage}>
+                  Other ({recommendationLanguage})
+                </SelectItem>
+              )}
+            </SelectContent>
+          </Select>
+        </div>
+        <div
+          role="status"
+          className="rounded-md border border-border-subtle px-4 py-3 text-xs text-text-secondary"
+        >
+          {readError
+            ? `Couldn't check model readiness: ${readError}`
+            : !checked
+              ? "Checking downloaded models…"
+              : active
+                ? `${active.name}: ${isSpeechChoiceInstalled(active, install) ? "downloaded and selected" : "setup needed"}.`
+                : "Your current setup is not a built-in model. It has not been changed; check it in Settings → Advanced."}
+          <button type="button" onClick={() => void refresh()} className="ml-2 underline">
+            Check again
+          </button>
+        </div>
+        {foreground.map(card)}
 
-        {active?.needsLanguage && (
+        {(active?.needsLanguage || advanced) && (
           <div
             id="setting-transcription-language"
             className="flex scroll-mt-24 items-center justify-between gap-4 rounded-lg border border-border-subtle bg-bg-elevated px-4 py-3"
           >
             <div>
-              <div className="text-sm font-medium">Spoken language</div>
+              <div className="text-sm font-medium">Canary spoken language</div>
               <div className="text-xs text-text-muted">
-                {active.name} can&apos;t detect the language, so tell it which one you speak.
+                Canary can&apos;t detect the language. Choose one before using it. This updates the
+                saved spoken language, not just the recommendation.
+                {!canaryLanguage &&
+                  " Your saved language is unsupported. Choose a supported language or use Whisper; nothing has been changed."}
               </div>
             </div>
             <Select value={canaryLanguage} onValueChange={changeLanguage}>
               <SelectTrigger className="w-40">
-                <SelectValue />
+                <SelectValue placeholder="Choose language" />
               </SelectTrigger>
               <SelectContent>
                 {PARAKEET_LANGUAGES.filter((l) =>
@@ -265,10 +345,12 @@ export function SpeechModelPicker({ onChange }: { onChange?: () => void }) {
           </div>
         )}
 
-        {available.length > 0 && (
-          <div className="mt-2 text-xs font-medium text-text-muted">Available to download</div>
-        )}
-        {available.map(card)}
+        <details open={advanced} onToggle={(e) => setAdvanced(e.currentTarget.open)}>
+          <summary className="cursor-pointer py-3 text-xs font-medium text-text-secondary">
+            Advanced · all speech models ({catalog.length} more)
+          </summary>
+          <div className="flex flex-col gap-2.5">{catalog.map(card)}</div>
+        </details>
 
         {current === null && (
           <p className="text-[11px] text-text-muted">

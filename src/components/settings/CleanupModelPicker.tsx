@@ -43,6 +43,8 @@ function speedDetail(m: CleanupModelInfo) {
 export function CleanupModelPicker({ disabled }: { disabled?: boolean }) {
   const [installed, setInstalled] = useState<Partial<Record<CleanupModelId, boolean>>>({});
   const [current, setCurrent] = useState<CleanupModelId>(getCleanupModel);
+  const [readError, setReadError] = useState<string | null>(null);
+  const [checked, setChecked] = useState(false);
   const [busy, setBusy] = useState<{
     id: CleanupModelId;
     label: string;
@@ -57,10 +59,10 @@ export function CleanupModelPicker({ disabled }: { disabled?: boolean }) {
           status.models.map((m) => [m.id, status.runtimeInstalled && m.installed]),
         ),
       );
+      setChecked(true);
+      setReadError(null);
     } catch (e) {
-      toast.error("Couldn't read downloaded models", {
-        description: e instanceof Error ? e.message : String(e),
-      });
+      setReadError(e instanceof Error ? e.message : String(e));
     }
   };
 
@@ -80,13 +82,22 @@ export function CleanupModelPicker({ disabled }: { disabled?: boolean }) {
           : b,
       ),
     );
-    return () => void off.then((fn) => fn());
+    void off.catch((e) => setReadError(e instanceof Error ? e.message : String(e)));
+    window.addEventListener("focus", refresh);
+    return () => {
+      window.removeEventListener("focus", refresh);
+      void off.then((fn) => fn()).catch(() => {});
+    };
   }, []);
 
   const activate = (m: CleanupModelInfo) => {
     setCleanupModel(m.id);
     setCurrent(m.id);
-    void ensureCleanupReady(m.id).catch(() => {});
+    void ensureCleanupReady(m.id).catch((e) =>
+      toast.error("Couldn't prepare AI polish", {
+        description: e instanceof Error ? e.message : String(e),
+      }),
+    );
   };
 
   const download = async (m: CleanupModelInfo) => {
@@ -126,29 +137,51 @@ export function CleanupModelPicker({ disabled }: { disabled?: boolean }) {
     if (!installed[m.id]) return { kind: "available" };
     return m.id === current ? { kind: "active" } : { kind: "installed" };
   };
+  const foreground = CLEANUP_MODELS.filter((m) => m.recommended || m.id === current);
+  const catalog = CLEANUP_MODELS.filter((m) => !foreground.includes(m));
+  const card = (m: CleanupModelInfo) => (
+    <ModelCard
+      key={m.id}
+      name={m.name}
+      tagline={m.tagline}
+      recommended={m.recommended}
+      scores={[
+        { label: "Quality", value: m.quality, detail: qualityDetail(m) },
+        { label: "Speed", value: m.speed, detail: speedDetail(m) },
+      ]}
+      chips={[{ icon: <Globe className="h-3.5 w-3.5" />, label: "Multilingual" }]}
+      sizeMB={m.sizeMB}
+      state={stateOf(m)}
+      disabled={disabled || (!!busy && busy.id !== m.id)}
+      onUse={() => activate(m)}
+      onDownload={() => void download(m)}
+      onDelete={() => void remove(m)}
+    />
+  );
 
   return (
     <TooltipProvider delayDuration={150}>
       <div role="radiogroup" aria-label="Cleanup model" className="flex flex-col gap-2.5">
-        {CLEANUP_MODELS.map((m) => (
-          <ModelCard
-            key={m.id}
-            name={m.name}
-            tagline={m.tagline}
-            recommended={m.recommended}
-            scores={[
-              { label: "Quality", value: m.quality, detail: qualityDetail(m) },
-              { label: "Speed", value: m.speed, detail: speedDetail(m) },
-            ]}
-            chips={[{ icon: <Globe className="h-3.5 w-3.5" />, label: "Multilingual" }]}
-            sizeMB={m.sizeMB}
-            state={stateOf(m)}
-            disabled={disabled || (!!busy && busy.id !== m.id)}
-            onUse={() => activate(m)}
-            onDownload={() => void download(m)}
-            onDelete={() => void remove(m)}
-          />
-        ))}
+        <div
+          role="status"
+          className="rounded-md border border-border-subtle px-4 py-3 text-xs text-text-secondary"
+        >
+          {readError
+            ? `Couldn't check polish readiness: ${readError}`
+            : !checked
+              ? "Checking downloaded polish models…"
+              : `${CLEANUP_MODELS.find((m) => m.id === current)?.name ?? current}: ${installed[current] ? "downloaded and selected" : "setup needed"}.`}
+          <button type="button" onClick={() => void refresh()} className="ml-2 underline">
+            Check again
+          </button>
+        </div>
+        {foreground.map(card)}
+        <details>
+          <summary className="cursor-pointer py-3 text-xs font-medium text-text-secondary">
+            Advanced · all polish models ({catalog.length} more)
+          </summary>
+          <div className="flex flex-col gap-2.5">{catalog.map(card)}</div>
+        </details>
       </div>
     </TooltipProvider>
   );

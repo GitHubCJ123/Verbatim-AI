@@ -63,11 +63,13 @@ import {
   resolveCleanupLanguage,
 } from "../lib/ai/cleanupPrepass";
 import { getPrivacyStatus, type DataLocality } from "../lib/privacyStatus";
+import { classifyRecordingError, type RecordingErrorPresentation } from "../lib/recordingErrors";
 import {
-  classifyRecordingError,
-  ACCESSIBILITY_PERMISSION_PRESENTATION,
-  type RecordingErrorPresentation,
-} from "../lib/recordingErrors";
+  deliveryId,
+  relayDelivery,
+  RecordingDeliveryError,
+  type RecordingDeliveryResult,
+} from "../lib/recordingDelivery";
 import type { Mode } from "../types/mode";
 
 function noPasteTargetMessage(): string {
@@ -96,8 +98,7 @@ const REVIEW_PERMISSION_NOTICE =
   "Privacy & Security → Accessibility, then relaunch. Use Copy to grab your text meanwhile.";
 const REVIEW_ACTIVATION_NOTICE =
   "Couldn't switch back to your app to paste. Use Copy, then paste it where you want.";
-const REVIEW_NO_TARGET_NOTICE =
-  "No target to paste into. Use Copy, then paste it where you want.";
+const REVIEW_NO_TARGET_NOTICE = "No target to paste into. Use Copy, then paste it where you want.";
 
 type View = "pill" | "review";
 
@@ -117,8 +118,16 @@ export default function Overlay() {
   // explains why; `reviewNeedsAccessibility` adds an Open Settings action.
   const [reviewNotice, setReviewNotice] = useState<string | null>(null);
   const [reviewNeedsAccessibility, setReviewNeedsAccessibility] = useState(false);
+  const [successLabel, setSuccessLabel] = useState<"Pasted" | "Copied">("Pasted");
+  const [reviewBusy, setReviewBusy] = useState(false);
+  const reviewBusyRef = useRef(false);
+  const completedReviewActionRef = useRef<"Pasted" | "Copied" | null>(null);
+  const reviewOpenRef = useRef(false);
+  const availableTextRef = useRef("");
+  const resultRef = useRef<RecordingDeliveryResult | null>(null);
 
   const controllerRef = useRef<AudioController | null>(null);
+  const stoppingRef = useRef(false);
   // Show the macOS Accessibility system prompt at most once per overlay
   // lifetime. The prompt both asks for the grant AND registers the app in
   // the Accessibility list — without it a clean TCC state leaves nothing to
@@ -127,9 +136,10 @@ export default function Overlay() {
   const axPromptedRef = useRef(false);
   const autoStopRef = useRef<AutoStopDetector | null>(null);
   const partialSegmenterRef = useRef<PartialSegmenter | null>(null);
-  const partialCoordinatorRef = useRef<
-    TranscriptionCoordinator<PartialTranscriptionPayload, string> | null
-  >(null);
+  const partialCoordinatorRef = useRef<TranscriptionCoordinator<
+    PartialTranscriptionPayload,
+    string
+  > | null>(null);
   const streamingRef = useRef<StreamingTranscriber | null>(null);
   const partialTextRef = useRef("");
   // Monotonic recording session id — guards stale live-partial results
@@ -170,7 +180,14 @@ export default function Overlay() {
     setErrorPresentation(null);
     setReviewNotice(null);
     setReviewNeedsAccessibility(false);
-    await resizeOverlayToPill();
+    reviewOpenRef.current = false;
+    availableTextRef.current = "";
+    resultRef.current = null;
+    try {
+      await resizeOverlayToPill();
+    } catch {
+      console.warn("[Verbatim AI] couldn't resize the overlay pill");
+    }
     await clearCapturedTarget();
     await hideAfter(0);
   };
@@ -199,32 +216,19 @@ export default function Overlay() {
    * the panel feels broken.
    */
   const enterReview = async () => {
-    await resizeOverlayToReview();
+    cancelPendingHide();
+    reviewOpenRef.current = true;
     setView("review");
+    try {
+      await resizeOverlayToReview();
+    } catch {
+      setReviewNotice("Couldn't resize Review. Your text is still here; use Copy.");
+    }
     try {
       await getCurrentWindow().setFocus();
     } catch {
       /* best-effort — panel is still usable via mouse */
     }
-  };
-
-  /**
-   * Surface the "grant Accessibility + relaunch" prompt when a paste fails
-   * for a clipboard behavior (the cleaned text is already on the clipboard,
-   * so no recovery editor is needed). Common right after an update on the
-   * unsigned build. Opens the settings pane at most once per overlay
-   * lifetime so repeated dictations don't spam System Settings.
-   */
-  const showAccessibilityPrompt = async () => {
-    setErrorPresentation(ACCESSIBILITY_PERMISSION_PRESENTATION);
-    setError(ACCESSIBILITY_PERMISSION_PRESENTATION.message);
-    setState("error");
-    cancelPendingHide();
-    promptAccessibilityOnce();
-    await invoke("relay_event", {
-      name: "recording:error",
-      payload: ACCESSIBILITY_PERMISSION_PRESENTATION,
-    }).catch(() => {});
   };
 
   /**
@@ -341,6 +345,16 @@ export default function Overlay() {
   };
 
   const start = async (mode: string, modeId: string | null, pressedAt?: number, sessionId = 0) => {
+    if (reviewOpenRef.current || stoppingRef.current) {
+      if (sessionId)
+        await emit("recording:error", {
+          sessionId,
+          message: "Finish the current dictation or Review before starting another recording.",
+        }).catch(() =>
+          console.warn("[Verbatim AI] couldn't reject recording while Review is open"),
+        );
+      return;
+    }
     cancelPendingHide();
     setError(null);
     setErrorPresentation(null);
@@ -348,6 +362,10 @@ export default function Overlay() {
     setRawText("");
     setPartialText("");
     partialTextRef.current = "";
+    availableTextRef.current = "";
+    resultRef.current = null;
+    setReviewNotice(null);
+    setReviewNeedsAccessibility(false);
     setView("pill");
     setModeName(mode);
     modeRef.current = getModeById(modeId) ?? getDefaultMode();
@@ -463,6 +481,84 @@ export default function Overlay() {
     return acc;
   };
 
+  const publishResult = async (payload: RecordingDeliveryResult) => {
+    resultRef.current = payload;
+    await relayDelivery("recording:result", payload);
+  };
+
+  const finishDelivery = (action: "Pasted" | "Copied") => {
+    setSuccessLabel(action);
+    setState("success");
+    const request = ++hideRequestRef.current;
+    setTimeout(() => {
+      if (request === hideRequestRef.current) void reset();
+    }, 900);
+  };
+
+  const recoverFailure = async (
+    failure: unknown,
+    durationMs = 0,
+    partial = false,
+    capture = false,
+  ) => {
+    const presentation: RecordingErrorPresentation =
+      failure instanceof RecordingDeliveryError
+        ? {
+            kind: "unknown",
+            title: "Delivery needs attention",
+            message: failure.message,
+            persistent: true,
+          }
+        : capture
+          ? {
+              kind: "recording",
+              title: "Recording couldn't finish",
+              message: "Capture failed. Check your microphone before recording again.",
+            }
+          : classifyRecordingError(failure);
+    void invoke("relay_event", {
+      name: "recording:error",
+      payload: presentation,
+    }).catch(() => console.warn("[Verbatim AI] couldn't relay recording error"));
+    const text = sanitizeTranscript(availableTextRef.current);
+    if (text) {
+      setStreamingCleaned(text);
+      setRawText(resultRef.current?.raw ?? text);
+      setReviewNotice(
+        `${resultRef.current?.outputAction === "pasted" ? "Pasted, but " : ""}${presentation.message} ${partial ? "This is an incomplete live preview, not a final transcript." : "Your available text is below."}${resultRef.current?.outputAction === "pasted" ? " Don't Paste again unless you want another copy." : " Use Copy or try Paste."}`,
+      );
+      await enterReview();
+      const activeMode = modeRef.current;
+      const payload: RecordingDeliveryResult = {
+        ...(resultRef.current ?? {
+          raw: text,
+          cleaned: text,
+          durationMs,
+          language: "auto",
+          modeName: activeMode?.name ?? "Default",
+          modeId: activeMode?.id ?? null,
+          saveHistory: activeMode?.saveHistory ?? false,
+        }),
+        emitId: deliveryId(),
+        outputStyle: "review",
+      };
+      try {
+        await publishResult(payload);
+      } catch {
+        setReviewNotice(
+          `${payload.outputAction === "pasted" ? "Pasted, but " : ""}the main window couldn't confirm this result. Your text is only in this Review window; Copy it before closing.${payload.outputAction === "pasted" ? " Don't Paste again unless you want another copy." : ""}`,
+        );
+      }
+      setState("idle");
+      return;
+    }
+    setErrorPresentation(presentation);
+    setError(presentation.message);
+    setState("error");
+    if (presentation.persistent) cancelPendingHide();
+    else void hideAfter(3500);
+  };
+
   const runPipeline = async (
     audio: Blob,
     durationMs: number,
@@ -471,16 +567,20 @@ export default function Overlay() {
   ) => {
     const provider = getActiveProvider(modeRef.current);
     if (!provider) {
-      setError("Configure Azure in Settings → AI to enable transcription.");
-      setState("error");
-      void hideAfter(3500);
+      await recoverFailure(
+        new Error("No transcription provider is ready. Configure a local model in Settings."),
+        durationMs,
+        true,
+      );
       return;
     }
     const activeMode = modeRef.current ?? getDefaultMode();
     if (!activeMode) {
-      setError("No Modes available. Sign in or wait for sync.");
-      setState("error");
-      void hideAfter(3500);
+      await recoverFailure(
+        new Error("No Modes available. Create or select a Mode."),
+        durationMs,
+        true,
+      );
       return;
     }
     const vocabularyAll = loadVocabulary();
@@ -552,8 +652,13 @@ export default function Overlay() {
         fuzzyVocab: isFuzzyVocabEnabled(),
         vocabularyTerms: vocabularyAll,
       });
+      if (!processedText.trim()) {
+        void reset();
+        return;
+      }
 
       setRawText(processedText);
+      availableTextRef.current = processedText;
 
       // Branch on output style BEFORE polishing so review users see
       // tokens stream into the editor in real time.
@@ -568,6 +673,7 @@ export default function Overlay() {
       if (activeMode.skipCleanup || isAiImproveDisabled() || (light && looksClean(prepared))) {
         // Fast path: skip the LLM entirely; vocab replacements still run.
         cleaned = applyVocabReplacements(prepared, vocabularyAll);
+        availableTextRef.current = cleaned;
         setStreamingCleaned(cleaned);
       } else {
         setState("polishing");
@@ -582,19 +688,16 @@ export default function Overlay() {
             `AI polish didn't finish (${e instanceof Error ? e.message : String(e)}). This is your transcript without it.`,
           );
           await enterReview();
-          await invoke("relay_event", {
-            name: "recording:result",
-            payload: {
-              emitId: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-              raw: transcript.text,
-              cleaned,
-              durationMs,
-              language: transcript.languageDetected,
-              modeName: mode,
-              modeId: activeMode.id,
-              outputStyle: "review" as const,
-              saveHistory: activeMode.saveHistory,
-            },
+          await publishResult({
+            emitId: deliveryId(),
+            raw: transcript.text,
+            cleaned,
+            durationMs,
+            language: transcript.languageDetected,
+            modeName: mode,
+            modeId: activeMode.id,
+            outputStyle: "review" as const,
+            saveHistory: activeMode.saveHistory,
           });
           setState("idle");
           return;
@@ -615,8 +718,9 @@ export default function Overlay() {
         console.info("[Verbatim AI] raw:", transcript.text);
         console.info("[Verbatim AI] cleaned:", cleaned);
       }
-      const payload = {
-        emitId: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      availableTextRef.current = cleaned;
+      const payload: RecordingDeliveryResult = {
+        emitId: deliveryId(),
         raw: transcript.text,
         cleaned,
         durationMs,
@@ -630,14 +734,13 @@ export default function Overlay() {
       if (activeMode.outputStyle === "paste") {
         const outcome = await pasteCleanedText(cleaned);
         if (outcome === "pasted") {
-          await invoke("relay_event", { name: "recording:result", payload });
-          setState("success");
-          setTimeout(() => void reset(), 900);
+          await publishResult({ ...payload, outputAction: "pasted" });
+          finishDelivery("Pasted");
           return;
         }
 
         const permissionIssue = outcome === "permission-required";
-        if (shouldShowReviewWhenPasteMisses()) {
+        if (shouldShowReviewWhenPasteMisses() || permissionIssue || outcome === "failed") {
           // Under these output behaviors the text is NOT on the clipboard,
           // so open the recovery editor with a notice explaining why it
           // appeared (so it never feels like a mystery/broken pop-up).
@@ -646,90 +749,92 @@ export default function Overlay() {
               ? REVIEW_PERMISSION_NOTICE
               : outcome === "activation-failed"
                 ? REVIEW_ACTIVATION_NOTICE
-                : REVIEW_NO_TARGET_NOTICE,
+                : outcome === "failed"
+                  ? "Couldn't paste. Your text is still here; use Copy or try Paste again."
+                  : REVIEW_NO_TARGET_NOTICE,
           );
           setReviewNeedsAccessibility(permissionIssue);
           if (permissionIssue) promptAccessibilityOnce();
           console.info(noPasteTargetMessage());
           await enterReview();
-          await invoke("relay_event", {
-            name: "recording:result",
-            payload: { ...payload, outputStyle: "review" },
+          await publishResult({
+            ...payload,
+            outputStyle: "review",
+            outputAction: shouldShowReviewWhenPasteMisses() ? undefined : "copied",
           });
           setState("idle");
           return;
         }
 
         // Clipboard behaviors: the cleaned text is already on the clipboard.
-        if (permissionIssue) {
-          // Guide the user; don't mark success or persist a false "pasted".
-          await showAccessibilityPrompt();
-          return;
-        }
         // Genuine miss (or activation failure) with the text on the
         // clipboard — record it as "copied" (not "pasted") since it never
         // reached the target app.
-        await invoke("relay_event", {
-          name: "recording:result",
-          payload: { ...payload, outputAction: "copied" as const },
-        });
+        await publishResult({ ...payload, outputAction: "copied" });
         console.info(noPasteTargetMessage());
-        setState("success");
-        setTimeout(() => void reset(), 900);
+        finishDelivery("Copied");
       } else {
-        await invoke("relay_event", { name: "recording:result", payload });
+        await publishResult(payload);
         // Review panel stays open until user acts.
         setState("idle");
       }
     } catch (e) {
-      const presentation = classifyRecordingError(e);
-      console.error("[Verbatim AI] pipeline error:", e);
-      void invoke("relay_event", {
-        name: "recording:error",
-        payload: presentation,
-      });
-      setErrorPresentation(presentation);
-      setError(presentation.message);
-      setState("error");
-      if (presentation.persistent) {
-        cancelPendingHide();
-      } else {
-        void hideAfter(3500);
-      }
+      await recoverFailure(
+        e,
+        durationMs,
+        !resultRef.current && availableTextRef.current === partialTextRef.current,
+      );
     }
   };
 
   const stop = async () => {
-    autoStopRef.current?.disable();
-    autoStopRef.current = null;
-    // Tear down live partials up front so an in-flight partial transcribe
-    // can't contend with the final full-quality transcription below.
-    disposeLivePartial();
-    let c = controllerRef.current;
-    controllerRef.current = null;
-    const starting = startingRef.current;
-    startingRef.current = null;
-    if (!c && starting) {
-      // Mic acquisition still in flight — adopt it so the stream is
-      // stopped instead of leaking.
-      try {
-        c = await starting;
-      } catch {
-        c = null;
+    if (stoppingRef.current || reviewOpenRef.current) return;
+    stoppingRef.current = true;
+    try {
+      availableTextRef.current = partialTextRef.current;
+      autoStopRef.current?.disable();
+      autoStopRef.current = null;
+      // Tear down live partials up front so an in-flight partial transcribe
+      // can't contend with the final full-quality transcription below.
+      disposeLivePartial();
+      let c = controllerRef.current;
+      controllerRef.current = null;
+      const starting = startingRef.current;
+      startingRef.current = null;
+      if (!c && starting) {
+        // Mic acquisition still in flight — adopt it so the stream is
+        // stopped instead of leaking.
+        try {
+          c = await starting;
+        } catch (e) {
+          await recoverFailure(e, 0, true, true);
+          return;
+        }
       }
+      if (!c) {
+        void reset();
+        return;
+      }
+      setState("processing");
+      try {
+        const result = await c.stop();
+        if (!result || result.durationMs < 300) {
+          // Accidental tap — nothing worth transcribing.
+          void reset();
+          return;
+        }
+        await runPipeline(
+          result.blob,
+          result.durationMs,
+          modeRef.current?.name ?? modeName,
+          result.pcm,
+        );
+      } catch (e) {
+        await recoverFailure(e, 0, true, true);
+      }
+    } finally {
+      stoppingRef.current = false;
     }
-    if (!c) {
-      void reset();
-      return;
-    }
-    setState("processing");
-    const result = await c.stop();
-    if (!result || result.durationMs < 300) {
-      // Accidental tap — nothing worth transcribing.
-      void reset();
-      return;
-    }
-    await runPipeline(result.blob, result.durationMs, modeName, result.pcm);
   };
 
   const cancelActive = () => {
@@ -751,60 +856,97 @@ export default function Overlay() {
 
   // Review panel actions
 
-  const handleReviewPaste = async (text: string) => {
-    const outcome = await pasteCleanedText(text);
-    if (outcome === "permission-required") {
-      // Keep the panel open so the user can still Copy the text; update the
-      // notice and expose an Open Settings action instead of resolving.
-      setReviewNotice(REVIEW_PERMISSION_NOTICE);
-      setReviewNeedsAccessibility(true);
-      promptAccessibilityOnce();
-      return;
+  const reviewAction = async (label: string, action: () => Promise<void>) => {
+    if (reviewBusyRef.current) return;
+    reviewBusyRef.current = true;
+    completedReviewActionRef.current = null;
+    setReviewBusy(true);
+    try {
+      await action();
+    } catch (error) {
+      const completed = completedReviewActionRef.current;
+      setReviewNotice(
+        completed
+          ? `${completed}, but ${error instanceof RecordingDeliveryError ? error.message : "the result couldn't be confirmed."} Don't Paste again unless you want another copy.`
+          : `${label} didn't finish. Your text is still here; try again or use Copy.`,
+      );
+    } finally {
+      reviewBusyRef.current = false;
+      setReviewBusy(false);
     }
-    if (outcome === "activation-failed") {
-      setReviewNotice(REVIEW_ACTIVATION_NOTICE);
-      setReviewNeedsAccessibility(false);
-      return;
-    }
-    if (outcome !== "pasted" && shouldShowReviewWhenPasteMisses()) {
-      setReviewNotice(REVIEW_NO_TARGET_NOTICE);
-      console.info(noPasteTargetMessage());
-      return;
-    }
-    const payload = {
-      emitId: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      action: outcome === "pasted" ? ("pasted" as const) : ("copied" as const),
-      cleaned: text,
-      modeId: modeRef.current?.id ?? null,
-    };
-    await invoke("relay_event", { name: "recording:reviewed", payload });
-    void reset();
   };
 
-  const handleReviewCopy = async (text: string) => {
-    await copyCleanedText(text);
-    const payload = {
-      emitId: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      action: "copied" as const,
-      cleaned: text,
-      modeId: modeRef.current?.id ?? null,
-    };
-    await invoke("relay_event", { name: "recording:reviewed", payload });
-    void reset();
-  };
+  const handleReviewPaste = async (text: string) =>
+    reviewAction("Paste", async () => {
+      const outcome = await pasteCleanedText(text);
+      if (outcome === "permission-required") {
+        // Keep the panel open so the user can still Copy the text; update the
+        // notice and expose an Open Settings action instead of resolving.
+        setReviewNotice(REVIEW_PERMISSION_NOTICE);
+        setReviewNeedsAccessibility(true);
+        promptAccessibilityOnce();
+        return;
+      }
+      if (outcome === "activation-failed") {
+        setReviewNotice(REVIEW_ACTIVATION_NOTICE);
+        setReviewNeedsAccessibility(false);
+        return;
+      }
+      if (outcome === "failed") {
+        setReviewNotice("Couldn't paste. Your text is still here; use Copy or try Paste again.");
+        return;
+      }
+      if (outcome !== "pasted" && shouldShowReviewWhenPasteMisses()) {
+        setReviewNotice(REVIEW_NO_TARGET_NOTICE);
+        console.info(noPasteTargetMessage());
+        return;
+      }
+      completedReviewActionRef.current = outcome === "pasted" ? "Pasted" : "Copied";
+      const payload = {
+        emitId: deliveryId(),
+        action: outcome === "pasted" ? ("pasted" as const) : ("copied" as const),
+        cleaned: text,
+        modeId: modeRef.current?.id ?? null,
+        result: resultRef.current ?? undefined,
+      };
+      await relayDelivery("recording:reviewed", payload);
+      void reset();
+    });
 
-  const handleReviewDiscard = async () => {
-    const payload = {
-      emitId: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      action: "discarded" as const,
-      cleaned: streamingCleaned,
-      modeId: modeRef.current?.id ?? null,
-    };
-    await invoke("relay_event", { name: "recording:reviewed", payload });
-    void reset();
-  };
+  const handleReviewCopy = async (text: string) =>
+    reviewAction("Copy", async () => {
+      await copyCleanedText(text);
+      completedReviewActionRef.current = "Copied";
+      const payload = {
+        emitId: deliveryId(),
+        action: "copied" as const,
+        cleaned: text,
+        modeId: modeRef.current?.id ?? null,
+        result: resultRef.current ?? undefined,
+      };
+      await relayDelivery("recording:reviewed", payload);
+      void reset();
+    });
+
+  const handleReviewDiscard = async () =>
+    reviewAction("Discard", async () => {
+      const payload = {
+        emitId: deliveryId(),
+        action: "discarded" as const,
+        cleaned: streamingCleaned,
+        modeId: modeRef.current?.id ?? null,
+        result: resultRef.current ?? undefined,
+      };
+      try {
+        await relayDelivery("recording:reviewed", payload);
+      } finally {
+        // Discard is explicit: don't trap unwanted text in a failed-history loop.
+        void reset();
+      }
+    });
 
   const handleReviewRegenerate = async () => {
+    if (reviewBusyRef.current) return;
     const activeMode = modeRef.current ?? getDefaultMode();
     if (!activeMode) return;
     const vocabAll = loadVocabulary();
@@ -821,12 +963,15 @@ export default function Overlay() {
         translating: !!activeMode.targetLanguage,
       });
       const cleaned = applyVocabReplacements(cleanedRaw, vocabAll);
+      availableTextRef.current = cleaned;
       if (cleaned !== streamed) setStreamingCleaned(cleaned);
       setState("idle");
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-      setErrorPresentation(null);
-      setState("error");
+      setStreamingCleaned(availableTextRef.current || rawText);
+      setReviewNotice(
+        `Regenerate didn't finish (${e instanceof Error ? e.message : String(e)}). Your previous text is still here; use Copy or try again.`,
+      );
+      setState("idle");
     }
   };
 
@@ -905,7 +1050,8 @@ export default function Overlay() {
           modeName={modeName}
           initialText={streamingCleaned}
           streamingText={streamingCleaned}
-          isPolishing={state === "polishing"}
+          isPolishing={state === "polishing" || state === "processing"}
+          isBusy={reviewBusy}
           notice={reviewNotice}
           onOpenSettings={reviewNeedsAccessibility ? openAccessibilitySettings : undefined}
           onPaste={handleReviewPaste}
@@ -922,6 +1068,7 @@ export default function Overlay() {
           errorTitle={errorPresentation?.title}
           privacy={privacy}
           partialText={partialText}
+          successLabel={successLabel}
         />
       )}
     </div>

@@ -15,12 +15,37 @@ for current implementation boundaries, applicable checks and privacy/release gat
 
 - **Global push-to-talk hotkey** — default `Ctrl+Space`, fully rebindable.
 - **Per-app tone** — Slack stays casual, Gmail stays formal, code comments stay terse. Driven by user-defined Modes + app mappings.
-- **Custom vocabulary** — keep proper nouns and jargon spelled correctly.
+- **Writing Style** — choose your default from existing Modes, including custom recipes.
+  Expand **Advanced: Mode recipes** to create, duplicate, reorder or edit them.
+  **Customize** opens the selected recipe; its prompt, language, output, hotkey
+  and AI overrides live under **Advanced recipe settings** and still use **Save changes**.
+  App mappings continue to take priority over the default style.
+- **Custom vocabulary** — keep proper nouns and jargon spelled correctly. In Review, select a corrected term and choose **Add corrected term**, edit the suggested spelling, then **Save term**. With no selection, enter the term yourself. Cancel saves nothing; terms are never learned automatically. Manage them in Vocabulary. Only the confirmed term is stored (locally while cloud features are disabled), not the surrounding dictation. Empty, multi-line, over-200-character and duplicate terms are rejected; save failures leave the draft available to retry.
 - **Translation** — speak any language, output in another.
 - **Cloud-backed** — Supabase Postgres for sync, Supabase Edge Functions proxying Azure AI Foundry for transcription + polish. No keys on the client.
 - **Tray-resident** — close the window, app keeps running. Autostart optional.
 - **Dark + light themes**, follows OS by default.
 - **Onboarding** generates Modes + app mappings from a few tone picks.
+
+### Dictation delivery and recovery
+
+The completion feedback reports **Pasted** only when the native paste command
+confirms that input was dispatched to the captured app. **Copied** means the text
+reached the clipboard instead. This does not verify that the destination app
+accepted or retained the input.
+
+If paste, capture, final transcription, polish, or history saving fails after text
+is available, Review keeps that text for Copy, Paste, or Discard. Recovered live
+previews are explicitly marked incomplete. Review waits for an explicit action;
+it is not itself a successful paste. Finish Review before recording again.
+Blank/noise transcripts and accidental short taps are intentionally suppressed.
+
+History is saved only when both global history and the active Mode permit it,
+using the existing storage and retention rules. With history off, recovery text
+exists only in the open Review window: copy it before closing or quitting.
+There is no hidden transcript journal or persisted audio recovery. Storage or
+cross-window acknowledgement failures keep Review open and warn when a paste
+already happened, rather than silently claiming the result was saved.
 
 ## Install
 

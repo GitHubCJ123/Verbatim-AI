@@ -18,26 +18,16 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import * as Icons from "lucide-react";
-import {
-  Plus,
-  CheckCircle2,
-  Copy as CopyIcon,
-  Pencil,
-  Trash2,
-  GripVertical,
-} from "lucide-react";
+import { Plus, CheckCircle2, Copy as CopyIcon, Pencil, Trash2, GripVertical } from "lucide-react";
 import { Button } from "../components/ui/Button";
 import { Card, CardContent } from "../components/ui/Card";
 import { Badge } from "../components/ui/Badge";
 import { IconButton } from "../components/ui/IconButton";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "../components/ui/Tooltip";
+import { Tooltip, TooltipContent, TooltipTrigger } from "../components/ui/Tooltip";
 import { PageContainer, PageHeader } from "../components/layout/PageHeader";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "../components/ui/Tabs";
 import { AppsPanel } from "./Apps";
+import { WritingStyle } from "../components/settings/WritingStyle";
 import { useModes } from "../lib/store/useModes";
 import { isAiImproveDisabled, setAiImproveDisabled } from "../lib/preferences";
 import { Switch } from "../components/ui/Switch";
@@ -45,9 +35,7 @@ import { toast } from "../components/ui/Toast";
 import { confirmDialog } from "../components/ui/confirmDialog";
 import type { Mode } from "../types/mode";
 
-function pickIcon(
-  name: string,
-): React.ComponentType<{ className?: string; strokeWidth?: number }> {
+function pickIcon(name: string): React.ComponentType<{ className?: string; strokeWidth?: number }> {
   const Comp = (Icons as unknown as Record<string, unknown>)[name];
   if (typeof Comp === "function" || typeof Comp === "object") {
     return Comp as React.ComponentType<{ className?: string; strokeWidth?: number }>;
@@ -65,10 +53,7 @@ export default function Modes() {
   const remove = useModes((s) => s.remove);
   const setDefault = useModes((s) => s.setDefault);
 
-  const sorted = useMemo(
-    () => [...modes].sort((a, b) => a.position - b.position),
-    [modes],
-  );
+  const sorted = useMemo(() => [...modes].sort((a, b) => a.position - b.position), [modes]);
   const ids = useMemo(() => sorted.map((m) => m.id), [sorted]);
 
   const sensors = useSensors(
@@ -102,66 +87,89 @@ export default function Modes() {
   return (
     <PageContainer>
       <PageHeader
-        title="Modes"
-        description="Reusable presets for cleanup, language, and output behavior — and which apps use them."
-        actions={
-          tab === "modes" ? (
-            <Button variant="primary" size="sm" onClick={handleCreate}>
-              <Plus className="h-4 w-4" />
-              New Mode
-            </Button>
-          ) : undefined
-        }
+        title="Writing Style"
+        description="Choose how your dictation reads. Customize recipes and app-specific behavior when you need more control."
       />
 
       <Tabs
         value={tab}
-        onValueChange={(v) =>
-          setSearchParams(v === "modes" ? {} : { tab: v }, { replace: true })
-        }
+        onValueChange={(v) => setSearchParams(v === "modes" ? {} : { tab: v }, { replace: true })}
       >
         <TabsList className="mb-4">
-          <TabsTrigger value="modes">Modes</TabsTrigger>
+          <TabsTrigger value="modes">Writing Style</TabsTrigger>
           <TabsTrigger value="apps">Apps</TabsTrigger>
         </TabsList>
 
         <TabsContent value="modes">
+          <WritingStyle
+            modes={sorted}
+            defaultModeId={defaultModeId}
+            onSelect={(id) => {
+              setDefault(id);
+              toast.success(`${modes.find((mode) => mode.id === id)?.name} is now your default`);
+            }}
+            onEdit={(id) => navigate(`/modes/editor?id=${id}`)}
+          />
           <AiImproveToggle />
 
-          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-            <SortableContext items={ids} strategy={rectSortingStrategy}>
-              <div className="grid grid-cols-2 gap-4 lg:grid-cols-3">
-                {sorted.map((mode) => (
-                  <SortableModeCard
-                    key={mode.id}
-                    mode={mode}
-                    isDefault={mode.id === defaultModeId}
-                    onEdit={() => navigate(`/modes/editor?id=${mode.id}`)}
-                    onDuplicate={async () => {
-                      const dup = await duplicate(mode.id);
-                      if (dup) navigate(`/modes/editor?id=${dup.id}`);
-                    }}
-                    onDelete={async () => {
-                      if (
-                        await confirmDialog({
-                          title: `Delete "${mode.name}"?`,
-                          message: "This mode and its app mappings won't be recoverable.",
-                          confirmLabel: "Delete",
-                          destructive: true,
-                        })
-                      ) {
-                        void remove(mode.id);
-                      }
-                    }}
-                    onSetDefault={() => {
-                      setDefault(mode.id);
-                      toast.success(`${mode.name} is now your default`);
-                    }}
-                  />
-                ))}
+          <details className="rounded-lg border border-border-subtle bg-bg-elevated/20">
+            <summary className="cursor-pointer rounded-lg px-5 py-4 text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-solid">
+              Advanced: Mode recipes
+              <span className="ml-2 text-xs font-normal text-text-muted">
+                {modes.length} recipes · prompts, overrides, hotkeys and output
+              </span>
+            </summary>
+            <div className="border-t border-border-subtle p-5">
+              <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                <p className="text-xs text-text-secondary">
+                  Every writing style is a Mode. Edit, duplicate or create a recipe without changing
+                  your other styles.
+                </p>
+                <Button variant="primary" size="sm" onClick={handleCreate}>
+                  <Plus className="h-4 w-4" />
+                  New Mode
+                </Button>
               </div>
-            </SortableContext>
-          </DndContext>
+              <DndContext
+                sensors={sensors}
+                collisionDetection={closestCenter}
+                onDragEnd={handleDragEnd}
+              >
+                <SortableContext items={ids} strategy={rectSortingStrategy}>
+                  <div className="grid grid-cols-2 gap-4 lg:grid-cols-3">
+                    {sorted.map((mode) => (
+                      <SortableModeCard
+                        key={mode.id}
+                        mode={mode}
+                        isDefault={mode.id === defaultModeId}
+                        onEdit={() => navigate(`/modes/editor?id=${mode.id}`)}
+                        onDuplicate={async () => {
+                          const dup = await duplicate(mode.id);
+                          if (dup) navigate(`/modes/editor?id=${dup.id}`);
+                        }}
+                        onDelete={async () => {
+                          if (
+                            await confirmDialog({
+                              title: `Delete "${mode.name}"?`,
+                              message: "This mode and its app mappings won't be recoverable.",
+                              confirmLabel: "Delete",
+                              destructive: true,
+                            })
+                          ) {
+                            void remove(mode.id);
+                          }
+                        }}
+                        onSetDefault={() => {
+                          setDefault(mode.id);
+                          toast.success(`${mode.name} is now your default`);
+                        }}
+                      />
+                    ))}
+                  </div>
+                </SortableContext>
+              </DndContext>
+            </div>
+          </details>
         </TabsContent>
 
         <TabsContent value="apps">
@@ -189,14 +197,9 @@ function SortableModeCard({
   onDelete,
   onSetDefault,
 }: SortableModeCardProps) {
-  const {
-    attributes,
-    listeners,
-    setNodeRef,
-    transform,
-    transition,
-    isDragging,
-  } = useSortable({ id: mode.id });
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: mode.id,
+  });
 
   const Icon = pickIcon(mode.icon);
 
@@ -237,11 +240,7 @@ function SortableModeCard({
             </div>
           </div>
 
-          <button
-            type="button"
-            onClick={onEdit}
-            className="text-left"
-          >
+          <button type="button" onClick={onEdit} className="text-left">
             <div className="text-sm font-semibold">{mode.name}</div>
             <div className="mt-0.5 line-clamp-2 text-xs text-text-secondary">
               {mode.description}
@@ -253,13 +252,13 @@ function SortableModeCard({
               type="button"
               {...attributes}
               {...listeners}
-              className="flex cursor-grab items-center gap-1 rounded px-1 py-0.5 text-text-muted opacity-0 transition-opacity hover:bg-white/[0.04] active:cursor-grabbing group-hover:opacity-100"
+              className="flex cursor-grab items-center gap-1 rounded px-1 py-0.5 text-text-muted opacity-0 transition-opacity hover:bg-white/[0.04] active:cursor-grabbing group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100"
               aria-label="Drag handle"
             >
               <GripVertical className="h-3.5 w-3.5" />
               <span className="text-[10px]">Drag</span>
             </button>
-            <div className="flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+            <div className="flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
               {!isDefault && (
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -316,11 +315,12 @@ function AiImproveToggle() {
       <div className="flex flex-col gap-0.5">
         <div className="text-sm font-medium">Improve with AI</div>
         <div className="text-xs text-text-muted">
-          Globally run the cleanup pass for every Mode. Turn off to get the raw transcript
-          (with vocabulary replacements still applied). Overrides per-mode settings.
+          Apply your writing style with AI cleanup. Turn off for the raw transcript; vocabulary
+          replacements still apply. This switch takes priority over every Mode.
         </div>
       </div>
       <Switch
+        aria-label="Improve with AI"
         checked={enabled}
         onCheckedChange={(v: boolean) => {
           setAiImproveDisabled(!v);

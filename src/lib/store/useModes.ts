@@ -14,6 +14,7 @@ import { useAuth } from "./useAuth";
 import { isLocalMode } from "../appMode";
 import { buildBuiltinModes } from "./builtinModes";
 import { normalizeCleanupKind } from "../ai/localCleanup";
+import { validateVocabularyTerm } from "../vocab";
 
 const LS_MODES = "sw.modes";
 const LS_VOCAB = "sw.vocab";
@@ -62,11 +63,28 @@ export function getDefaultMode(): Mode | null {
 
 export function loadVocabulary(): VocabularyTerm[] {
   try {
-    const raw = localStorage.getItem(LS_VOCAB);
-    return raw ? (JSON.parse(raw) as VocabularyTerm[]) : [];
+    return readVocabularyCache();
   } catch {
     return [];
   }
+}
+
+function readVocabularyCache(): VocabularyTerm[] {
+  const raw = localStorage.getItem(LS_VOCAB);
+  const terms: unknown = raw ? JSON.parse(raw) : [];
+  if (
+    !Array.isArray(terms) ||
+    !terms.every(
+      (term) =>
+        term &&
+        typeof term === "object" &&
+        typeof term.id === "string" &&
+        typeof term.term === "string",
+    )
+  ) {
+    throw new Error("Vocabulary could not be read. Existing data has not been changed.");
+  }
+  return terms as VocabularyTerm[];
 }
 
 function saveVocabCache(terms: VocabularyTerm[]) {
@@ -385,7 +403,7 @@ export const useVocabulary = create<VocabularyState>((set, get) => ({
     set({ loading: true });
     try {
       if (isLocalMode()) {
-        set({ terms: loadVocabulary(), loading: false });
+        set({ terms: readVocabularyCache(), loading: false });
         return;
       }
       const { data, error } = await supabase
@@ -408,16 +426,19 @@ export const useVocabulary = create<VocabularyState>((set, get) => ({
   },
 
   add: async (input) => {
+    // Review runs in a separate WebView; read the latest cache before adding.
+    const current = isLocalMode() ? readVocabularyCache() : get().terms;
+    const term = validateVocabularyTerm(input.term, current);
     const t: VocabularyTerm = {
       id: newId(),
-      term: input.term,
+      term,
       pronunciation: input.pronunciation ?? null,
       replacement: input.replacement ?? null,
       notes: input.notes ?? null,
       createdAt: nowIso(),
     };
     if (isLocalMode()) {
-      const next = [...get().terms, t];
+      const next = [...current, t];
       saveVocabCache(next);
       set({ terms: next });
       return t;
@@ -440,11 +461,13 @@ export const useVocabulary = create<VocabularyState>((set, get) => ({
   },
 
   update: async (id, patch) => {
-    const cur = get().terms.find((t) => t.id === id);
-    if (!cur) return;
+    const current = isLocalMode() ? readVocabularyCache() : get().terms;
+    const cur = current.find((t) => t.id === id);
+    if (!cur) throw new Error("This vocabulary term no longer exists. Reopen Vocabulary.");
     const merged = { ...cur, ...patch };
+    merged.term = validateVocabularyTerm(merged.term, current, id);
     if (isLocalMode()) {
-      const next = get().terms.map((t) => (t.id === id ? merged : t));
+      const next = current.map((t) => (t.id === id ? merged : t));
       saveVocabCache(next);
       set({ terms: next });
       return;
@@ -465,17 +488,31 @@ export const useVocabulary = create<VocabularyState>((set, get) => ({
   },
 
   remove: async (id) => {
+    const current = isLocalMode() ? readVocabularyCache() : get().terms;
     if (!isLocalMode()) {
       const { error } = await supabase.from("vocabulary").delete().eq("id", id);
       if (error) throw new Error(error.message);
     }
-    const next = get().terms.filter((t) => t.id !== id);
+    const next = current.filter((t) => t.id !== id);
     saveVocabCache(next);
     set({ terms: next });
   },
 
   importMany: async (inputs) => {
-    const cleaned = inputs.filter((i) => i.term && i.term.trim().length > 0);
+    const current = isLocalMode() ? readVocabularyCache() : get().terms;
+    const seen = [...current];
+    const cleaned = inputs.map((input) => {
+      const term = validateVocabularyTerm(input.term, seen);
+      seen.push({
+        id: newId(),
+        term,
+        pronunciation: null,
+        replacement: null,
+        notes: null,
+        createdAt: nowIso(),
+      });
+      return { ...input, term };
+    });
     if (cleaned.length === 0) return 0;
     if (isLocalMode()) {
       const additions: VocabularyTerm[] = cleaned.map((i) => ({
@@ -486,7 +523,7 @@ export const useVocabulary = create<VocabularyState>((set, get) => ({
         notes: i.notes ?? null,
         createdAt: nowIso(),
       }));
-      const next = [...get().terms, ...additions];
+      const next = [...current, ...additions];
       saveVocabCache(next);
       set({ terms: next });
       return additions.length;

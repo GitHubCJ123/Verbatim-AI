@@ -1,6 +1,31 @@
 # 01 — Quick Start Onboarding
 
-## Current state
+## Implemented behavior (October 2026)
+
+Quick Start already exists in [Onboarding.tsx](../../src/routes/onboarding/Onboarding.tsx).
+It opens a resumable checklist, not a new onboarding flow. It preserves saved
+speech/polish selections, shortcut behavior, history and other preferences.
+It does not automatically download, switch models, access the microphone or
+run an engine. The user can explicitly allow microphone access or install/use
+a model; permission and downloaded-file status are rechecked on return.
+These checks are setup evidence, not proof of a successful native dictation.
+
+The default model view shows a language-compatible recommendation and the
+current selection. Parakeet v3 is suggested for its listed European languages;
+Whisper Turbo is suggested for mixed/other languages. Changing the suggestion
+does not change the stored language or model. All speech and polish models
+remain available under Advanced, and custom Whisper files remain in Settings.
+Canary requires an explicit supported language rather than silently displaying
+English for an unsupported stored value.
+
+With cloud features disabled, customization skips account status and Settings
+hides cloud location controls. Previously stored cloud values are retained by
+the existing provider gate. The final checklist includes a synthetic practice
+text field that does not save its contents or call speech/polish engines.
+Shortcut instructions reflect the saved hold/toggle setting, including
+hold-only modifier shortcuts.
+
+## Original proposal (historical; not current behavior)
 
 `src/routes/onboarding/Onboarding.tsx` (~1,700 lines) runs a **13-step**
 linear flow, hardcoded as numeric steps in `StepBody`:
@@ -19,7 +44,7 @@ Problem: a new user must make ~10 decisions before dictating once. Only two
 are truly load-bearing: **mic permission** (hard requirement) and
 **cloud vs. local AI** (privacy choice we shouldn't silently default).
 
-## Design
+## Proposed design
 
 At the Welcome step, offer two paths:
 

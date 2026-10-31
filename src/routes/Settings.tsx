@@ -992,7 +992,7 @@ function ModelTab() {
           <StageHeader
             eyebrow="Step 1"
             title="Speech model"
-            description="Turns your voice into text, entirely on this computer. Accuracy and speed are measured on the same recordings for every model; hover a score for the numbers."
+            description="Start with a language-compatible recommendation, or keep your current model. The complete catalog is under Advanced. Downloads and model changes happen only when you choose them."
           />
           <div id="setting-speech-model" className="mt-3 scroll-mt-24">
             <SpeechModelPicker key={pickerKey} onChange={onPickerChange} />
@@ -1210,7 +1210,7 @@ function CleanupSection() {
         <StageHeader
           eyebrow="Step 2 · optional"
           title="AI polish"
-          description="A small model on this computer fixes fillers, self-corrections, numbers and punctuation, and applies each Mode's style. Clean dictations skip it, so they paste instantly."
+          description="Optional local cleanup for fillers, self-corrections, numbers and punctuation. Keep your current model or choose the recommendation; other polish models remain under Advanced."
         />
         <SettingRow
           id="cleanup-provider"

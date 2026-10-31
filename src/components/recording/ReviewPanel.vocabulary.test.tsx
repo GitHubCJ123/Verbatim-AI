@@ -67,6 +67,30 @@ describe("Review correction vocabulary integration", () => {
     expect(container.querySelector("textarea")?.value).toBe(text);
   });
 
+  it("blocks vocabulary confirmation while delivery is busy", async () => {
+    await act(async () =>
+      root.render(
+        <ReviewPanel
+          modeName="Synthetic mode"
+          initialText={text}
+          isPolishing={false}
+          isBusy
+          onPaste={onPaste}
+          onCopy={vi.fn()}
+          onDiscard={onDiscard}
+          onRegenerate={vi.fn()}
+        />,
+      ),
+    );
+    const button = Array.from(container.querySelectorAll("button")).find(
+      (element) => element.textContent?.trim() === "Add corrected term",
+    )!;
+    expect(button.disabled).toBe(true);
+    await act(async () => button.click());
+    expect(container.querySelector("input")).toBeNull();
+    expect(localStorage.getItem("sw.vocab")).toBeNull();
+  });
+
   it("suggests only the explicit selection and leaves dictation intact after saving", async () => {
     const textarea = container.querySelector("textarea")!;
     const start = text.indexOf("Kubernetes");

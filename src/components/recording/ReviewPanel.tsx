@@ -126,7 +126,7 @@ export function ReviewPanel({
         placeholder={isPolishing ? "Listening for tokens…" : "Cleaned text will appear here"}
       />
 
-      <CorrectionVocabularyAction selectedText={selectedText} disabled={isPolishing} />
+      <CorrectionVocabularyAction selectedText={selectedText} disabled={isPolishing || isBusy} />
 
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-1">

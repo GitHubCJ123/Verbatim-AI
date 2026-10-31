@@ -22,6 +22,7 @@ const h = vi.hoisted(() => ({
   transcribe: vi.fn(),
   paste: vi.fn(),
   copy: vi.fn(),
+  addVocabulary: vi.fn(),
   invoke: vi.fn(),
   hide: vi.fn(),
   reviewResize: vi.fn(),
@@ -74,6 +75,8 @@ vi.mock("../lib/store/useModes", () => ({
   getModeById: () => h.mode,
   getDefaultMode: () => h.mode,
   loadVocabulary: () => [],
+  useVocabulary: (select: (state: { add: typeof h.addVocabulary }) => unknown) =>
+    select({ add: h.addVocabulary }),
 }));
 vi.mock("../lib/recording-bridge", () => ({
   resizeOverlayToReview: h.reviewResize,

@@ -9,6 +9,7 @@ const h = vi.hoisted(() => ({
   stopRecording: vi.fn(() => Promise.resolve()),
   cancelRecording: vi.fn(() => Promise.resolve()),
   resolveModeAtPress: vi.fn(),
+  toastError: vi.fn(),
 }));
 
 // hotkey.ts pulls in the recording pipeline and tauri IPC at import
@@ -31,6 +32,9 @@ vi.mock("./preferences", () => ({ isHotkeyPaused: vi.fn(() => false) }));
 vi.mock("./store/useOnboarding", () => ({ isOnboardingComplete: vi.fn(() => true) }));
 vi.mock("./nativeAudio", () => ({ syncNativeCaptureArm: vi.fn(() => Promise.resolve()) }));
 vi.mock("./ai", () => ({ prewarmEngines: vi.fn() }));
+vi.mock("sonner", () => ({ toast: { error: h.toastError, warning: vi.fn() } }));
+
+import { invoke } from "@tauri-apps/api/core";
 
 import {
   hotkeyDisplayParts,
@@ -38,9 +42,26 @@ import {
   isForcedHoldSpec,
   isSingleKeySpec,
   usesHoldToTalk,
+  reservedHotkeyWarning,
+  hotkeyErrorTitle,
 } from "./hotkey";
 
 describe("hotkey spec helpers — modifier-only triggers", () => {
+  it("warns only for the curated macOS shortcuts, including modifier aliases and order", () => {
+    expect(reservedHotkeyWarning("Super+Space", true)).toContain("Spotlight");
+    expect(reservedHotkeyWarning("CommandOrControl+Space", true)).toContain("Spotlight");
+    expect(reservedHotkeyWarning("Space+Alt+Command", true)).toContain("Finder search");
+    expect(reservedHotkeyWarning("Alt+Super+Escape", true)).toContain("Force Quit");
+    expect(reservedHotkeyWarning("Super+Space", false)).toBeNull();
+    expect(reservedHotkeyWarning("Control+Shift+Space", true)).toBeNull();
+    expect(reservedHotkeyWarning("Fn", true)).toBeNull();
+    expect(reservedHotkeyWarning("RightCommand", true)).toBeNull();
+  });
+
+  it("uses an actionable title for conflicts, not for unrelated registration errors", () => {
+    expect(hotkeyErrorTitle("hotkey-in-use: synthetic")).toBe("Shortcut already in use");
+    expect(hotkeyErrorTitle(new Error("Invalid shortcut"))).toBe("Couldn't register that shortcut");
+  });
   it("treats the fn and Right ⌘ sentinels as single-key specs", () => {
     expect(isSingleKeySpec("Fn")).toBe(true);
     expect(isSingleKeySpec("RightCommand")).toBe(true);
@@ -127,6 +148,8 @@ describe("installHotkeyListeners — serialized recording state machine", () => 
     h.stopRecording.mockReset();
     h.cancelRecording.mockReset();
     h.resolveModeAtPress.mockReset();
+    h.toastError.mockReset();
+    vi.mocked(invoke).mockReset().mockResolvedValue(undefined);
     h.startRecording.mockResolvedValue(undefined);
     h.stopRecording.mockResolvedValue(undefined);
     h.cancelRecording.mockResolvedValue(undefined);
@@ -135,6 +158,32 @@ describe("installHotkeyListeners — serialized recording state machine", () => 
 
   afterEach(() => {
     vi.unstubAllGlobals();
+  });
+
+  it("BOOT: exposes an in-use shortcut without rewriting the stored selection", async () => {
+    setConfig("F9", false);
+    vi.mocked(invoke).mockRejectedValueOnce("hotkey-in-use: choose another shortcut");
+    const off = await installHotkeyListeners();
+    await flush();
+    expect(invoke).toHaveBeenCalledWith("set_hotkey", { spec: "F9" });
+    expect(h.toastError).toHaveBeenCalledWith(
+      "Shortcut already in use",
+      expect.objectContaining({ description: expect.stringContaining("pick another one") }),
+    );
+    expect(store.get("sw.hotkey.spec")).toBe("F9");
+    off();
+  });
+
+  it("BOOT: retains the Input Monitoring setup message for modifier hotkeys", async () => {
+    setConfig("Fn", true);
+    vi.mocked(invoke).mockRejectedValueOnce("needs-input-monitoring");
+    const off = await installHotkeyListeners();
+    await flush();
+    expect(h.toastError).toHaveBeenCalledWith(
+      "Your fn / right ⌘ hotkey isn't active yet",
+      expect.anything(),
+    );
+    off();
   });
 
   it("HOLD: release before startup resolves still stops the recording (core race)", async () => {

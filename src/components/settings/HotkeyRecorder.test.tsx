@@ -18,6 +18,9 @@ vi.mock("@tauri-apps/api/event", () => ({
 vi.mock("../../lib/hotkey", () => ({
   applyHotkey: h.applyHotkey,
   clearHotkey: h.clearHotkey,
+  getRegisteredHotkey: vi.fn(),
+  hotkeyErrorTitle: () => "Couldn't register that shortcut",
+  reservedHotkeyWarning: () => null,
   isFunctionKey: (key: string) => /^F([1-9]|1[0-9]|2[0-4])$/.test(key),
   hotkeyDisplayParts: (spec: string) =>
     spec === "Fn" ? ["fn"] : spec === "RightCommand" ? ["right ⌘"] : spec.split("+"),
@@ -188,6 +191,35 @@ describe("HotkeyRecorder capture transaction", () => {
     await flush();
 
     expect(h.applyHotkey.mock.calls).toEqual([["F6"]]);
+  });
+
+  it("does not commit a rejected replacement and restores the previous shortcut", async () => {
+    h.applyHotkey.mockRejectedValueOnce(new Error("hotkey-in-use: choose another shortcut"));
+    const { session, callbacks } = createSession();
+    await session.start("Control+Space");
+
+    fireKey(keyEvent("F6"));
+    await flush();
+
+    expect(h.applyHotkey.mock.calls).toEqual([["F6"], ["Control+Space"]]);
+    expect(callbacks.onCommit).not.toHaveBeenCalled();
+    expect(callbacks.onError).toHaveBeenCalledWith("hotkey-in-use: choose another shortcut");
+  });
+
+  it("reports both the conflict and a failed restore, rather than implying the old key works", async () => {
+    h.applyHotkey
+      .mockRejectedValueOnce(new Error("hotkey-in-use"))
+      .mockRejectedValueOnce(new Error("restore also failed"));
+    const { session, callbacks } = createSession();
+    await session.start("Control+Space");
+
+    fireKey(keyEvent("F6"));
+    await flush();
+
+    expect(callbacks.onCommit).not.toHaveBeenCalled();
+    expect(callbacks.onError).toHaveBeenCalledWith(
+      expect.stringContaining("restore also failed"),
+    );
   });
 
   it("continues WebView capture when native fn capture lacks permission", async () => {

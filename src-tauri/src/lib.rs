@@ -14,7 +14,7 @@ use commands::{
         request_input_monitoring, start_hotkey_capture, stop_hotkey_capture, FnHotkeyState,
         HotkeyCaptureState,
     },
-    hotkey::{clear_hotkey, handle_event as handle_hotkey_event, install_default, set_hotkey, HotkeyState},
+    hotkey::{clear_hotkey, get_hotkey, handle_event as handle_hotkey_event, install_default, set_hotkey, HotkeyState},
     llama_cpp::{
         cleanup_engine_status, cleanup_text, delete_cleanup_model, download_cleanup_model,
         ensure_cleanup_ready, unload_cleanup_engine, CleanupServerState,
@@ -116,6 +116,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_active_window,
             set_hotkey,
+            get_hotkey,
             clear_hotkey,
             enable_cancel_shortcut,
             disable_cancel_shortcut,

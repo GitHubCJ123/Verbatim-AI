@@ -136,8 +136,41 @@ export function usesHoldToTalk(cfg: HotkeyConfig): boolean {
   return isForcedHoldSpec(cfg.spec) || cfg.pushToTalk;
 }
 
+/** A small advisory list, not cross-app ownership detection. */
+export function reservedHotkeyWarning(spec: string, mac = IS_MAC): string | null {
+  if (!mac) return null;
+  const normalized = spec.split("+").map((token) => {
+    const key = token.trim().toLowerCase();
+    return ["commandorcontrol", "command", "cmd", "meta", "super"].includes(key)
+      ? "command"
+      : key === "option" ? "alt" : key;
+  }).sort().join("+");
+  const reserved: Record<string, string> = {
+    "command+space": "Spotlight",
+    "alt+command+space": "Finder search",
+    "alt+command+escape": "Force Quit",
+  };
+  const feature = reserved[normalized];
+  return feature
+    ? `This shortcut is commonly used by macOS for ${feature}. Choose another shortcut to avoid conflicts. macOS doesn't reliably report other apps' hotkeys; this warning is best-effort, not an override.`
+    : null;
+}
+
+export function hotkeyErrorTitle(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes("hotkey-in-use")
+    ? "Shortcut already in use"
+    : "Couldn't register that shortcut";
+}
+
 export async function applyHotkey(spec: string): Promise<void> {
   await invoke("set_hotkey", { spec });
+  const warning = reservedHotkeyWarning(spec);
+  if (warning) toast.warning("Possible macOS shortcut conflict", { description: warning });
+}
+
+export async function getRegisteredHotkey(): Promise<string | null> {
+  return invoke<string | null>("get_hotkey");
 }
 
 export async function clearHotkey(): Promise<void> {
@@ -155,7 +188,7 @@ export async function getActiveWindow(): Promise<ActiveWindow> {
 export async function installHotkeyListeners(): Promise<UnlistenFn> {
   // Re-apply the persisted hotkey at boot so the registration matches
   // whatever the user last picked (or the platform default if nothing
-  // is saved). Rust's `install_default` registers `Ctrl+Space` but the
+  // is saved). Rust's `install_default` registers a platform default but the
   // user may have rebound — or a previous session's recorder may have
   // left the slot empty after a clear+capture.
   const cfg0 = loadHotkeyConfig();
@@ -169,7 +202,7 @@ export async function installHotkeyListeners(): Promise<UnlistenFn> {
           "Verbatim AI needs Input Monitoring permission. Open Settings → Recording to finish setup.",
       });
     } else {
-      toast.error("Couldn't register your dictation hotkey", {
+      toast.error(hotkeyErrorTitle(e), {
         description: `${message} — pick another one in Settings → Recording.`,
       });
     }

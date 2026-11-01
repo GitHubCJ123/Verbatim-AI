@@ -119,8 +119,8 @@ const ALL_SETTINGS_ENTRIES: SettingsSearchEntry[] = [
   {
     id: "hotkey",
     title: "Global hotkey",
-    description: "The shortcut you hold to dictate from anywhere.",
-    keywords: ["shortcut", "keybinding", "key", "fn", "hold", "trigger", "record"],
+    description: "The shortcut you use to dictate from anywhere.",
+    keywords: ["shortcut", "keybinding", "key", "fn", "hold", "toggle", "trigger", "record"],
     tab: "recording",
   },
   {
@@ -243,15 +243,15 @@ const ALL_SETTINGS_ENTRIES: SettingsSearchEntry[] = [
   },
   {
     id: "page-modes",
-    title: "Modes",
+    title: "Writing Style",
     description: "Edit the styles your speech is rewritten in.",
-    keywords: ["tone", "style", "prompt", "presets", "formal", "casual"],
+    keywords: ["writing", "tone", "style", "modes", "recipe", "prompt", "presets", "formal", "casual"],
     route: "/modes",
   },
   {
     id: "page-apps",
     title: "Apps",
-    description: "Map applications to Modes automatically (Modes → Apps tab).",
+    description: "Map applications to Mode recipes automatically (Writing Style → Apps tab).",
     keywords: ["per app", "mapping", "rules", "slack", "email", "automatic mode"],
     route: "/modes?tab=apps",
   },
@@ -285,6 +285,13 @@ const ALL_SETTINGS_ENTRIES: SettingsSearchEntry[] = [
  */
 export const SETTINGS_ENTRIES: SettingsSearchEntry[] = ALL_SETTINGS_ENTRIES.filter(
   (e) => CLOUD_FEATURES_ENABLED || e.id !== "page-account",
+).map((e) =>
+  CLOUD_FEATURES_ENABLED
+    ? e
+    : {
+        ...e,
+        keywords: e.keywords.filter((keyword) => keyword !== "cloud" && keyword !== "azure"),
+      },
 );
 
 /** Simple fuzzy-ish filter: every whitespace-separated token must match

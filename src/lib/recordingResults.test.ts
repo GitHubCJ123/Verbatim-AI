@@ -5,6 +5,7 @@ const h = vi.hoisted(() => ({
   listeners: new Map<string, (event: { payload: unknown }) => Promise<void>>(),
   emit: vi.fn(async () => {}),
   toast: { error: vi.fn(), success: vi.fn(), info: vi.fn() },
+  recordDiagnostic: vi.fn(),
   disabled: false,
 }));
 vi.mock("@tauri-apps/api/event", () => ({
@@ -15,6 +16,7 @@ vi.mock("@tauri-apps/api/event", () => ({
   },
 }));
 vi.mock("../components/ui/Toast", () => ({ toast: h.toast }));
+vi.mock("./diagnostics", () => ({ recordDiagnostic: h.recordDiagnostic }));
 vi.mock("./appMode", () => ({ isLocalMode: () => true }));
 vi.mock("./supabase", () => ({ supabase: {} }));
 vi.mock("./store/useAuth", () => ({ useAuth: { getState: () => ({ user: null }) } }));
@@ -90,6 +92,7 @@ describe("main recording listeners with real local history", () => {
   it("surfaces storage failure and permits a retry without silent loss", async () => {
     quotaExceeded = true;
     await send("recording:result", result);
+    expect(h.recordDiagnostic).toHaveBeenCalledExactlyOnceWith("history_write_failed");
     expect(h.toast.error).toHaveBeenCalledWith("History wasn't saved", expect.any(Object));
     expect(h.emit).toHaveBeenLastCalledWith("recording:delivery-ack", {
       emitId: result.emitId,
@@ -106,6 +109,7 @@ describe("main recording listeners with real local history", () => {
     const original = { ...result, saveHistory: scope !== "mode", outputStyle: "review" as const };
     await send("recording:result", original);
     expect(storage.size).toBe(0);
+    expect(h.recordDiagnostic).not.toHaveBeenCalled();
     await send("recording:reviewed", {
       emitId: "synthetic-reviewed",
       action: "copied",

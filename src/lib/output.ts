@@ -8,6 +8,7 @@ import { osKind } from "./os";
 import { pasteMethodUsesClipboard } from "./pasteMethod";
 import { isAccessibilityError, isActivationFailedError } from "./permissions";
 import { getOutputBehavior, getPasteMethod, type PasteMethod } from "./preferences";
+import { recordDiagnostic } from "./diagnostics";
 
 const CLIPBOARD_RESTORE_DELAY_MS = 1000;
 
@@ -57,10 +58,18 @@ export type PasteOutcome =
 async function invokePaste(args: { text: string | null; method: PasteMethod }): Promise<PasteOutcome> {
   try {
     const ok = await invoke<boolean>("paste_to_target", args);
+    if (!ok) recordDiagnostic("paste_target_missing");
     return ok ? "pasted" : "no-target";
   } catch (e) {
-    if (isAccessibilityError(e)) return "permission-required";
-    if (isActivationFailedError(e)) return "activation-failed";
+    if (isAccessibilityError(e)) {
+      recordDiagnostic("paste_permission_required");
+      return "permission-required";
+    }
+    if (isActivationFailedError(e)) {
+      recordDiagnostic("paste_activation_failed");
+      return "activation-failed";
+    }
+    recordDiagnostic("paste_dispatch_failed");
     console.warn("[Verbatim AI] paste_to_target failed:", e);
     return "failed";
   }
@@ -92,7 +101,12 @@ export async function pasteCleanedText(text: string): Promise<PasteOutcome> {
       prev = null;
     }
   }
-  await writeText(text);
+  try {
+    await writeText(text);
+  } catch (error) {
+    recordDiagnostic("clipboard_write_failed");
+    throw error;
+  }
   const outcome = await invokePaste({ text: null, method });
   if (behavior === "restore" && prev !== null) {
     if (outcome === "pasted") {
@@ -105,7 +119,12 @@ export async function pasteCleanedText(text: string): Promise<PasteOutcome> {
 }
 
 export async function copyCleanedText(text: string): Promise<void> {
-  await writeText(text);
+  try {
+    await writeText(text);
+  } catch (error) {
+    recordDiagnostic("clipboard_write_failed");
+    throw error;
+  }
 }
 
 export async function clearCapturedTarget(): Promise<void> {

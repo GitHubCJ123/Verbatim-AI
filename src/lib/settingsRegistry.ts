@@ -182,20 +182,13 @@ const ALL_SETTINGS_ENTRIES: SettingsSearchEntry[] = [
     tab: "privacy",
   },
   {
-    id: "telemetry",
-    title: "Anonymous telemetry",
-    description: "Usage stats — never your transcript content.",
-    keywords: ["privacy", "analytics", "tracking", "data collection"],
+    id: "diagnostics",
+    title: "Local diagnostics",
+    description: "Opt in to a local, content-free troubleshooting journal.",
+    keywords: ["privacy", "debug", "crash", "logs", "troubleshoot", "delete"],
     tab: "privacy",
   },
   // Advanced
-  {
-    id: "log-level",
-    title: "Log level",
-    description: "Verbosity of log files.",
-    keywords: ["logs", "debug", "verbose", "troubleshoot"],
-    tab: "advanced",
-  },
   {
     id: "test-transcription",
     title: "Test transcription",

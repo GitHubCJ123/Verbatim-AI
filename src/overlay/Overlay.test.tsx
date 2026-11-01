@@ -31,6 +31,7 @@ const h = vi.hoisted(() => ({
   realMain: false,
   improve: false,
   cleanupReject: false,
+  diagnosticGeneration: 100,
   toast: { error: vi.fn(), success: vi.fn(), info: vi.fn() },
   onPartial: null as null | ((partial: { text: string }) => void),
   mode: {
@@ -131,6 +132,7 @@ vi.mock("../lib/store/useAuth", () => ({ useAuth: { getState: () => ({ user: nul
 import Overlay from "./Overlay";
 import { installRecordingResultListeners } from "../lib/recordingResults";
 import { listTranscriptions } from "../lib/history";
+import { getDiagnostics, setDiagnosticsEnabled } from "../lib/diagnostics";
 
 let container: HTMLDivElement;
 let root: Root;
@@ -168,6 +170,27 @@ async function click(label: string) {
     button!.click();
     await flush();
   });
+}
+
+async function enableDiagnostics() {
+  const generation = (h.diagnosticGeneration += 2);
+  const existing = h.invoke.getMockImplementation();
+  h.invoke.mockImplementation(async (command, args) => {
+    const report = (enabled: boolean, version: number) => ({
+      enabled,
+      generation: version,
+      appVersion: "0.5.17",
+      platform: "synthetic",
+      architecture: "synthetic",
+      events: [],
+    });
+    if (command === "get_diagnostics") return report(true, generation);
+    if (command === "set_diagnostics_enabled") return report(false, generation + 1);
+    if (command === "begin_diagnostic_trace") return { generation, traceId: 1 };
+    return existing?.(command, args);
+  });
+  await getDiagnostics();
+  return generation;
 }
 
 describe("Overlay delivery at real recording and Review callbacks", () => {
@@ -349,5 +372,54 @@ describe("Overlay delivery at real recording and Review callbacks", () => {
     await fire("recording:start", { modeName: "New", sessionId: 2 });
     expect(editor().value).toBe("Synthetic dictation.");
     expect(h.transcribe).toHaveBeenCalledTimes(1);
+  });
+
+  it("records a fixed transcription failure without any private error or text", async () => {
+    const generation = await enableDiagnostics();
+    h.transcribe.mockRejectedValue(new Error("Synthetic private transcript and path"));
+    await dictate();
+    expect(h.invoke).toHaveBeenCalledWith("record_diagnostic_event", {
+      kind: "transcription_failed",
+      generation,
+    });
+    const diagnosticCalls = h.invoke.mock.calls.filter(([command]) =>
+      ["begin_diagnostic_trace", "set_diagnostic_stage", "record_diagnostic_event"].includes(command),
+    );
+    expect(JSON.stringify(diagnosticCalls)).not.toContain("Synthetic private");
+    expect(diagnosticCalls).toContainEqual([
+      "set_diagnostic_stage",
+      { trace: { generation, traceId: 1 }, stage: "transcription" },
+    ]);
+    await setDiagnosticsEnabled(false);
+  });
+
+  it("returns to the Review stage after successful polish", async () => {
+    const generation = await enableDiagnostics();
+    h.mode.outputStyle = "review";
+    h.mode.skipCleanup = false;
+    h.improve = true;
+    await dictate();
+    const stages = h.invoke.mock.calls
+      .filter(([command]) => command === "set_diagnostic_stage")
+      .map(([, args]) => args.stage);
+    expect(stages).toContain("polish");
+    expect(stages[stages.length - 1]).toBe("review");
+    expect(h.invoke).toHaveBeenCalledWith("begin_diagnostic_trace", { generation });
+    await setDiagnosticsEnabled(false);
+  });
+
+  it("does not mislabel an output failure as a transcription failure", async () => {
+    const generation = await enableDiagnostics();
+    h.paste.mockRejectedValue(new Error("Synthetic private output failure"));
+    await dictate();
+    expect(h.invoke).toHaveBeenCalledWith("record_diagnostic_event", {
+      kind: "delivery_failed",
+      generation,
+    });
+    expect(h.invoke).not.toHaveBeenCalledWith("record_diagnostic_event", {
+      kind: "transcription_failed",
+      generation,
+    });
+    await setDiagnosticsEnabled(false);
   });
 });

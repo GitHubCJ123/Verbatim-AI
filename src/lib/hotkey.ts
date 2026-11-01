@@ -19,6 +19,7 @@ import { isHotkeyPaused } from "./preferences";
 import { syncNativeCaptureArm } from "./nativeAudio";
 import { isOnboardingComplete } from "./store/useOnboarding";
 import { prewarmEngines } from "./ai";
+import { recordDiagnostic } from "./diagnostics";
 
 const LS_HOTKEY = "sw.hotkey.spec";
 const BOOT_PREWARM_DELAY_MS = 3000;
@@ -164,7 +165,12 @@ export function hotkeyErrorTitle(error: unknown): string {
 }
 
 export async function applyHotkey(spec: string): Promise<void> {
-  await invoke("set_hotkey", { spec });
+  try {
+    await invoke("set_hotkey", { spec });
+  } catch (error) {
+    recordDiagnostic("hotkey_registration_failed");
+    throw error;
+  }
   const warning = reservedHotkeyWarning(spec);
   if (warning) toast.warning("Possible macOS shortcut conflict", { description: warning });
 }

@@ -71,6 +71,11 @@ import {
   type RecordingDeliveryResult,
 } from "../lib/recordingDelivery";
 import type { Mode } from "../types/mode";
+import {
+  beginDiagnosticTrace,
+  recordDiagnostic,
+  type DiagnosticTrace,
+} from "../lib/diagnostics";
 
 function noPasteTargetMessage(): string {
   const behavior = getOutputBehavior();
@@ -125,6 +130,7 @@ export default function Overlay() {
   const reviewOpenRef = useRef(false);
   const availableTextRef = useRef("");
   const resultRef = useRef<RecordingDeliveryResult | null>(null);
+  const diagnosticTraceRef = useRef<DiagnosticTrace | null>(null);
 
   const controllerRef = useRef<AudioController | null>(null);
   const stoppingRef = useRef(false);
@@ -170,6 +176,8 @@ export default function Overlay() {
   };
 
   const reset = async () => {
+    diagnosticTraceRef.current?.finish();
+    diagnosticTraceRef.current = null;
     setState("idle");
     setView("pill");
     setStreamingCleaned("");
@@ -216,6 +224,7 @@ export default function Overlay() {
    * the panel feels broken.
    */
   const enterReview = async () => {
+    diagnosticTraceRef.current?.setStage("review");
     cancelPendingHide();
     reviewOpenRef.current = true;
     setView("review");
@@ -356,6 +365,7 @@ export default function Overlay() {
       return;
     }
     cancelPendingHide();
+    diagnosticTraceRef.current = beginDiagnosticTrace();
     setError(null);
     setErrorPresentation(null);
     setStreamingCleaned("");
@@ -423,6 +433,7 @@ export default function Overlay() {
         deviceId: getMicDeviceId() || undefined,
         onFrame,
         onError: (e) => {
+          recordDiagnostic("microphone_capture_failed");
           setError(e.message);
           setErrorPresentation(null);
           setState("error");
@@ -443,6 +454,9 @@ export default function Overlay() {
       // else: a stop/cancel consumed this start while the mic was
       // being acquired — that path owns the controller now.
     } catch (e) {
+      recordDiagnostic("microphone_start_failed");
+      diagnosticTraceRef.current?.finish();
+      diagnosticTraceRef.current = null;
       const msg = e instanceof Error ? e.message : String(e);
       setError(msg);
       setErrorPresentation(null);
@@ -500,6 +514,7 @@ export default function Overlay() {
     durationMs = 0,
     partial = false,
     capture = false,
+    diagnosticPhase: "transcription" | "polish" | "delivery" = "transcription",
   ) => {
     const presentation: RecordingErrorPresentation =
       failure instanceof RecordingDeliveryError
@@ -516,6 +531,18 @@ export default function Overlay() {
               message: "Capture failed. Check your microphone before recording again.",
             }
           : classifyRecordingError(failure);
+    if (capture) recordDiagnostic("microphone_capture_failed");
+    else if (!(failure instanceof RecordingDeliveryError)) {
+      if (diagnosticPhase === "delivery") recordDiagnostic("delivery_failed");
+      else if (diagnosticPhase === "polish") recordDiagnostic("polish_failed");
+      else {
+        recordDiagnostic(
+          presentation.kind === "missing-local-model"
+            ? "speech_model_missing"
+            : "transcription_failed",
+        );
+      }
+    }
     void invoke("relay_event", {
       name: "recording:error",
       payload: presentation,
@@ -555,6 +582,8 @@ export default function Overlay() {
     setErrorPresentation(presentation);
     setError(presentation.message);
     setState("error");
+    diagnosticTraceRef.current?.finish();
+    diagnosticTraceRef.current = null;
     if (presentation.persistent) cancelPendingHide();
     else void hideAfter(3500);
   };
@@ -623,8 +652,10 @@ export default function Overlay() {
       }
     }
 
+    let diagnosticPhase: "transcription" | "polish" | "delivery" = "transcription";
     try {
       setState("processing");
+      diagnosticTraceRef.current?.setStage("transcription");
       const transcript = await provider.transcribe({
         audio: audioForTranscribe,
         pcm: pcmForTranscribe,
@@ -659,6 +690,7 @@ export default function Overlay() {
 
       setRawText(processedText);
       availableTextRef.current = processedText;
+      diagnosticPhase = "polish";
 
       // Branch on output style BEFORE polishing so review users see
       // tokens stream into the editor in real time.
@@ -677,10 +709,12 @@ export default function Overlay() {
         setStreamingCleaned(cleaned);
       } else {
         setState("polishing");
+        diagnosticTraceRef.current?.setStage("polish");
         let streamed: string;
         try {
           streamed = await runCleanup(prepared, activeMode, vocabularyTerms, language);
         } catch (e) {
+          recordDiagnostic("polish_failed");
           // Keep the dictation: show it unpolished in the editor with the reason.
           cleaned = applyVocabReplacements(prepared, vocabularyAll);
           setStreamingCleaned(cleaned);
@@ -711,13 +745,6 @@ export default function Overlay() {
         if (cleaned !== streamed) setStreamingCleaned(cleaned);
       }
 
-      // Transcript content is only ever logged in dev builds — release
-      // builds must not emit dictation content to any console/log
-      // (docs/improvement-plan/05-security-privacy.md, F1).
-      if (import.meta.env.DEV) {
-        console.info("[Verbatim AI] raw:", transcript.text);
-        console.info("[Verbatim AI] cleaned:", cleaned);
-      }
       availableTextRef.current = cleaned;
       const payload: RecordingDeliveryResult = {
         emitId: deliveryId(),
@@ -732,6 +759,8 @@ export default function Overlay() {
       };
 
       if (activeMode.outputStyle === "paste") {
+        diagnosticPhase = "delivery";
+        diagnosticTraceRef.current?.setStage("delivery");
         const outcome = await pasteCleanedText(cleaned);
         if (outcome === "pasted") {
           await publishResult({ ...payload, outputAction: "pasted" });
@@ -774,6 +803,8 @@ export default function Overlay() {
         console.info(noPasteTargetMessage());
         finishDelivery("Copied");
       } else {
+        diagnosticPhase = "delivery";
+        diagnosticTraceRef.current?.setStage("review");
         await publishResult(payload);
         // Review panel stays open until user acts.
         setState("idle");
@@ -783,6 +814,8 @@ export default function Overlay() {
         e,
         durationMs,
         !resultRef.current && availableTextRef.current === partialTextRef.current,
+        false,
+        diagnosticPhase,
       );
     }
   };
@@ -861,6 +894,9 @@ export default function Overlay() {
     reviewBusyRef.current = true;
     completedReviewActionRef.current = null;
     setReviewBusy(true);
+    if (label === "Paste" || label === "Copy") {
+      diagnosticTraceRef.current?.setStage("delivery");
+    }
     try {
       await action();
     } catch (error) {
@@ -871,6 +907,7 @@ export default function Overlay() {
           : `${label} didn't finish. Your text is still here; try again or use Copy.`,
       );
     } finally {
+      if (reviewOpenRef.current) diagnosticTraceRef.current?.setStage("review");
       reviewBusyRef.current = false;
       setReviewBusy(false);
     }
@@ -952,6 +989,7 @@ export default function Overlay() {
     const vocabAll = loadVocabulary();
     const vocab = vocabAll.map((t) => t.term);
     setState("polishing");
+    diagnosticTraceRef.current?.setStage("polish");
     try {
       const streamed = await runCleanup(
         rawText,
@@ -966,12 +1004,15 @@ export default function Overlay() {
       availableTextRef.current = cleaned;
       if (cleaned !== streamed) setStreamingCleaned(cleaned);
       setState("idle");
+      diagnosticTraceRef.current?.setStage("review");
     } catch (e) {
+      recordDiagnostic("polish_failed");
       setStreamingCleaned(availableTextRef.current || rawText);
       setReviewNotice(
         `Regenerate didn't finish (${e instanceof Error ? e.message : String(e)}). Your previous text is still here; use Copy or try again.`,
       );
       setState("idle");
+      diagnosticTraceRef.current?.setStage("review");
     }
   };
 

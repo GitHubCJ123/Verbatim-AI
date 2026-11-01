@@ -10,6 +10,7 @@ const h = vi.hoisted(() => ({
   cancelRecording: vi.fn(() => Promise.resolve()),
   resolveModeAtPress: vi.fn(),
   toastError: vi.fn(),
+  recordDiagnostic: vi.fn(),
 }));
 
 // hotkey.ts pulls in the recording pipeline and tauri IPC at import
@@ -32,6 +33,7 @@ vi.mock("./preferences", () => ({ isHotkeyPaused: vi.fn(() => false) }));
 vi.mock("./store/useOnboarding", () => ({ isOnboardingComplete: vi.fn(() => true) }));
 vi.mock("./nativeAudio", () => ({ syncNativeCaptureArm: vi.fn(() => Promise.resolve()) }));
 vi.mock("./ai", () => ({ prewarmEngines: vi.fn() }));
+vi.mock("./diagnostics", () => ({ recordDiagnostic: h.recordDiagnostic }));
 vi.mock("sonner", () => ({ toast: { error: h.toastError, warning: vi.fn() } }));
 
 import { invoke } from "@tauri-apps/api/core";
@@ -149,6 +151,7 @@ describe("installHotkeyListeners — serialized recording state machine", () => 
     h.cancelRecording.mockReset();
     h.resolveModeAtPress.mockReset();
     h.toastError.mockReset();
+    h.recordDiagnostic.mockReset();
     vi.mocked(invoke).mockReset().mockResolvedValue(undefined);
     h.startRecording.mockResolvedValue(undefined);
     h.stopRecording.mockResolvedValue(undefined);
@@ -171,6 +174,7 @@ describe("installHotkeyListeners — serialized recording state machine", () => 
       expect.objectContaining({ description: expect.stringContaining("pick another one") }),
     );
     expect(store.get("sw.hotkey.spec")).toBe("F9");
+    expect(h.recordDiagnostic).toHaveBeenCalledExactlyOnceWith("hotkey_registration_failed");
     off();
   });
 

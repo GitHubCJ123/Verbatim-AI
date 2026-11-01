@@ -48,6 +48,12 @@ it is not itself a successful paste. Finish Review before recording again.
 Blank/noise transcripts and accidental short taps are intentionally suppressed.
 
 On macOS, a missing typing permission opens guided recovery with **Open Settings**.
+The main app also checks automatically at launch, on window focus, and every five
+seconds while the app shell is mounted. A persistent setup banner appears before
+a paste attempt when permission is missing, and disappears once access is granted.
+Checks are silent and never grant permission or open System Settings automatically.
+Review uses logical pixel dimensions so its guidance remains readable on Retina
+displays, with theme-matched backgrounds and text.
 The permission is under **Privacy & Security → Device Control and Data Access**
 (**Accessibility** on older macOS versions). The button requests permission and
 opens the native permission pane; Verbatim AI never enables access for you.

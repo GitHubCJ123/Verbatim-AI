@@ -27,9 +27,7 @@ const { invoke, emit, listeners, ackConfig } = vi.hoisted(() => {
         if (ackConfig.mode === "listening") {
           listeners.get("recording:listening")?.({ payload: { sessionId } });
         } else if (ackConfig.mode === "error") {
-          listeners
-            .get("recording:error")
-            ?.({ payload: { sessionId, message: "mic denied" } });
+          listeners.get("recording:error")?.({ payload: { sessionId, message: "mic denied" } });
         }
       }
       return Promise.resolve();
@@ -48,7 +46,7 @@ vi.mock("@tauri-apps/api/event", () => ({
 }));
 
 const fakeOverlay = vi.hoisted(() => ({
-  setSize: vi.fn(() => Promise.resolve()),
+  setSize: vi.fn((_size: { width: number; height: number }) => Promise.resolve()),
   setPosition: vi.fn(() => Promise.resolve()),
   show: vi.fn(() => Promise.resolve()),
   outerSize: vi.fn(() => Promise.resolve({ width: 420, height: 96 })),
@@ -67,15 +65,34 @@ vi.mock("@tauri-apps/api/window", () => ({
 }));
 vi.mock("@tauri-apps/api/dpi", () => ({
   PhysicalPosition: class {
-    constructor(public x: number, public y: number) {}
+    constructor(
+      public x: number,
+      public y: number,
+    ) {}
   },
   PhysicalSize: class {
-    constructor(public width: number, public height: number) {}
+    constructor(
+      public width: number,
+      public height: number,
+    ) {}
+  },
+  LogicalSize: class {
+    readonly type = "Logical";
+    constructor(
+      public width: number,
+      public height: number,
+    ) {}
   },
 }));
 vi.mock("./preferences", () => ({ loadOverlayPosition: () => "bottom-center" }));
 
-import { cancelRecording, startRecording, stopRecording } from "./recording-bridge";
+import {
+  cancelRecording,
+  startRecording,
+  stopRecording,
+  resizeOverlayToReview,
+  resizeOverlayToPill,
+} from "./recording-bridge";
 
 describe("recording bridge cancel-shortcut lifecycle", () => {
   beforeEach(() => {
@@ -97,11 +114,25 @@ describe("recording bridge cancel-shortcut lifecycle", () => {
     );
   });
 
+  it("sizes Review in logical pixels so Retina displays do not halve the UI", async () => {
+    await resizeOverlayToReview();
+    expect(fakeOverlay.setSize).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "Logical", width: 520, height: 480 }),
+    );
+  });
+
+  it("sizes the recording pill in logical pixels on every resize path", async () => {
+    await resizeOverlayToPill();
+    await startRecording();
+    expect(fakeOverlay.setSize.mock.calls).toHaveLength(2);
+    for (const [size] of fakeOverlay.setSize.mock.calls) {
+      expect(size).toMatchObject({ type: "Logical", width: 420, height: 96 });
+    }
+  });
+
   it("rejects and disarms when the overlay reports the mic failed to open", async () => {
     ackConfig.mode = "error";
-    await expect(startRecording("Default", null, Date.now())).rejects.toThrow(
-      /mic denied/,
-    );
+    await expect(startRecording("Default", null, Date.now())).rejects.toThrow(/mic denied/);
     // Failure must disarm Esc-to-cancel so it never lingers.
     expect(invoke).toHaveBeenCalledWith("disable_cancel_shortcut");
   });

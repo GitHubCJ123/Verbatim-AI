@@ -3,7 +3,7 @@
  *
  * Two presentation modes:
  *  - "pill"   — small 420×96 floating pill (recording / processing / etc.)
- *  - "review" — 520×360 panel with editable text + Paste / Copy / Discard / Regenerate
+ *  - "review" — 520×480 logical-pixel panel with editable text + recovery actions
  *
  * The main window picks which via the active Mode's `outputStyle`.
  */

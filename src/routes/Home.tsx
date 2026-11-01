@@ -14,8 +14,9 @@ import { listTranscriptions, type Transcription } from "../lib/history";
 import { listen } from "@tauri-apps/api/event";
 import { useNavigate } from "react-router-dom";
 import { osName } from "../lib/os";
-import { hotkeyDisplayParts, loadHotkeyConfig } from "../lib/hotkey";
+import { hotkeyDisplayParts, loadHotkeyConfig, usesHoldToTalk } from "../lib/hotkey";
 import { getPrivacyStatus, type PrivacyStatus } from "../lib/privacyStatus";
+import { CLOUD_FEATURES_ENABLED } from "../lib/features";
 
 export default function Home() {
   const [active, setActive] = useState(false);
@@ -26,6 +27,8 @@ export default function Home() {
   const user = useAuth((s) => s.user);
   const navigate = useNavigate();
   const [items, setItems] = useState<Transcription[]>([]);
+  const hotkey = loadHotkeyConfig();
+  const holdToTalk = usesHoldToTalk(hotkey);
 
   useEffect(() => {
     const refresh = () => {
@@ -75,7 +78,9 @@ export default function Home() {
           </div>
           <div className="flex flex-1 flex-col gap-1">
             <div className="flex items-center gap-2">
-              <h2 className="text-lg font-semibold">Hold to dictate</h2>
+              <h2 className="text-lg font-semibold">
+                {holdToTalk ? "Hold to dictate" : "Tap to dictate"}
+              </h2>
               <button
                 type="button"
                 onClick={() => {
@@ -99,14 +104,14 @@ export default function Home() {
               </button>
             </div>
             <p className="text-sm text-text-secondary">
-              Press and hold{" "}
-              {hotkeyDisplayParts(loadHotkeyConfig().spec).map((k, i) => (
+              {holdToTalk ? "Press and hold" : "Press"}{" "}
+              {hotkeyDisplayParts(hotkey.spec).map((k, i) => (
                 <span key={`${k}-${i}`}>
                   {i > 0 && " "}
                   <Kbd>{k}</Kbd>
                 </span>
               ))}{" "}
-              from any app. Release to transcribe.
+              from any app. {holdToTalk ? "Release to transcribe." : "Press again to transcribe."}
             </p>
           </div>
           <div className="flex shrink-0 gap-2">
@@ -125,7 +130,7 @@ export default function Home() {
         </CardContent>
       </Card>
 
-      <PrivacyCard />
+      <PrivacyCard status={getPrivacyStatus(defaultMode)} />
 
       <div className="mt-6 grid grid-cols-3 gap-4">
         {[
@@ -187,21 +192,21 @@ export default function Home() {
   );
 }
 
-/** Where dictation content goes, at a glance (plan doc 05, F3).
- *  Reflects the global provider settings; Modes can still override. */
-function PrivacyCard() {
+function PrivacyCard({ status }: { status: PrivacyStatus }) {
   const navigate = useNavigate();
-  // Re-read on mount — provider settings live in localStorage and are
-  // edited on the Settings page, so mount-time is fresh enough here.
-  const [status] = useState<PrivacyStatus>(() => getPrivacyStatus());
 
   const copy = {
     local: {
       Icon: ShieldCheck,
       tone: "text-success bg-success/15",
-      headline: "Your voice never leaves this machine",
-      detail:
-        "Transcription and polish both run on-device. App updates and optional account sync still use the network.",
+      headline: "Dictation is processed on this machine",
+      detail: `${
+        status.cleanup === "off"
+          ? "Transcription runs on-device; AI polish is off."
+          : "Transcription and AI polish both run on-device."
+      } Model downloads and app updates use the network.${
+        CLOUD_FEATURES_ENABLED ? " Optional account sync also uses the network." : ""
+      }`,
     },
     cloud: {
       Icon: Cloud,
@@ -234,6 +239,9 @@ function PrivacyCard() {
           <div className="min-w-0">
             <div className="text-sm font-medium">{copy.headline}</div>
             <div className="text-xs text-text-muted">{copy.detail}</div>
+            <div className="text-xs text-text-muted">
+              For your default writing style. App mappings can select a different recipe.
+            </div>
           </div>
         </div>
         <Button

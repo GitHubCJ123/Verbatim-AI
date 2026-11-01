@@ -5,7 +5,8 @@
  * Computed from the resolved provider pair — per-Mode overrides win
  * over global settings, mirroring getActiveProvider's resolution in
  * src/lib/ai/index.ts. Scope is dictation content only (audio + raw
- * text); app updates and optional account sync still use the network.
+ * text); model downloads and app updates still use the network.
+ * Account sync is unavailable while cloud features are disabled.
  */
 import type { Mode } from "../types/mode";
 import {

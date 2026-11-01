@@ -17,12 +17,14 @@
 //! grant on **every update** (the code identity changes), so the user has
 //! to re-grant and relaunch each time. The permanent fix is Developer ID
 //! signing + notarization, which keeps the grant stable across updates.
+//! Newer macOS versions label this permission "Device Control and Data Access".
 
 /// Sentinel error the frontend matches to show a friendly Accessibility
 /// permission prompt instead of a raw error string.
 pub const NEEDS_ACCESSIBILITY: &str =
     "needs-accessibility: grant Accessibility to Verbatim AI in System Settings → \
-     Privacy & Security → Accessibility, then relaunch the app and try again.";
+     Privacy & Security → Device Control and Data Access (Accessibility on older macOS), \
+     then relaunch the app and try again.";
 
 /// Returns `true` when the process is trusted for Accessibility (allowed
 /// to post synthetic input). Always `true` on non-macOS, which have no
@@ -61,11 +63,16 @@ pub fn request_accessibility_permission() -> bool {
 pub fn open_accessibility_settings() -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
-        std::process::Command::new("open")
+        // Use the permission identifier, not the localized/version-specific pane label.
+        let status = std::process::Command::new("open")
             .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
-            .spawn()
-            .map(|_| ())
-            .map_err(|e| e.to_string())
+            .status()
+            .map_err(|e| format!("Couldn't open Accessibility settings: {e}"))?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err(format!("Couldn't open Accessibility settings: {status}"))
+        }
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -135,6 +142,7 @@ mod tests {
         assert!(super::NEEDS_ACCESSIBILITY.starts_with("needs-accessibility"));
         assert!(super::NEEDS_ACCESSIBILITY.contains("relaunch"));
         assert!(super::NEEDS_ACCESSIBILITY.contains("Accessibility"));
+        assert!(super::NEEDS_ACCESSIBILITY.contains("Device Control and Data Access"));
     }
 
     #[cfg(not(target_os = "macos"))]

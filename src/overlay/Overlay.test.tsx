@@ -253,6 +253,16 @@ describe("Overlay delivery at real recording and Review callbacks", () => {
     expect(container.textContent).toContain("Copy");
   });
 
+  it("explains how to add the app when Accessibility is missing", async () => {
+    h.paste.mockResolvedValue("permission-required");
+    await dictate();
+    expect(container.textContent).toContain("click + if it's not listed");
+    expect(container.textContent).toContain("add Verbatim AI.app (usually in Applications)");
+    expect(h.invoke).toHaveBeenCalledWith("request_accessibility_permission");
+    await click("Open Settings");
+    expect(h.invoke).toHaveBeenCalledWith("open_accessibility_settings");
+  });
+
   it.each(["transcribe", "stop"])(
     "recovers an available live preview when %s rejects",
     async (stage) => {

@@ -47,6 +47,15 @@ previews are explicitly marked incomplete. Review waits for an explicit action;
 it is not itself a successful paste. Finish Review before recording again.
 Blank/noise transcripts and accidental short taps are intentionally suppressed.
 
+On macOS, a missing typing permission opens guided recovery with **Open Settings**.
+The permission is under **Privacy & Security → Device Control and Data Access**
+(**Accessibility** on older macOS versions). The button requests permission and
+opens the native permission pane; Verbatim AI never enables access for you.
+Enable Verbatim AI there, or use **+** to add the app if missing. If access is
+already enabled after an update, fully quit and reopen the app. **Copy unsaved
+Review text before quitting.** If Settings cannot open, manual instructions stay
+visible. The same guidance is available from History and onboarding.
+
 History is saved only when both global history and the active Mode permit it,
 using the existing storage and retention rules. With history off, recovery text
 exists only in the open Review window: copy it before closing or quitting.

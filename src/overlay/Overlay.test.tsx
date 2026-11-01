@@ -256,10 +256,45 @@ describe("Overlay delivery at real recording and Review callbacks", () => {
   it("explains how to add the app when Accessibility is missing", async () => {
     h.paste.mockResolvedValue("permission-required");
     await dictate();
-    expect(container.textContent).toContain("click + if it's not listed");
+    expect(container.textContent).toContain("Allow typing into other apps");
+    expect(container.textContent).toContain("Device Control and Data Access");
+    expect(container.textContent).toContain("Accessibility on older macOS versions");
+    expect(container.textContent).toContain("If it isn't listed, click +");
     expect(container.textContent).toContain("add Verbatim AI.app (usually in Applications)");
-    expect(h.invoke).toHaveBeenCalledWith("request_accessibility_permission");
+    expect(h.invoke).not.toHaveBeenCalledWith("request_accessibility_permission");
     await click("Open Settings");
+    expect(h.invoke).toHaveBeenCalledWith("request_accessibility_permission");
+    expect(h.invoke).toHaveBeenCalledWith("open_accessibility_settings");
+  });
+
+  it("keeps text and provides manual instructions if Settings cannot open", async () => {
+    h.paste.mockResolvedValue("permission-required");
+    await dictate();
+    const original = h.invoke.getMockImplementation();
+    h.invoke.mockImplementation((command, args) => {
+      if (command === "open_accessibility_settings")
+        return Promise.reject(new Error("Synthetic failure"));
+      return original?.(command, args);
+    });
+    await click("Open Settings");
+    expect(container.textContent).toContain("Couldn't open permission settings");
+    expect(container.textContent).toContain("Device Control and Data Access");
+    expect(editor().value).toBe("Synthetic dictation.");
+    expect(h.hide).not.toHaveBeenCalled();
+    await click("Copy");
+    expect(h.copy).toHaveBeenCalledWith("Synthetic dictation.");
+  });
+
+  it("guides a manual Review paste permission failure without prompting automatically", async () => {
+    h.mode.outputStyle = "review";
+    await dictate();
+    h.paste.mockResolvedValue("permission-required");
+    await click("Paste");
+    expect(container.textContent).toContain("Allow typing into other apps");
+    expect(h.invoke).not.toHaveBeenCalledWith("request_accessibility_permission");
+    expect(editor().value).toBe("Synthetic dictation.");
+    await click("Open Settings");
+    expect(h.invoke).toHaveBeenCalledWith("request_accessibility_permission");
     expect(h.invoke).toHaveBeenCalledWith("open_accessibility_settings");
   });
 
@@ -393,7 +428,9 @@ describe("Overlay delivery at real recording and Review callbacks", () => {
       generation,
     });
     const diagnosticCalls = h.invoke.mock.calls.filter(([command]) =>
-      ["begin_diagnostic_trace", "set_diagnostic_stage", "record_diagnostic_event"].includes(command),
+      ["begin_diagnostic_trace", "set_diagnostic_stage", "record_diagnostic_event"].includes(
+        command,
+      ),
     );
     expect(JSON.stringify(diagnosticCalls)).not.toContain("Synthetic private");
     expect(diagnosticCalls).toContainEqual([

@@ -41,6 +41,8 @@ import { resizeOverlayToPill, resizeOverlayToReview } from "../lib/recording-bri
 import { pasteCleanedText, copyCleanedText, clearCapturedTarget } from "../lib/output";
 import { osKind } from "../lib/os";
 import { pasteMethodUsesClipboard } from "../lib/pasteMethod";
+import { PASTE_PERMISSION_GUIDANCE, PASTE_PERMISSION_SETTINGS_PATH } from "../lib/permissions";
+import { openPastePermissionSettings } from "../components/settings/accessibility";
 import {
   isAiImproveDisabled,
   getMicDeviceId,
@@ -71,11 +73,7 @@ import {
   type RecordingDeliveryResult,
 } from "../lib/recordingDelivery";
 import type { Mode } from "../types/mode";
-import {
-  beginDiagnosticTrace,
-  recordDiagnostic,
-  type DiagnosticTrace,
-} from "../lib/diagnostics";
+import { beginDiagnosticTrace, recordDiagnostic, type DiagnosticTrace } from "../lib/diagnostics";
 
 function noPasteTargetMessage(): string {
   const behavior = getOutputBehavior();
@@ -98,10 +96,7 @@ function shouldShowReviewWhenPasteMisses(): boolean {
 // Notices shown in the review editor when it appears as a paste-recovery
 // surface rather than a deliberate review Mode. They explain *why* it
 // popped up so it never feels broken/mysterious.
-const REVIEW_PERMISSION_NOTICE =
-  "Couldn't paste — Verbatim AI needs Accessibility. In System Settings → Privacy & " +
-  "Security → Accessibility, click + if it's not listed and add Verbatim AI.app " +
-  "(usually in Applications). Turn it on and relaunch. Use Copy for now.";
+const REVIEW_PERMISSION_NOTICE = PASTE_PERMISSION_GUIDANCE;
 const REVIEW_ACTIVATION_NOTICE =
   "Couldn't switch back to your app to paste. Use Copy, then paste it where you want.";
 const REVIEW_NO_TARGET_NOTICE = "No target to paste into. Use Copy, then paste it where you want.";
@@ -135,12 +130,6 @@ export default function Overlay() {
 
   const controllerRef = useRef<AudioController | null>(null);
   const stoppingRef = useRef(false);
-  // Show the macOS Accessibility system prompt at most once per overlay
-  // lifetime. The prompt both asks for the grant AND registers the app in
-  // the Accessibility list — without it a clean TCC state leaves nothing to
-  // enable, since our preflight uses the *silent* AXIsProcessTrusted check
-  // and enigo's own prompt is disabled.
-  const axPromptedRef = useRef(false);
   const autoStopRef = useRef<AutoStopDetector | null>(null);
   const partialSegmenterRef = useRef<PartialSegmenter | null>(null);
   const partialCoordinatorRef = useRef<TranscriptionCoordinator<
@@ -201,20 +190,15 @@ export default function Overlay() {
     await hideAfter(0);
   };
 
-  /** Open the macOS Accessibility settings pane (best-effort). */
-  const openAccessibilitySettings = () => {
-    void invoke("open_accessibility_settings").catch(() => {});
-  };
-
-  /**
-   * Show the macOS Accessibility prompt once. This registers the app in the
-   * Accessibility list (so there's an entry to enable) and asks for the
-   * grant. Deduped so repeated dictations while unpermitted don't re-prompt.
-   */
-  const promptAccessibilityOnce = () => {
-    if (axPromptedRef.current) return;
-    axPromptedRef.current = true;
-    void invoke("request_accessibility_permission").catch(() => {});
+  const openAccessibilitySettings = async () => {
+    try {
+      await openPastePermissionSettings();
+    } catch {
+      setReviewNotice(
+        `Couldn't open permission settings. Open ${PASTE_PERMISSION_SETTINGS_PATH} manually. ` +
+          "Enable Verbatim AI. Copy your text before fully quitting and reopening the app.",
+      );
+    }
   };
 
   /**
@@ -784,7 +768,6 @@ export default function Overlay() {
                   : REVIEW_NO_TARGET_NOTICE,
           );
           setReviewNeedsAccessibility(permissionIssue);
-          if (permissionIssue) promptAccessibilityOnce();
           console.info(noPasteTargetMessage());
           await enterReview();
           await publishResult({
@@ -922,7 +905,6 @@ export default function Overlay() {
         // notice and expose an Open Settings action instead of resolving.
         setReviewNotice(REVIEW_PERMISSION_NOTICE);
         setReviewNeedsAccessibility(true);
-        promptAccessibilityOnce();
         return;
       }
       if (outcome === "activation-failed") {
@@ -1095,6 +1077,7 @@ export default function Overlay() {
           isPolishing={state === "polishing" || state === "processing"}
           isBusy={reviewBusy}
           notice={reviewNotice}
+          noticeTitle={reviewNeedsAccessibility ? "Allow typing into other apps" : undefined}
           onOpenSettings={reviewNeedsAccessibility ? openAccessibilitySettings : undefined}
           onPaste={handleReviewPaste}
           onCopy={handleReviewCopy}

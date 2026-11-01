@@ -13,6 +13,7 @@ interface ReviewPanelProps {
   isBusy?: boolean;
   /** Optional banner explaining why the panel appeared (e.g. paste failed). */
   notice?: string | null;
+  noticeTitle?: string;
   /** When provided, renders an "Open Settings" action in the notice banner. */
   onOpenSettings?: () => void;
   onPaste: (text: string) => void;
@@ -28,6 +29,7 @@ export function ReviewPanel({
   isPolishing,
   isBusy = false,
   notice,
+  noticeTitle,
   onOpenSettings,
   onPaste,
   onCopy,
@@ -90,10 +92,13 @@ export function ReviewPanel({
       {notice && (
         <div
           role="status"
-          className="flex items-start gap-2 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-[11px] leading-snug text-text-secondary"
+          className="flex flex-wrap items-start gap-2 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-[11px] leading-snug text-text-secondary"
         >
           <AlertTriangle className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-warning" />
-          <span className="flex-1">{notice}</span>
+          <div className="min-w-0 flex-1">
+            {noticeTitle && <p className="mb-1 font-medium text-text-primary">{noticeTitle}</p>}
+            <p>{notice}</p>
+          </div>
           {onOpenSettings && (
             <button
               type="button"

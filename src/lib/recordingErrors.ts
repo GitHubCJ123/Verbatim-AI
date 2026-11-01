@@ -1,3 +1,5 @@
+import { PASTE_PERMISSION_SETTINGS_PATH } from "./permissions";
+
 export type RecordingErrorKind =
   | "missing-local-model"
   | "accessibility"
@@ -34,11 +36,8 @@ const MISSING_LOCAL_MODEL_PRESENTATION: RecordingErrorPresentation = {
  */
 export const ACCESSIBILITY_PERMISSION_PRESENTATION: RecordingErrorPresentation = {
   kind: "accessibility",
-  title: "Accessibility permission needed",
-  message:
-    "Enable Verbatim AI in System Settings -> Privacy & Security -> " +
-    "Accessibility, then relaunch the app. Updates can reset this until " +
-    "the app is code-signed.",
+  title: "Allow typing into other apps",
+  message: `Enable Verbatim AI in ${PASTE_PERMISSION_SETTINGS_PATH}, then fully quit and reopen the app.`,
   persistent: true,
 };
 

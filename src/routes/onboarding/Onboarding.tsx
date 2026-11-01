@@ -65,6 +65,8 @@ import { useAuth } from "../../lib/store/useAuth";
 import { isLocalMode } from "../../lib/appMode";
 import { CLOUD_FEATURES_ENABLED } from "../../lib/features";
 import { toast } from "../../components/ui/Toast";
+import { notifyAccessibilityRequired } from "../../components/settings/accessibility";
+import { PASTE_PERMISSION_SETTINGS_PATH } from "../../lib/permissions";
 import { useVocabulary } from "../../lib/store/useModes";
 import {
   loadOverlayPosition,
@@ -423,15 +425,27 @@ function PermissionCheck() {
         </CardContent>
       </Card>
       {IS_MAC && (
-        <p className="mt-3 text-xs text-text-secondary">
-          Accessibility for typing into other apps:{" "}
-          {accessibility === null
-            ? "not verified"
-            : accessibility
-              ? "allowed"
-              : "needed — enable Verbatim AI in System Settings → Privacy & Security → Accessibility"}
-          .
-        </p>
+        <div className="mt-3 text-xs text-text-secondary">
+          <p>
+            Accessibility for typing into other apps:{" "}
+            {accessibility === null
+              ? "not verified"
+              : accessibility
+                ? "allowed"
+                : `needed — enable Verbatim AI in ${PASTE_PERMISSION_SETTINGS_PATH}`}
+            .
+          </p>
+          {accessibility === false && (
+            <Button
+              variant="secondary"
+              size="sm"
+              className="mt-2"
+              onClick={notifyAccessibilityRequired}
+            >
+              Set up typing permission
+            </Button>
+          )}
+        </div>
       )}
       {modifierShortcut && (
         <p className="mt-2 text-xs text-text-secondary">

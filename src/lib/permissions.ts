@@ -11,6 +11,17 @@
 export const NEEDS_ACCESSIBILITY = "needs-accessibility";
 export const TARGET_ACTIVATION_FAILED = "target-activation-failed";
 
+export const PASTE_PERMISSION_SETTINGS_PATH =
+  "System Settings → Privacy & Security → Device Control and Data Access " +
+  "(called Accessibility on older macOS versions)";
+
+export const PASTE_PERMISSION_GUIDANCE =
+  "macOS needs your permission before Verbatim AI can type into other apps. Open " +
+  PASTE_PERMISSION_SETTINGS_PATH +
+  ". Enable Verbatim AI. If it isn't listed, click + and add Verbatim AI.app " +
+  "(usually in Applications). If it's already enabled after an update, fully quit " +
+  "and reopen Verbatim AI. Copy any unsaved text before quitting.";
+
 /** True when an error is the macOS Accessibility-permission sentinel. */
 export function isAccessibilityError(err: unknown): boolean {
   const message = err instanceof Error ? err.message : String(err);

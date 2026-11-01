@@ -99,8 +99,9 @@ function shouldShowReviewWhenPasteMisses(): boolean {
 // surface rather than a deliberate review Mode. They explain *why* it
 // popped up so it never feels broken/mysterious.
 const REVIEW_PERMISSION_NOTICE =
-  "Couldn't paste — Verbatim AI needs Accessibility. Grant it in System Settings → " +
-  "Privacy & Security → Accessibility, then relaunch. Use Copy to grab your text meanwhile.";
+  "Couldn't paste — Verbatim AI needs Accessibility. In System Settings → Privacy & " +
+  "Security → Accessibility, click + if it's not listed and add Verbatim AI.app " +
+  "(usually in Applications). Turn it on and relaunch. Use Copy for now.";
 const REVIEW_ACTIVATION_NOTICE =
   "Couldn't switch back to your app to paste. Use Copy, then paste it where you want.";
 const REVIEW_NO_TARGET_NOTICE = "No target to paste into. Use Copy, then paste it where you want.";

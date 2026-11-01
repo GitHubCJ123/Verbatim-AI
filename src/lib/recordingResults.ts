@@ -3,6 +3,7 @@ import { toast } from "../components/ui/Toast";
 import { addTranscription, type OutputAction } from "./history";
 import { isHistoryDisabled } from "./preferences";
 import type { DeliveryAck, RecordingDeliveryResult, ReviewedDelivery } from "./recordingDelivery";
+import { recordDiagnostic } from "./diagnostics";
 
 export async function installRecordingResultListeners(): Promise<() => void> {
   let pending: RecordingDeliveryResult | null = null;
@@ -48,6 +49,7 @@ export async function installRecordingResultListeners(): Promise<() => void> {
       });
       return "saved";
     } catch {
+      recordDiagnostic("history_write_failed");
       toast.error("History wasn't saved", {
         description: "Your text remains in Review. Copy it before closing, or try again.",
       });

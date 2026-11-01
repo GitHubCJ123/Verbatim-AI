@@ -54,6 +54,25 @@ There is no hidden transcript journal or persisted audio recovery. Storage or
 cross-window acknowledgement failures keep Review open and warn when a paste
 already happened, rather than silently claiming the result was saved.
 
+### Local diagnostics
+
+Settings → Privacy offers a separate, **off-by-default** local diagnostics
+journal. If enabled, it records timestamps, the app version, fixed failure
+categories and the current processing stage even when transcript history is
+off. After an unclean exit, the last stage may appear in the report. An unclean
+exit may be a crash, forced quit or interrupted shutdown, and its stage is
+best-effort. The report includes the operating system and CPU architecture, but
+no transcript, audio, prompts, clipboard contents, app/window names or raw error
+messages. The journal is stored unencrypted on this device; nothing is uploaded
+automatically.
+
+The journal keeps at most 100 events. Events expire after seven days and are
+removed on access, hourly while the app runs, or on the next launch if the app
+was closed. You can inspect and explicitly copy the report, or delete it and
+turn diagnostics off in Settings. Deletion or storage failures are reported.
+This journal does **not** recover dictation and does not change global or Mode
+transcript-history settings.
+
 ## Install
 
 Grab the latest installer from [Releases](../../releases) and run either:

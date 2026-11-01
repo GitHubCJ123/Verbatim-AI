@@ -1,6 +1,7 @@
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import type { OutputAction } from "./history";
+import { recordDiagnostic } from "./diagnostics";
 
 export interface RecordingDeliveryResult {
   emitId: string;
@@ -48,6 +49,7 @@ export async function relayDelivery(
   const off = await listen<DeliveryAck>("recording:delivery-ack", (event) => {
     if (event.payload.emitId === payload.emitId) resolveAck(event.payload);
   }).catch(() => {
+    recordDiagnostic("delivery_confirmation_failed");
     throw new RecordingDeliveryError(
       "Couldn't listen for delivery confirmation. Your text is still here; Copy it before closing.",
     );
@@ -69,6 +71,7 @@ export async function relayDelivery(
       );
     }
   } catch (error) {
+    recordDiagnostic("delivery_confirmation_failed");
     if (error instanceof RecordingDeliveryError) throw error;
     throw new RecordingDeliveryError(
       "The main window couldn't confirm this result. Your text is still here; Copy it before closing.",

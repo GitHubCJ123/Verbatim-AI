@@ -5,8 +5,10 @@ const h = vi.hoisted(() => ({
   listener: null as null | ((event: { payload: DeliveryAck }) => void),
   invoke: vi.fn(),
   unlisten: vi.fn(),
+  recordDiagnostic: vi.fn(),
 }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: h.invoke }));
+vi.mock("./diagnostics", () => ({ recordDiagnostic: h.recordDiagnostic }));
 vi.mock("@tauri-apps/api/event", () => ({
   listen: async (_name: string, callback: (event: { payload: DeliveryAck }) => void) => {
     h.listener = callback;
@@ -32,6 +34,7 @@ describe("recording delivery acknowledgement", () => {
     vi.useFakeTimers();
     h.listener = null;
     h.unlisten.mockClear();
+    h.recordDiagnostic.mockReset();
     h.invoke.mockReset();
   });
   afterEach(() => vi.useRealTimers());
@@ -45,6 +48,7 @@ describe("recording delivery acknowledgement", () => {
       });
       await expect(relayDelivery("recording:result", result)).resolves.toBeUndefined();
       expect(h.unlisten).toHaveBeenCalledTimes(1);
+      expect(h.recordDiagnostic).not.toHaveBeenCalled();
     },
   );
 
@@ -56,6 +60,7 @@ describe("recording delivery acknowledgement", () => {
       "History couldn't be saved",
     );
     expect(h.unlisten).toHaveBeenCalledTimes(1);
+    expect(h.recordDiagnostic).toHaveBeenCalledExactlyOnceWith("delivery_confirmation_failed");
   });
 
   it("times out a dropped event instead of clearing unconfirmed text", async () => {
@@ -66,6 +71,7 @@ describe("recording delivery acknowledgement", () => {
     await vi.advanceTimersByTimeAsync(4000);
     await assertion;
     expect(h.unlisten).toHaveBeenCalledTimes(1);
+    expect(h.recordDiagnostic).toHaveBeenCalledExactlyOnceWith("delivery_confirmation_failed");
   });
 
   it("classifies IPC rejection as delivery failure and cleans up", async () => {

@@ -18,6 +18,7 @@ import {
 import { HotkeyRecorder } from "../components/settings/HotkeyRecorder";
 import { SpeechModelPicker } from "../components/settings/SpeechModelPicker";
 import { CleanupModelPicker } from "../components/settings/CleanupModelPicker";
+import { DiagnosticsSettings } from "../components/settings/DiagnosticsSettings";
 import {
   hotkeyDisplayParts,
   isForcedHoldSpec,
@@ -772,13 +773,7 @@ export default function Settings() {
               >
                 <HistoryRetentionSelect />
               </SettingRow>
-              <SettingRow
-                id="telemetry"
-                title="Anonymous telemetry"
-                description="Help improve Verbatim AI. Never your transcript content."
-              >
-                <Switch />
-              </SettingRow>
+              <DiagnosticsSettings />
             </CardContent>
           </Card>
         </TabsContent>
@@ -787,19 +782,6 @@ export default function Settings() {
           <Card>
             <CardContent className="p-5 pt-5">
               <RecordingEngineRow />
-              <SettingRow id="log-level" title="Log level" description="Verbosity of log files.">
-                <Select defaultValue="info">
-                  <SelectTrigger className="w-32">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="error">Error</SelectItem>
-                    <SelectItem value="warn">Warn</SelectItem>
-                    <SelectItem value="info">Info</SelectItem>
-                    <SelectItem value="debug">Debug</SelectItem>
-                  </SelectContent>
-                </Select>
-              </SettingRow>
               <SettingRow
                 id="rerun-onboarding"
                 title="Re-run onboarding"

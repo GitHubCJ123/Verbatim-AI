@@ -4,7 +4,9 @@ import { listen } from "@tauri-apps/api/event";
 import App from "./App";
 import "./styles/globals.css";
 import { installTheme } from "./lib/theme";
+import { installUiDiagnostics } from "./lib/diagnostics";
 
+installUiDiagnostics("main");
 installTheme();
 import { installHotkeyListeners } from "./lib/hotkey";
 import { toast } from "./components/ui/Toast";

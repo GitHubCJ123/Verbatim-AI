@@ -9,6 +9,10 @@ use commands::{
     active_window::get_active_window,
     cancel_hotkey::{disable_cancel_shortcut, enable_cancel_shortcut, CancelHotkeyState},
     devtools::{open_devtools, open_main_devtools},
+    diagnostics::{
+        begin_diagnostic_trace, delete_diagnostics, get_diagnostics, get_diagnostics_policy,
+        record_diagnostic_event, set_diagnostic_stage, set_diagnostics_enabled,
+    },
     fn_hotkey::{
         get_modifier_hotkey_status, open_input_monitoring_settings, open_keyboard_settings,
         request_input_monitoring, start_hotkey_capture, stop_hotkey_capture, FnHotkeyState,
@@ -163,6 +167,13 @@ pub fn run() {
             request_accessibility_permission,
             open_accessibility_settings,
             update_install_environment,
+            get_diagnostics,
+            get_diagnostics_policy,
+            set_diagnostics_enabled,
+            delete_diagnostics,
+            record_diagnostic_event,
+            begin_diagnostic_trace,
+            set_diagnostic_stage,
             ensure_engine_ready,
             unload_engine,
             transcribe_local_server_pcm,
@@ -183,6 +194,7 @@ pub fn run() {
             stop_native_capture,
         ])
         .setup(|app| {
+            commands::diagnostics::init(app.handle());
             install_default(&app.handle());
             tray::install(&app.handle())?;
             commands::whisper_server::init(&app.handle());
@@ -237,6 +249,7 @@ pub fn run() {
                 commands::parakeet_server::shutdown(app_handle);
                 commands::llama_cpp::shutdown(app_handle);
                 commands::streaming_sidecar::shutdown(app_handle);
+                commands::diagnostics::shutdown(app_handle);
             }
         });
 }

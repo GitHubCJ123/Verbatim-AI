@@ -72,7 +72,7 @@ export function ReviewPanel({
       initial={{ opacity: 0, y: 12, scale: 0.98 }}
       animate={{ opacity: 1, y: 0, scale: 1 }}
       transition={{ type: "spring", stiffness: 240, damping: 26 }}
-      className="pointer-events-auto flex h-full w-full flex-col gap-3 overflow-y-auto rounded-lg2 border border-white/10 bg-[rgba(20,20,28,0.85)] p-4 shadow-md backdrop-blur-2xl"
+      className="pointer-events-auto flex h-full w-full flex-col gap-3 overflow-y-auto rounded-lg2 border border-border-subtle bg-bg-base p-4 text-text-primary shadow-md"
     >
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2 text-xs">
@@ -92,18 +92,22 @@ export function ReviewPanel({
       {notice && (
         <div
           role="status"
-          className="flex flex-wrap items-start gap-2 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-[11px] leading-snug text-text-secondary"
+          className="flex flex-col gap-2 rounded-md border border-warning/30 bg-warning/10 px-3 py-3 text-xs leading-relaxed text-text-secondary"
         >
-          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-warning" />
           <div className="min-w-0 flex-1">
-            {noticeTitle && <p className="mb-1 font-medium text-text-primary">{noticeTitle}</p>}
+            {noticeTitle && (
+              <p className="mb-1 flex items-center gap-2 font-medium text-text-primary">
+                <AlertTriangle className="h-4 w-4 flex-shrink-0 text-warning" />
+                {noticeTitle}
+              </p>
+            )}
             <p>{notice}</p>
           </div>
           {onOpenSettings && (
             <button
               type="button"
               onClick={onOpenSettings}
-              className="flex-shrink-0 rounded border border-border-subtle bg-bg-elevated px-2 py-0.5 text-[10px] font-medium text-text-primary transition-colors hover:border-border-strong"
+              className="self-start rounded border border-border-strong bg-bg-elevated px-3 py-1.5 text-xs font-medium text-text-primary transition-colors hover:border-accent-solid"
             >
               Open Settings
             </button>

@@ -16,7 +16,7 @@ import {
   monitorFromPoint,
   type Monitor,
 } from "@tauri-apps/api/window";
-import { PhysicalPosition, PhysicalSize } from "@tauri-apps/api/dpi";
+import { PhysicalPosition, LogicalSize } from "@tauri-apps/api/dpi";
 import { loadOverlayPosition } from "./preferences";
 
 const OVERLAY_LABEL = "overlay";
@@ -42,7 +42,7 @@ async function disarmCancelShortcut(): Promise<void> {
 }
 
 const OVERLAY_PILL_SIZE = { width: 420, height: 96 };
-const OVERLAY_REVIEW_SIZE = { width: 520, height: 360 };
+const OVERLAY_REVIEW_SIZE = { width: 520, height: 480 };
 
 // Tauri cross-window events are fire-and-forget: if the overlay's listener
 // isn't live yet (or its hidden webview is throttled by macOS App Nap) when
@@ -152,7 +152,7 @@ export async function startRecording(
     }
     try {
       const targetMonitor = await getCursorMonitor();
-      await overlay.setSize(new PhysicalSize(OVERLAY_PILL_SIZE.width, OVERLAY_PILL_SIZE.height));
+      await overlay.setSize(new LogicalSize(OVERLAY_PILL_SIZE.width, OVERLAY_PILL_SIZE.height));
       await positionOverlay(overlay, targetMonitor);
     } catch {
       /* best-effort */
@@ -195,9 +195,7 @@ export async function resizeOverlayToReview() {
   const overlay = await getOverlay();
   if (!overlay) return;
   const monitor = await currentMonitor();
-  await overlay.setSize(
-    new PhysicalSize(OVERLAY_REVIEW_SIZE.width, OVERLAY_REVIEW_SIZE.height),
-  );
+  await overlay.setSize(new LogicalSize(OVERLAY_REVIEW_SIZE.width, OVERLAY_REVIEW_SIZE.height));
   await positionOverlay(overlay, monitor);
 }
 
@@ -205,9 +203,7 @@ export async function resizeOverlayToPill() {
   const overlay = await getOverlay();
   if (!overlay) return;
   const monitor = await currentMonitor();
-  await overlay.setSize(
-    new PhysicalSize(OVERLAY_PILL_SIZE.width, OVERLAY_PILL_SIZE.height),
-  );
+  await overlay.setSize(new LogicalSize(OVERLAY_PILL_SIZE.width, OVERLAY_PILL_SIZE.height));
   await positionOverlay(overlay, monitor);
 }
 

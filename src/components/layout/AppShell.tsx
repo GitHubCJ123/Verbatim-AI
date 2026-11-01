@@ -4,6 +4,7 @@ import { Sidebar } from "./Sidebar";
 import { TopBar } from "./TopBar";
 import { TooltipProvider } from "../ui/Tooltip";
 import { CommandPalette } from "../CommandPalette";
+import { PastePermissionBanner } from "./PastePermissionBanner";
 
 export function AppShell() {
   const { pathname } = useLocation();
@@ -15,6 +16,7 @@ export function AppShell() {
         <Sidebar />
         <div className="flex flex-1 flex-col">
           <TopBar />
+          <PastePermissionBanner />
           <main className="relative flex-1 overflow-y-auto">
             <motion.div
               key={pathname}

@@ -1068,7 +1068,7 @@ export default function Overlay() {
   }, [view]);
 
   return (
-    <div className="flex h-screen w-screen items-center justify-center bg-transparent p-3">
+    <div className={`flex h-screen w-screen items-center justify-center bg-transparent ${view === "review" ? "p-3" : "px-3 py-2"}`}>
       {view === "review" ? (
         <ReviewPanel
           modeName={modeName}

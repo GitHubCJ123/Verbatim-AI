@@ -82,7 +82,7 @@ export function RecordingPill({
           exit={{ opacity: 0, y: 12, scale: 0.96 }}
           transition={{ type: "spring", stiffness: 240, damping: 26 }}
           className={cn(
-            "pointer-events-auto relative flex h-[72px] w-[360px] items-center gap-3 overflow-hidden rounded-pill border px-4",
+            "pointer-events-auto relative flex h-12 w-full max-w-64 items-center gap-2 overflow-hidden rounded-pill border px-2.5",
             "shadow-md backdrop-blur-2xl",
             state === "error"
               ? "border-danger/40 bg-danger/10"
@@ -90,7 +90,7 @@ export function RecordingPill({
           )}
         >
           {/* Accent ring on left */}
-          <div className="relative flex h-10 w-10 shrink-0 items-center justify-center">
+          <div className="relative flex size-8 shrink-0 items-center justify-center">
             {state === "recording" && (
               <motion.span
                 className="absolute inset-0 rounded-pill border border-accent-solid/40"
@@ -100,7 +100,7 @@ export function RecordingPill({
             )}
             <div
               className={cn(
-                "flex h-10 w-10 items-center justify-center rounded-pill",
+                "flex size-8 items-center justify-center rounded-pill",
                 state === "error"
                   ? "bg-danger/20 text-danger"
                   : state === "success"
@@ -123,7 +123,7 @@ export function RecordingPill({
           </div>
 
           {/* Center: waveform or shimmer */}
-          <div className="relative flex h-10 flex-1 items-center">
+          <div className="relative flex h-8 min-w-0 flex-1 items-center">
             {state === "recording" &&
               (partialText ? (
                 <div className="w-full truncate text-xs italic text-text-muted" title={partialText}>
@@ -179,7 +179,7 @@ export function RecordingPill({
                   aria-label={privacy === "cloud" ? "Cloud processing" : "Partly cloud processing"}
                 />
               ) : null}
-              <span className="max-w-[96px] truncate">{modeName}</span>
+              <span className="max-w-[72px] truncate" title={modeName}>{modeName}</span>
             </div>
           </div>
         </motion.div>

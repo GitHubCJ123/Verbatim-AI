@@ -41,7 +41,8 @@ async function disarmCancelShortcut(): Promise<void> {
   }
 }
 
-const OVERLAY_PILL_SIZE = { width: 420, height: 96 };
+// Match the initial Tauri window size, including the space around the CSS pill.
+const OVERLAY_PILL_SIZE = { width: 280, height: 68 };
 const OVERLAY_REVIEW_SIZE = { width: 520, height: 480 };
 
 // Tauri cross-window events are fire-and-forget: if the overlay's listener

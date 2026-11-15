@@ -70,7 +70,8 @@ export function RecordingPill({
   // Stable getter for the waveform that survives controller swaps.
   const controllerRef = useRef<AudioController | null>(null);
   controllerRef.current = controller ?? null;
-  const getBars = () => controllerRef.current?.getBars(32) ?? new Array(32).fill(0);
+  const waveformBars = 20;
+  const getBars = () => controllerRef.current?.getBars(waveformBars) ?? [];
 
   return (
     <AnimatePresence>
@@ -82,7 +83,7 @@ export function RecordingPill({
           exit={{ opacity: 0, y: 12, scale: 0.96 }}
           transition={{ type: "spring", stiffness: 240, damping: 26 }}
           className={cn(
-            "pointer-events-auto relative flex h-12 w-full max-w-64 items-center gap-2 overflow-hidden rounded-pill border px-2.5",
+            "pointer-events-auto relative flex h-12 w-full max-w-[184px] items-center gap-2 overflow-hidden rounded-pill border px-2.5",
             "shadow-md backdrop-blur-2xl",
             state === "error"
               ? "border-danger/40 bg-danger/10"
@@ -130,7 +131,7 @@ export function RecordingPill({
                   {partialText}
                 </div>
               ) : (
-                <Waveform getBars={getBars} className="h-full w-full" />
+                <Waveform bars={waveformBars} getBars={getBars} className="h-full w-full" />
               ))}
             {(state === "processing" || state === "polishing") && (
               <div className="relative h-1 w-full overflow-hidden rounded-pill bg-bg-elevated">
@@ -179,7 +180,7 @@ export function RecordingPill({
                   aria-label={privacy === "cloud" ? "Cloud processing" : "Partly cloud processing"}
                 />
               ) : null}
-              <span className="max-w-[72px] truncate" title={modeName}>{modeName}</span>
+              <span className="max-w-[48px] truncate" title={modeName}>{modeName}</span>
             </div>
           </div>
         </motion.div>

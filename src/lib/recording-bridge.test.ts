@@ -126,7 +126,7 @@ describe("recording bridge cancel-shortcut lifecycle", () => {
     await startRecording();
     expect(fakeOverlay.setSize.mock.calls).toHaveLength(2);
     for (const [size] of fakeOverlay.setSize.mock.calls) {
-      expect(size).toMatchObject({ type: "Logical", width: 280, height: 68 });
+      expect(size).toMatchObject({ type: "Logical", width: 208, height: 68 });
     }
   });
 

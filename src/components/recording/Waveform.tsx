@@ -46,8 +46,9 @@ export function Waveform({ getBars, bars = 32, className, active = true }: Wavef
       const incoming = getBarsRef.current();
       const smoothed = valuesRef.current;
       for (let i = 0; i < bars; i++) {
-        // Boost so normal speech reads as a strong response.
-        const target = Math.min(1, (incoming[i] ?? 0) * 1.6);
+        // Give quiet speech more vertical room while ignoring tiny fluctuations.
+        const level = Math.max(0, (incoming[i] ?? 0) - 0.006);
+        const target = Math.min(1, Math.sqrt(level * 1.6));
         // Exponential smoothing per bar (plan §10 — Motion).
         smoothed[i] = smoothed[i] * 0.4 + target * 0.6;
       }
@@ -71,7 +72,7 @@ export function Waveform({ getBars, bars = 32, className, active = true }: Wavef
         const t = (i + 0.5) / bars;
         const window = 0.55 + 0.45 * Math.sin(t * Math.PI);
         const amp = smoothed[i] * window;
-        const barH = Math.max(minBar, amp * maxBar);
+        const barH = minBar + amp * (maxBar - minBar);
 
         const x = i * (barW + gap) + gap / 2;
         const y = centerY - barH / 2;

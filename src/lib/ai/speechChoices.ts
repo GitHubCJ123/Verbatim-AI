@@ -5,8 +5,10 @@
  * test-other utterances (23.7 min, CC BY 4.0) on an Apple M1 Pro, 5 threads.
  * Parakeet and Canary run on the CPU (that is how the app runs them);
  * Whisper uses the Metal GPU. The 0-10 scores are computed from those
- * figures so they can't drift from them. Engines are an implementation
- * detail; users pick a model.
+ * figures so they can't drift from them. Models added after that run have no
+ * figures until the user benchmarks them on their own computer (see
+ * `speechBenchmark.ts`). Engines are an implementation detail; users pick a
+ * model.
  */
 import type { AiProviderKind, WhisperModelId } from "./localWhisper";
 import type { ParakeetVariant } from "./parakeet";
@@ -15,6 +17,7 @@ export type SpeechChoiceId =
   | "parakeet-v3"
   | "parakeet-v2"
   | "canary-180m-flash"
+  | "nemotron-en"
   | "whisper-turbo"
   | "whisper-large-v3"
   | "whisper-large-v3-q5_0"
@@ -45,17 +48,17 @@ interface SpeechChoiceSpec {
   engine: Extract<AiProviderKind, "local-whisper" | "local-parakeet">;
   tier?: WhisperModelId;
   variant?: ParakeetVariant;
-  /** Word error rate on the benchmark, percent. */
-  werPct: number;
-  /** Seconds of compute per 10 s of speech on the benchmark machine. */
-  secondsPer10s: number;
+  /** Word error rate on the reference benchmark, percent; absent if not run there. */
+  werPct?: number;
+  /** Seconds of compute per 10 s of speech on the reference machine. */
+  secondsPer10s?: number;
 }
 
 export interface SpeechChoice extends SpeechChoiceSpec {
-  /** 0-10, from `werPct`. */
-  quality: number;
-  /** 0-10, from `secondsPer10s`. */
-  speed: number;
+  /** 0-10, from `werPct`; null when not measured. */
+  quality: number | null;
+  /** 0-10, from `secondsPer10s`; null when not measured. */
+  speed: number | null;
 }
 
 const SPECS: SpeechChoiceSpec[] = [
@@ -93,6 +96,16 @@ const SPECS: SpeechChoiceSpec[] = [
     variant: "canary-180m-flash",
     werPct: 3.65,
     secondsPer10s: 1.1,
+  },
+  {
+    id: "nemotron-en",
+    name: "Nemotron Speech (English)",
+    tagline:
+      "NVIDIA's 2026 streaming English model. Not in the reference benchmark yet; test it on this computer.",
+    languages: "English only",
+    approxSizeMB: 464,
+    engine: "local-parakeet",
+    variant: "nemotron-en",
   },
   {
     id: "whisper-turbo",
@@ -164,8 +177,8 @@ const SPECS: SpeechChoiceSpec[] = [
 
 export const SPEECH_CHOICES: SpeechChoice[] = SPECS.map((s) => ({
   ...s,
-  quality: accuracyScore(s.werPct),
-  speed: speedScore(s.secondsPer10s),
+  quality: s.werPct === undefined ? null : accuracyScore(s.werPct),
+  speed: s.secondsPer10s === undefined ? null : speedScore(s.secondsPer10s),
 }));
 
 export const DEFAULT_SPEECH_CHOICE: SpeechChoiceId = "parakeet-v3";

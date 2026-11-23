@@ -35,6 +35,8 @@ const HEALTH_POLL: Duration = Duration::from_millis(150);
 /// the model resident for a long idle stretch instead of 5 minutes.
 const DEFAULT_IDLE: Duration = Duration::from_secs(30 * 60);
 const IDLE_CHECK: Duration = Duration::from_secs(30);
+/// How long `unload` waits for a killed server to exit.
+const EXIT_WAIT: Duration = Duration::from_secs(5);
 
 struct ServerHandle {
     child: Child,
@@ -218,6 +220,8 @@ impl WhisperServerState {
         let mut guard = self.inner.lock().await;
         if let Some(mut h) = guard.take() {
             let _ = h.child.start_kill();
+            // Wait so the model file is released before a caller deletes it.
+            let _ = tokio::time::timeout(EXIT_WAIT, h.child.wait()).await;
         }
     }
 

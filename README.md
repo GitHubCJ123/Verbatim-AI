@@ -136,7 +136,10 @@ The first `cargo` build takes several minutes; subsequent builds are incremental
 
 No Supabase configuration or account is required for the current local-only app.
 Choose and download a speech model in Quick Start or Settings before dictating;
-AI polish can be turned off or use a downloaded local model.
+AI polish can be turned off or use a downloaded local model. **Settings → AI
+model → Test every model on this computer** downloads every speech model
+(including NVIDIA Nemotron), scores accuracy and speed on your hardware with 33
+bundled LibriSpeech recordings, then lets you uninstall the ones you don't want.
 
 The following configuration and backend commands are for maintainers of the
 disabled cloud integration, not local setup steps. Do not re-enable cloud

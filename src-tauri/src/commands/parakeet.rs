@@ -4,10 +4,12 @@
 //! plus a Parakeet ONNX model bundle into the app data dir. Transcription runs
 //! on the resident `sherpa-onnx-offline-websocket-server` (see
 //! `parakeet_server.rs`) and falls back to the one-shot `sherpa-onnx-offline`
-//! CLI. CPU-only — no CUDA/CoreML providers in this build.
+//! CLI. CPU-only — no CUDA/CoreML providers in this build. Streaming models
+//! (NVIDIA Nemotron) use the same runtime's online server and `sherpa-onnx`
+//! CLI instead.
 //!
 //! Layout under `app_data_dir`:
-//!   parakeet-bin/sherpa-onnx-offline(.exe)   (+ websocket server, DLLs/dylibs)
+//!   parakeet-bin/sherpa-onnx-offline(.exe)   (+ websocket servers, DLLs/dylibs)
 //!   parakeet-models/v3/encoder.int8.onnx
 //!   parakeet-models/v3/decoder.int8.onnx
 //!   parakeet-models/v3/joiner.int8.onnx
@@ -16,7 +18,9 @@
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use super::parakeet_server::{recognize, request_timeout, ParakeetServerLaunch, ParakeetServerState};
+use super::parakeet_server::{
+    recognize, request_timeout, ParakeetServerLaunch, ParakeetServerState, ServerProtocol,
+};
 use super::runtime_assets::{
     clear_dir_contents, download_with_progress, encode_wav_pcm16, extract_archive,
     inference_threads, locate_executable, make_executables, pcm_from_le_bytes, strip_quarantine,
@@ -33,12 +37,14 @@ use tokio::process::Command;
 const SHERPA_ONNX_VERSION: &str = "v1.13.2";
 
 /// Speech models run by the sherpa-onnx sidecar. Despite the name this also
-/// covers NVIDIA Canary, which uses the same runtime and server.
+/// covers NVIDIA Canary and Nemotron, which use the same runtime.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ParakeetVariant {
     V2English,
     V3Multilingual,
     Canary180mFlash,
+    /// Nemotron Speech Streaming EN 0.6B, 1120 ms chunks (its most accurate).
+    NemotronEnglish,
 }
 
 /// Canary has no language detection; these are the languages it accepts.
@@ -50,6 +56,7 @@ impl ParakeetVariant {
             "v2" => Some(Self::V2English),
             "v3" => Some(Self::V3Multilingual),
             "canary-180m-flash" => Some(Self::Canary180mFlash),
+            "nemotron-en" => Some(Self::NemotronEnglish),
             _ => None,
         }
     }
@@ -58,6 +65,14 @@ impl ParakeetVariant {
             Self::V2English => "v2",
             Self::V3Multilingual => "v3",
             Self::Canary180mFlash => "canary-180m-flash",
+            Self::NemotronEnglish => "nemotron-en",
+        }
+    }
+    /// Streaming (cache-aware) models need the runtime's online binaries.
+    fn protocol(&self) -> ServerProtocol {
+        match self {
+            Self::NemotronEnglish => ServerProtocol::Online,
+            _ => ServerProtocol::Offline,
         }
     }
     fn model_archive_url(&self) -> &'static str {
@@ -71,6 +86,9 @@ impl ParakeetVariant {
             Self::Canary180mFlash => {
                 "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-canary-180m-flash-en-es-de-fr-int8.tar.bz2"
             }
+            Self::NemotronEnglish => {
+                "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemotron-speech-streaming-en-0.6b-1120ms-int8-2026-04-25.tar.bz2"
+            }
         }
     }
     /// Digests published by GitHub for the release assets above.
@@ -79,6 +97,7 @@ impl ParakeetVariant {
             Self::V2English => "157c157bc51155e03e37d2466522a3a737dd9c72bb25f36eb18912964161e1ad",
             Self::V3Multilingual => "5793d0fd397c5778d2cf2126994d58e9d56b1be7c04d13c7a15bb1b4eafb16bf",
             Self::Canary180mFlash => "7a38ed8b13f014ad632b09ff8d22e0c6f1359dd046af9235d281dfae841b9ab9",
+            Self::NemotronEnglish => "840c48deed02d4a5975716e7b12dc0a8b1ba620776c6366f7e5677d8907edd73",
         }
     }
     fn model_files(&self) -> &'static [&'static str] {
@@ -102,6 +121,12 @@ impl ParakeetVariant {
                     "--canary-use-pnc=true".to_string(),
                 ]
             }
+            Self::NemotronEnglish => vec![
+                format!("--encoder={}", path("encoder.int8.onnx")),
+                format!("--decoder={}", path("decoder.int8.onnx")),
+                format!("--joiner={}", path("joiner.int8.onnx")),
+                format!("--tokens={}", path("tokens.txt")),
+            ],
             _ => vec![
                 format!("--encoder={}", path("encoder.int8.onnx")),
                 format!("--decoder={}", path("decoder.int8.onnx")),
@@ -118,8 +143,25 @@ impl ParakeetVariant {
             _ => self.tag().to_string(),
         }
     }
-    fn all() -> [Self; 3] {
-        [Self::V2English, Self::V3Multilingual, Self::Canary180mFlash]
+    fn cli_name(&self) -> &'static str {
+        match self.protocol() {
+            ServerProtocol::Offline => offline_cli_name(),
+            ServerProtocol::Online => online_cli_name(),
+        }
+    }
+    fn server_name(&self) -> &'static str {
+        match self.protocol() {
+            ServerProtocol::Offline => offline_server_name(),
+            ServerProtocol::Online => online_server_name(),
+        }
+    }
+    fn all() -> [Self; 4] {
+        [
+            Self::V2English,
+            Self::V3Multilingual,
+            Self::Canary180mFlash,
+            Self::NemotronEnglish,
+        ]
     }
 }
 
@@ -154,7 +196,7 @@ fn models_dir(app: &AppHandle, variant: ParakeetVariant) -> Result<PathBuf, Stri
     Ok(dir)
 }
 
-fn cli_name() -> &'static str {
+fn offline_cli_name() -> &'static str {
     #[cfg(windows)]
     {
         "sherpa-onnx-offline.exe"
@@ -165,9 +207,21 @@ fn cli_name() -> &'static str {
     }
 }
 
+fn online_cli_name() -> &'static str {
+    #[cfg(windows)]
+    {
+        "sherpa-onnx.exe"
+    }
+    #[cfg(not(windows))]
+    {
+        "sherpa-onnx"
+    }
+}
+
+/// The offline CLI doubles as the "runtime is installed" marker.
 fn locate_cli(app: &AppHandle) -> Result<Option<PathBuf>, String> {
     let dir = bin_dir(app)?;
-    Ok(locate_executable(&dir, cli_name()))
+    Ok(locate_executable(&dir, offline_cli_name()))
 }
 
 
@@ -263,7 +317,7 @@ pub async fn install_parakeet_runtime(
     let tmp_for_extract = tmp_archive.clone();
     tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
         extract_archive(&tmp_for_extract, &extract_dir, ArchiveKind::TarBz2)?;
-        make_executables(&extract_dir, &["sherpa-onnx-offline", server_name()]);
+        make_executables(&extract_dir, &runtime_executables());
         strip_quarantine(&extract_dir);
         Ok(())
     })
@@ -275,7 +329,7 @@ pub async fn install_parakeet_runtime(
     if locate_cli(&app)?.is_none() {
         return Err(format!(
             "Extraction finished but {} was not found in the archive",
-            cli_name()
+            offline_cli_name()
         ));
     }
     let _ = app.emit("parakeet:runtime:complete", SHERPA_ONNX_VERSION);
@@ -451,7 +505,8 @@ pub async fn delete_parakeet_model(
     for f in v.model_files() {
         let p = dir.join(f);
         if p.exists() {
-            let _ = std::fs::remove_file(&p);
+            std::fs::remove_file(&p)
+                .map_err(|e| format!("Couldn't delete {}: {e}", p.display()))?;
         }
     }
     Ok(())
@@ -463,7 +518,7 @@ pub async fn delete_parakeet_model(
 
 #[derive(Deserialize)]
 pub struct TranscribeArgs {
-    /// Variant tag: "v2", "v3" or "canary-180m-flash".
+    /// Variant tag: "v2", "v3", "canary-180m-flash" or "nemotron-en".
     pub variant: String,
     /// 16 kHz mono Float32 PCM samples.
     pub pcm: Vec<f32>,
@@ -478,7 +533,7 @@ pub struct TranscribeOutput {
     duration_ms: u64,
 }
 
-fn server_name() -> &'static str {
+fn offline_server_name() -> &'static str {
     #[cfg(windows)]
     {
         "sherpa-onnx-offline-websocket-server.exe"
@@ -487,6 +542,27 @@ fn server_name() -> &'static str {
     {
         "sherpa-onnx-offline-websocket-server"
     }
+}
+
+fn online_server_name() -> &'static str {
+    #[cfg(windows)]
+    {
+        "sherpa-onnx-online-websocket-server.exe"
+    }
+    #[cfg(not(windows))]
+    {
+        "sherpa-onnx-online-websocket-server"
+    }
+}
+
+/// Every binary the sidecar launches (tar extraction drops the exec bit).
+fn runtime_executables() -> [&'static str; 4] {
+    [
+        offline_cli_name(),
+        online_cli_name(),
+        offline_server_name(),
+        online_server_name(),
+    ]
 }
 
 /// Model dir for `v` with every required file present, or a user-facing error.
@@ -513,12 +589,12 @@ fn server_launch(
     language: Option<&str>,
 ) -> Result<Option<ParakeetServerLaunch>, String> {
     let bin_root = bin_dir(app)?;
-    let Some(server_bin) = locate_executable(&bin_root, server_name()) else {
+    let Some(server_bin) = locate_executable(&bin_root, v.server_name()) else {
         return Ok(None);
     };
     // Runtimes installed before the server was used only had the CLI marked
     // executable (tar extraction doesn't keep modes); fix that up lazily.
-    make_executables(&bin_root, &[server_name()]);
+    make_executables(&bin_root, &runtime_executables());
     let log_dir = app_data(app)?.join("parakeet-tmp");
     std::fs::create_dir_all(&log_dir).map_err(|e| e.to_string())?;
     Ok(Some(ParakeetServerLaunch {
@@ -527,6 +603,7 @@ fn server_launch(
         log_file: log_dir.join("parakeet-server.log"),
         key: v.server_key(language),
         threads: inference_threads(),
+        protocol: v.protocol(),
     }))
 }
 
@@ -598,7 +675,7 @@ async fn transcribe_impl(
 ) -> Result<TranscribeOutput, String> {
     let v = parse_variant(variant)?;
     let dir = installed_model_dir(app, v)?;
-    let cli = locate_cli(app)?.ok_or_else(|| {
+    let cli = locate_executable(&bin_dir(app)?, v.cli_name()).ok_or_else(|| {
         "sherpa-onnx runtime is not installed. Click 'Install runtime' in Settings → AI model."
             .to_string()
     })?;
@@ -614,7 +691,7 @@ async fn transcribe_impl(
     // dictation. The next request respawns the server.
     match server_launch(app, v, &dir, language_hint(&language_detected)) {
         Ok(Some(launch)) => match state.ensure_launch(launch).await {
-            Ok(port) => match recognize(port, &pcm, request_timeout(pcm.len())).await {
+            Ok(port) => match recognize(port, &pcm, request_timeout(pcm.len()), v.protocol()).await {
                 Ok(text) => {
                     return Ok(TranscribeOutput {
                         text,
@@ -676,16 +753,29 @@ async fn run_cli(
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(format!(
-            "sherpa-onnx-offline failed (exit {:?}): {}",
+            "{} failed (exit {:?}): {}",
+            v.cli_name(),
             output.status.code(),
             stderr.trim()
         ));
     }
 
-    // sherpa-onnx prints diagnostics + a JSON object on stdout.
-    // Locate the last `{...}` block and parse it.
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    Ok(extract_transcript(&stdout).unwrap_or_else(|| stdout.trim().to_string()))
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    cli_transcript(v, &stdout, &stderr)
+}
+
+/// The transcript from a CLI run. sherpa-onnx prints diagnostics plus a JSON
+/// object per input file: the offline CLI on stdout, the online (streaming)
+/// CLI on stderr, where its stdout holds only "recognizer created" log lines.
+fn cli_transcript(v: ParakeetVariant, stdout: &str, stderr: &str) -> Result<String, String> {
+    match v.protocol() {
+        ServerProtocol::Offline => {
+            Ok(extract_transcript(stdout).unwrap_or_else(|| stdout.trim().to_string()))
+        }
+        ServerProtocol::Online => extract_transcript(stderr)
+            .ok_or_else(|| format!("{} printed no transcript", v.cli_name())),
+    }
 }
 
 /// Parse sherpa-onnx stdout to extract the transcript `text` field.
@@ -756,6 +846,35 @@ mod tests {
         let args = ParakeetVariant::V3Multilingual.model_args(Path::new("/m"), Some("de"));
         assert!(args.contains(&"--model-type=nemo_transducer".to_string()));
         assert_eq!(ParakeetVariant::V3Multilingual.server_key(Some("de")), "v3");
+        assert_eq!(ParakeetVariant::V3Multilingual.protocol(), ServerProtocol::Offline);
+    }
+
+    #[test]
+    fn nemotron_uses_the_streaming_binaries_and_autodetected_model_type() {
+        let v = ParakeetVariant::NemotronEnglish;
+        assert_eq!(v.protocol(), ServerProtocol::Online);
+        assert_eq!(v.cli_name(), online_cli_name());
+        assert_eq!(v.server_name(), online_server_name());
+        let args = v.model_args(Path::new("/m"), Some("de"));
+        assert!(args.iter().any(|a| a.starts_with("--joiner=")));
+        // The online recognizer rejects the offline-only model type flag.
+        assert!(!args.iter().any(|a| a.starts_with("--model-type")));
+        assert_eq!(v.server_key(Some("de")), "nemotron-en");
+        assert_eq!(v.model_files().len(), 4);
+    }
+
+    #[test]
+    fn the_streaming_cli_transcript_is_read_from_stderr() {
+        // Shape of `sherpa-onnx` (online CLI) output for one file.
+        let stdout = "Start to create recognizer\nRecognizer created in 0.87634 s\n";
+        let stderr = "OnlineRecognizerConfig(feat_config=FeatureExtractorConfig(sampling_rate=16000))\n\
+            ./test_wavs/0.wav\n\
+            Number of threads: 1, Elapsed seconds: 1.1, Audio duration (s): 6.6\n \
+            After early nightfall\n\
+            { \"text\": \" After early nightfall\", \"tokens\": [\" A\"], \"is_eof\": false}\n\n";
+        let v = ParakeetVariant::NemotronEnglish;
+        assert_eq!(cli_transcript(v, stdout, stderr).unwrap(), "After early nightfall");
+        assert!(cli_transcript(v, stdout, "").is_err(), "log lines are never a transcript");
     }
 
     /// Real Canary round trip through the resident server. Run with
@@ -779,6 +898,7 @@ mod tests {
             log_file: std::env::temp_dir().join("verbatim-canary-test.log"),
             key: v.server_key(Some("en")),
             threads: inference_threads(),
+            protocol: v.protocol(),
         };
         let port = state.ensure_launch(launch).await.unwrap();
         let bytes = std::fs::read(wav).unwrap();
@@ -787,7 +907,9 @@ mod tests {
             .map(|c| i16::from_le_bytes([c[0], c[1]]) as f32 / 32768.0)
             .collect();
         let started = Instant::now();
-        let text = recognize(port, &pcm, request_timeout(pcm.len())).await.unwrap();
+        let text = recognize(port, &pcm, request_timeout(pcm.len()), v.protocol())
+            .await
+            .unwrap();
         eprintln!("canary warm request {} ms -> {text}", started.elapsed().as_millis());
         assert!(!text.is_empty());
         state.unload().await;

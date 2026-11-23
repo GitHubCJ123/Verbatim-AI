@@ -17,6 +17,7 @@ import {
 } from "../components/ui/Select";
 import { HotkeyRecorder } from "../components/settings/HotkeyRecorder";
 import { SpeechModelPicker } from "../components/settings/SpeechModelPicker";
+import { SpeechBenchmarkPanel } from "../components/settings/SpeechBenchmarkPanel";
 import { CleanupModelPicker } from "../components/settings/CleanupModelPicker";
 import { DiagnosticsSettings } from "../components/settings/DiagnosticsSettings";
 import {
@@ -962,6 +963,8 @@ function ModelTab() {
           <div id="setting-speech-model" className="mt-3 scroll-mt-24">
             <SpeechModelPicker key={pickerKey} onChange={onPickerChange} />
           </div>
+
+          <SpeechBenchmarkPanel onChange={onPickerChange} />
 
           <ProviderTestControl
             id="test-transcription"

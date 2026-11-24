@@ -11,8 +11,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/Tooltip";
 
 export interface ModelScore {
   label: string;
-  /** 0–10. */
-  value: number;
+  /** 0–10, or null when not measured. */
+  value: number | null;
   detail: ReactNode;
 }
 
@@ -41,13 +41,18 @@ export function formatSize(mb: number): string {
 }
 
 function ScoreRow({ score }: { score: ModelScore }) {
-  const pct = Math.max(0, Math.min(10, score.value)) * 10;
+  const value = score.value;
+  const pct = Math.max(0, Math.min(10, value ?? 0)) * 10;
   return (
     <Tooltip delayDuration={150}>
       <TooltipTrigger asChild>
         <div
           className="grid cursor-help grid-cols-[3.75rem_1fr_1.75rem] items-center gap-2"
-          aria-label={`${score.label} ${score.value.toFixed(1)} out of 10`}
+          aria-label={
+            value !== null
+              ? `${score.label} ${value.toFixed(1)} out of 10`
+              : `${score.label} not measured`
+          }
         >
           <span className="text-right text-[11px] text-text-muted">{score.label}</span>
           <span className="h-1.5 overflow-hidden rounded-pill bg-bg-base">
@@ -57,7 +62,7 @@ function ScoreRow({ score }: { score: ModelScore }) {
             />
           </span>
           <span className="text-right font-mono text-[11px] tabular-nums text-text-secondary">
-            {score.value.toFixed(1)}
+            {value !== null ? value.toFixed(1) : "—"}
           </span>
         </div>
       </TooltipTrigger>

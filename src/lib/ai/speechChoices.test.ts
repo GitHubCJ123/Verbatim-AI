@@ -9,15 +9,17 @@ import {
 } from "./speechChoices";
 
 describe("speech choices", () => {
-  it("lists every built-in model once, including Canary, with one recommendation", () => {
+  it("lists every built-in model once, including Canary and Nemotron, with one recommendation", () => {
     const ids = SPEECH_CHOICES.map((c) => c.id);
     expect(new Set(ids).size).toBe(ids.length);
     expect(ids).toContain("canary-180m-flash");
+    expect(ids).toContain("nemotron-en");
     expect(SPEECH_CHOICES.filter((c) => c.recommended)).toHaveLength(1);
   });
 
   it("derives 0-10 scores from the measured figures", () => {
     for (const c of SPEECH_CHOICES) {
+      if (c.werPct === undefined || c.secondsPer10s === undefined) continue;
       expect(c.quality).toBe(accuracyScore(c.werPct));
       expect(c.speed).toBe(speedScore(c.secondsPer10s));
       expect(c.quality).toBeGreaterThan(0);
@@ -25,6 +27,13 @@ describe("speech choices", () => {
       expect(c.werPct).toBeGreaterThan(0);
       expect(c.secondsPer10s).toBeGreaterThan(0);
     }
+  });
+
+  it("leaves Nemotron unscored until it is measured, instead of inventing figures", () => {
+    const nemotron = speechChoiceById("nemotron-en");
+    expect(nemotron.quality).toBeNull();
+    expect(nemotron.speed).toBeNull();
+    expect(currentSpeechChoice("local-parakeet", "turbo", "nemotron-en")).toBe("nemotron-en");
   });
 
   it("scores lower error and lower latency higher, clamped to 0-10", () => {
@@ -39,9 +48,9 @@ describe("speech choices", () => {
 
   it("keeps the benchmark ordering the UI promises", () => {
     const by = (id: string) => SPEECH_CHOICES.find((c) => c.id === id)!;
-    expect(by("canary-180m-flash").speed).toBeGreaterThan(by("parakeet-v3").speed);
-    expect(by("parakeet-v2").quality).toBeGreaterThan(by("parakeet-v3").quality);
-    expect(by("whisper-tiny").quality).toBeLessThan(by("whisper-small").quality);
+    expect(by("canary-180m-flash").speed!).toBeGreaterThan(by("parakeet-v3").speed!);
+    expect(by("parakeet-v2").quality!).toBeGreaterThan(by("parakeet-v3").quality!);
+    expect(by("whisper-tiny").quality!).toBeLessThan(by("whisper-small").quality!);
   });
 
   it("maps current settings to a model, or null for custom files and cloud", () => {

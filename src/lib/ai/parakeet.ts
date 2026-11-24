@@ -1,7 +1,8 @@
 /**
  * On-device transcription via the sherpa-onnx CPU sidecar: NVIDIA Parakeet
- * TDT (v2 English, v3 multilingual) and Canary 180M Flash. This provider owns
- * only the transcription half of the pipeline.
+ * TDT (v2 English, v3 multilingual), Canary 180M Flash and Nemotron Speech
+ * Streaming (English). This provider owns only the transcription half of the
+ * pipeline.
  */
 import { invoke } from "@tauri-apps/api/core";
 import { pcm16kFor, pcmToBytes } from "./audioDecode";
@@ -10,9 +11,9 @@ import type { ProviderHealth, Transcriber, TranscribeInput, TranscribeResult } f
 const LS_PARAKEET_LANGUAGE = "sw.ai.parakeetLanguage";
 const LS_PARAKEET_VARIANT = "sw.ai.parakeetVariant";
 
-export type ParakeetVariant = "v2" | "v3" | "canary-180m-flash";
+export type ParakeetVariant = "v2" | "v3" | "canary-180m-flash" | "nemotron-en";
 
-const VARIANTS: readonly ParakeetVariant[] = ["v2", "v3", "canary-180m-flash"];
+const VARIANTS: readonly ParakeetVariant[] = ["v2", "v3", "canary-180m-flash", "nemotron-en"];
 
 function asVariant(v: unknown): ParakeetVariant {
   return VARIANTS.includes(v as ParakeetVariant) ? (v as ParakeetVariant) : "v3";
@@ -158,11 +159,15 @@ export interface ParakeetConfig {
   language: string;
 }
 
+const VARIANT_NAMES: Partial<Record<ParakeetVariant, string>> = {
+  "canary-180m-flash": "Canary 180M Flash",
+  "nemotron-en": "Nemotron Speech (English)",
+};
+
 export class ParakeetProvider implements Transcriber {
   readonly name: string;
   constructor(private cfg: ParakeetConfig) {
-    this.name =
-      cfg.variant === "canary-180m-flash" ? "Canary 180M Flash" : `Parakeet TDT ${cfg.variant}`;
+    this.name = VARIANT_NAMES[cfg.variant] ?? `Parakeet TDT ${cfg.variant}`;
   }
 
   async transcribe(input: TranscribeInput): Promise<TranscribeResult> {

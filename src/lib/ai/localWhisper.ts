@@ -8,12 +8,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { isPerfDebugEnabled } from "../preferences";
 import { pcm16kFor, pcmToBytes, vocabularyPromptHeader } from "./audioDecode";
 import { CLOUD_FEATURES_ENABLED } from "../features";
-import type {
-  ProviderHealth,
-  Transcriber,
-  TranscribeInput,
-  TranscribeResult,
-} from "./AIProvider";
+import type { ProviderHealth, Transcriber, TranscribeInput, TranscribeResult } from "./AIProvider";
 
 export type WhisperTier = "tiny" | "base" | "small" | "turbo" | "large-v3" | "large-v3-q5_0";
 
@@ -126,10 +121,9 @@ function mapCustomModels(
 
 /** List user-supplied `.bin`/`.gguf` models not managed as built-in tiers. */
 export async function listCustomWhisperModels(): Promise<CustomModelInfo[]> {
-  const raw =
-    await invoke<
-      Array<{ id: string; file_name: string; display_name: string; size_bytes: number }>
-    >("list_custom_whisper_models");
+  const raw = await invoke<
+    Array<{ id: string; file_name: string; display_name: string; size_bytes: number }>
+  >("list_custom_whisper_models");
   return mapCustomModels(raw);
 }
 
@@ -291,6 +285,11 @@ export function ensureWhisperEngineReady(tier: WhisperModelId): Promise<void> {
     tier,
     computePreference: getWhisperComputePreference(),
   });
+}
+
+/** Stop the warm server, releasing its model file (needed before deleting it on Windows). */
+export function unloadWhisperEngine(): Promise<void> {
+  return invoke("unload_engine");
 }
 
 // The probe is stable within a session per compute preference; cache it so we

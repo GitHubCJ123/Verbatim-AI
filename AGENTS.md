@@ -3,6 +3,9 @@
 This is the canonical repository guidance for all coding agents, including work
 started in subdirectories. Work in the assigned checkout; verify the remote is
 `GitHubCJ123/Verbatim-AI` before publishing. Do not modify another checkout.
+Optional, local-only: when the maintainer's private KG launcher is installed, read
+`~/.agents/skills/kg-query/scripts/kg page wiki/projects/verbatim-ai.md` before non-trivial
+work; skip it when unavailable (hosted environments). It never overrides this file.
 
 ## Current architecture and boundaries
 
